@@ -1,0 +1,20 @@
+=== SUMMARY ===
+ONE RECORDING (runId present but stripped from all assertions)
+  commit-log entries: 40
+  distinct stages: 12
+  llm-call steps: call-llm#18, call-llm#40
+  fingerprint (sha256, runId-free): e65834222993
+READER 1 — human-readable explanation (run narrative)
+  narrative entries: 334
+  opening line: Stage 1: The process began: Agent: ReAct loop.
+READER 2 — cheap mock model, given ONLY the recording
+  question: Why did the agent choose that tool?
+  trace tool the model called: who_wrote(lastToolResult)
+  tool named IN the trace: weather
+  answer: The agent chose the "weather" tool. Trace evidence: ToolCalls wrote lastToolResult with toolName "weather".
+READER 3 — training-data export (assembleTrajectory)
+  trajectory rows (frames): 2
+  row[0] shape: loopIndex, llmCallId, llmCallArrayIdx, headArrayIdx, bodyIds, intermediateText, contextSources, untrackedReadsPresent
+  row[0].llmCallId: call-llm#18
+ALL THREE consumed fingerprint e65834222993 — one agent.run(), zero re-runs
+=== END ===

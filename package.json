@@ -1,0 +1,22 @@
+{
+  "name": "visible-reasoning-reference",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference implementations for Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems (HCII 2026, LNCS 16745)",
+  "license": "MIT",
+  "scripts": {
+    "example:1": "node 01-substrate-owns-the-trace/run.js",
+    "example:2": "node 02-one-recording-three-readers/run.js",
+    "example:3": "node 03-user-facing-why/run.js",
+    "example:4": "node 04-honest-absence/run.js",
+    "example:5": "node 05-prove-by-replay/run.js",
+    "verify": "node verify.js",
+    "all": "node verify.js"
+  },
+  "dependencies": {
+    "agentfootprint": "^7.4.0",
+    "agentthinkingui": "^0.23.0",
+    "footprintjs": "^9.11.0"
+  }
+}

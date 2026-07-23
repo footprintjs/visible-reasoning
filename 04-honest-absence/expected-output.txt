@@ -1,0 +1,17 @@
+=== SUMMARY ===
+Claim 4 — honest absence: two values, one recorded run, default dials.
+
+TRACKED VALUE            'tier'
+  writer            classify-tracked#1
+  provenance chain  classify-tracked#1 <-amount- seed#0
+  untracked inputs  none
+  VERDICT           PROVEN — full causal chain back to seed#0; nothing hidden
+
+ABSENT-PROVENANCE VALUE  'riskFlag'
+  writer            score-from-env#2
+  provenance chain  score-from-env#2
+  untracked inputs  env
+  VERDICT           CANNOT PROVE — writer read env (untracked); the trace refuses to guess
+
+Same run, same query layer: it proves what it can see and flags what it cannot.
+=== END ===

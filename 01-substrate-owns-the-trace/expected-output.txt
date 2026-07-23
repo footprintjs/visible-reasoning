@@ -1,0 +1,17 @@
+=== SUMMARY ===
+commit events: 4
+  0 intake#0 Intake set:severity
+  1 route#1 Route -
+  2 urgent#2 Escalate set:lane
+  3 finish#3 Finish set:closed
+flow events: 5
+  stageExecuted Intake linear
+  decision Route Escalate
+  stageExecuted Route decider
+  stageExecuted Escalate linear
+  stageExecuted Finish linear
+decision: Route -> Escalate (branch 'urgent')
+  rule[0] "Severity above 5": severity gt 5 matched=true actual=8
+  default: normal
+provenance: engine-recorded (commit log + decision evidence), not model-narrated
+=== END ===

@@ -1,0 +1,9 @@
+=== SUMMARY ===
+original answer wrong (approved out-of-policy): true
+localization mode: causal
+suspects ranked: 4
+injection verdicts: vip-override=confirmed, style-rule=not-confirmed
+localized culprit: injection:vip-override
+confirmation verdict: confirmed
+counterfactual answer flips to in-policy: true
+=== END ===
