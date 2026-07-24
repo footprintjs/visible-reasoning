@@ -71,6 +71,20 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   let rerunCounter = 0;
   const embedder = embeddingCache(mockEmbedder()); // one shared embedder, process-wide
 
+  // A turn's system prompt: role + entity, plus — under a REAL model only — the
+  // pack's advisor protocol ("consult every source before you decide"). Live, a
+  // model that answers off the first tool it likes yields a one-bar influence
+  // panel, and the three-way comparison this gallery exists to show never appears;
+  // the protocol makes the desk behave like an advisor and call all three.
+  //
+  // Mock mode deliberately does NOT get it. The scripted router ignores the prompt,
+  // so the directive could not change a mock reply — but the influence scorer
+  // embeds the system prompt as an ANCESTOR of every tool source, so appending it
+  // would shift the frozen scores in expected-output.txt. Mock stays byte-stable;
+  // live gets the protocol. Both modes still share one `pack.system`.
+  const systemFor = (pack, entity) =>
+    pack.system + pack.systemForEntity(entity) + (live ? (pack.consultProtocol ?? '') : '');
+
   const renderLine = (pack) => (m) => `${m.role === 'user' ? 'User' : pack.assistantLabel}: ${m.text}`;
   const makeChat = (pack, opts = {}) =>
     recordedChat({ makeAgent, format: { assistantLabel: pack.assistantLabel }, ...opts });
@@ -100,7 +114,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       const entity = pack.entity.parse(userMessage, session.entity);
       session.entity = entity;
       const toolLog = new Map();
-      const system = pack.system + pack.systemForEntity(entity);
+      const system = systemFor(pack, entity);
       pending = {
         system,
         tools: session.decoratedTools,
@@ -208,7 +222,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       const meta = session.meta[k] ?? {};
       const entity = meta.entity ?? session.entity;
       pending = {
-        system: meta.system ?? (pack.system + pack.systemForEntity(entity)),
+        system: meta.system ?? systemFor(pack, entity),
         tools: session.decoratedTools,
         scriptedRespond: (req, extra) => pack.scriptedRespond(req, { entity, ...extra }),
         mode: 'replay',

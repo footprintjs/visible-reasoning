@@ -68,6 +68,23 @@ export const stocks = {
     + 'then decide whether to call the next — never request more than one tool in a single '
     + 'step. When you have consulted them, answer with a clear decision word (BUY or HOLD) '
     + 'followed by one sentence of reasoning.',
+  // The advisor protocol — LIVE ONLY (chat-core appends it when a real model is
+  // driving). It is load-bearing, not flavour: the influence panel can only
+  // COMPARE sources the agent actually consulted, so a desk that answers off the
+  // first tool it likes produces a one-bar map and the three-way comparison never
+  // appears. The mock provider routes on the request, not the prompt, so this text
+  // would change nothing there EXCEPT the frozen scores — the scorer embeds the
+  // system prompt as an ancestor of every tool source, so appending it in mock mode
+  // moves expected-output.txt. Hence the live gate.
+  // The "available to you this turn" hedge keeps the directive honest under
+  // ablation: a re-run replays this SAME prompt with a tool removed, and must not
+  // deadlock demanding a source it no longer has.
+  consultProtocol:
+    ' Desk protocol: never give a call until you have consulted EVERY source available to '
+    + 'you this turn — quarterly_results, insider_activity and social_sentiment — one call '
+    + 'each, even when the first result already looks decisive; a source you skipped is a '
+    + 'risk you did not price. If one of them is not available to you on this turn, use the '
+    + 'ones that are and say so.',
   systemForEntity: (ticker) => ` The active ticker under discussion is ${ticker}.`,
 
   entity: {

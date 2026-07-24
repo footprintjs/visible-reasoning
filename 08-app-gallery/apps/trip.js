@@ -60,6 +60,16 @@ export const trip = {
     + 'tool, wait for its result, then decide whether to call the next — never request more '
     + 'than one tool in a single step. When you have consulted them, answer with a clear '
     + 'decision word (GO or POSTPONE) followed by one sentence of reasoning.',
+  // The guide's protocol — LIVE ONLY, and load-bearing. See stocks.js for why it
+  // is gated to live mode (the scorer embeds the system prompt, so appending it in
+  // mock mode would move the frozen expected-output.txt scores) and why it says
+  // "available to you this turn" (a re-run replays this prompt minus one tool).
+  consultProtocol:
+    ' Guide protocol: never make the call until you have checked EVERY source in the kit '
+    + 'that is available to you this turn — weather_forecast, wiki_place and crowd_level — '
+    + 'one call each, even when the first result already looks decisive; the source you '
+    + 'skipped is the one that turns the day. If one of them is not available to you on this '
+    + 'turn, use the ones that are and say so.',
   systemForEntity: (place) => ` The hike under discussion is ${place}.`,
 
   entity: {

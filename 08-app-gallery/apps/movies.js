@@ -81,6 +81,16 @@ export const movies = {
     + 'wait for its result, then decide whether to call the next — never request more than '
     + 'one tool in a single step. When you have consulted them, answer with a clear decision '
     + 'word (WATCH or SKIP) followed by one sentence of reasoning.',
+  // The critic's house rule — LIVE ONLY, and load-bearing. See stocks.js for why
+  // it is gated to live mode (the scorer embeds the system prompt, so appending it
+  // in mock mode would move the frozen expected-output.txt scores) and why it says
+  // "available to you this turn" (a re-run replays this prompt minus one tool).
+  consultProtocol:
+    ' House rule: never give a verdict until you have consulted EVERY source available to '
+    + 'you this turn — itunes_lookup, wiki_plot and wiki_reception — one call each, even '
+    + 'when the first result already looks decisive; a verdict that skipped a source is not '
+    + 'a verdict. If one of them is not available to you on this turn, use the ones that are '
+    + 'and say so.',
   systemForEntity: (title) => ` The movie under discussion is "${title}".`,
 
   entity: {
