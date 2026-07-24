@@ -31,6 +31,23 @@ npm run example:4   # 04-honest-absence
 npm run example:5   # 05-prove-by-replay
 ```
 
+## Try it live (optional)
+
+> Requires Node 20.6+ (the live script uses `node --env-file`).
+
+An optional sixth act tells the same "recorded decision evidence" story against the **real Anthropic API**: a two-tool agent, one short task that forces a tool choice, recorded and then explained from its own trace. As a stranger would follow it:
+
+```sh
+git clone https://github.com/footprintjs/visible-reasoning.git
+cd visible-reasoning
+npm install
+npm run all          # the five mock examples — free, no key
+cp .env.example .env # then paste your Anthropic key into .env
+npm run live         # the live act — costs about two small Haiku calls
+```
+
+`npm run live` loads your key from `.env` (git-ignored, never committed), runs `claude-haiku-4-5-20251001` (any Claude model id works), and prints which tool was chosen, the recorded why-this-tool evidence, a couple of typed-event counts, and the live model's answer. It is left out of `npm run all` because a real model's wording varies run to run.
+
 ## The map
 
 | Paper claim | Example directory | What you will see |
