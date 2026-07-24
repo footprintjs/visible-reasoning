@@ -30,9 +30,8 @@ import { mock, anthropic } from 'agentfootprint/llm-providers';
 import { defineFact } from 'agentfootprint/injection-engine';
 import { mockEmbedder } from 'agentfootprint/memory';
 import {
-  embeddingCache, llmCallIdsFromEvents, listInfluenceStrategies,
-  localizeContextBug, removableSources, rerunWithoutSources,
-  semanticAlignmentStrategy,
+  applyAblations, embeddingCache, listInfluenceStrategies, llmCallIdsFromEvents,
+  recordedChat, removableSources, semanticAlignmentStrategy,
 } from 'agentfootprint/debug';
 
 const require = createRequire(import.meta.url);
@@ -286,100 +285,107 @@ function factsFromWorld(world) {
   return world.map((w) => defineFact({ id: w.id, description: FACT_META[w.id], data: w.text }));
 }
 
-// ═══ The ONE turn factory ════════════════════════════════════════════════════
-// Live turns, rerun probes, and fork turns all go through it — a single source of
-// truth. Ablations are applied at CONSTRUCTION (the documented seam): specs list
-// injection ids to exclude; a FRESH provider per call makes removal a real
-// counterfactual. History is the hcifootprint-demo convention: thread the frozen
-// transcript into the message string, byte-exact between the recorded turn and its
-// rerun. `factsOverride` carries a live turn's RECORDED world so re-runs replay it
-// (frozen world, no re-fetch); when null the static mock FACTS are used unchanged.
-async function runTurn({ transcriptBefore, userMessage, excludedIds, specs = [], live, factsOverride = null, system = SYSTEM }) {
-  const excluded = new Set(excludedIds);
-  for (const spec of specs)
-    if (spec.kind === 'injection') for (const id of spec.excludeInjectionIds) excluded.add(id);
-  const facts = (factsOverride ?? FACTS).filter((f) => !excluded.has(f.id));
+// ═══ The ONE turn factory (recordedChat's makeAgent) ═════════════════════════
+// Live turns, rerun probes, baseline probes and fork turns ALL go through this
+// single factory. recordedChat calls it with the union of the session's
+// persistent removals and the probe's ablation `specs`; we apply them at
+// CONSTRUCTION (the documented seam) via applyAblations, with a FRESH provider
+// per call so a source's removal is a real counterfactual.
+//
+// makeAgent receives only { specs, seed }. A live turn's fetched world and its
+// per-turn system prompt (which names the ticker) don't fit that signature, so —
+// exactly as the recordedChat guide's "agent construction stays yours" permits —
+// they ride this host-side `pending` closure: chatTurn / rerunTurnK set it
+// synchronously right before the send / re-run, and every makeAgent call inside
+// that awaited operation reads it. A re-run therefore replays the FROZEN world of
+// the turn under probe (no re-fetch); only the LLM calls stay real.
+let pending = { facts: FACTS, system: SYSTEM };
+let probeEventSink = null; // set during a live re-run to count real LLM calls
 
-  const provider = live ? anthropic() : mock({ respond: scriptedRespond }); // FRESH per call
-  const events = [];
-  let builder = Agent.create({ provider, model: live ? MODEL : 'mock-1', maxIterations: 2 }).system(system);
-  for (const fact of facts) builder = builder.fact(fact);
+// `pending` is a shared single-slot: every makeAgent call inside an awaited
+// operation reads it. A live re-run samples makeAgent across several awaits, so
+// two agent-running operations MUST NOT overlap — otherwise a concurrent /chat
+// would repoint `pending` (and probeEventSink) at a different turn's world
+// mid-re-run, silently voiding the frozen-world guarantee the counterfactual
+// claims. We serialize every agent-running operation (chatTurn / rerunTurnK)
+// through one promise chain so an in-flight op always finishes before the next
+// reassigns `pending`. `.then(fn, fn)` keeps the queue alive even if a prior op
+// rejected. Mock mode is unaffected (`pending` is constant), so byte-gated
+// acceptance is unchanged; this only hardens live serve against overlap.
+let opQueue = Promise.resolve();
+const serial = (fn) => (opQueue = opQueue.then(fn, fn));
+
+function makeAgent({ specs }) {
+  const { injections } = applyAblations([...specs], { injections: pending.facts });
+  const provider = LIVE ? anthropic() : mock({ respond: scriptedRespond }); // FRESH per call
+  let builder = Agent.create({ provider, model: LIVE ? MODEL : 'mock-1', maxIterations: 2 }).system(pending.system);
+  for (const fact of injections) builder = builder.fact(fact);
   const agent = builder.build();
-  agent.on('*', (e) => events.push(e));
-
-  const message =
-    (transcriptBefore.length ? `Recent conversation:\n${transcriptBefore.join('\n')}\n\n` : '')
-    + `User: ${userMessage}`;
-
-  const out = await agent.run({ message });
-  const content = typeof out === 'object' && out && 'content' in out ? String(out.content) : String(out);
-  const llmIds = llmCallIdsFromEvents(events);
-  // CAPTURE IMMEDIATELY — getLastSnapshot() is last-run-only.
-  return { content, snapshot: agent.getLastSnapshot(), events, lastLlmCallId: llmIds[llmIds.length - 1] };
+  if (probeEventSink) { const evs = []; agent.on('*', (e) => evs.push(e)); probeEventSink.push(evs); }
+  return agent;
 }
 
-// ═══ Session store (host state; append-only transcripts) ═════════════════════
+// ═══ Session store (host state: registry, per-turn world, rerun registry) ═════
+// recordedChat owns the transcript + turn recording; the host keeps the
+// product-shaped state the guide leaves host-side (wire id, live worlds, the
+// rerunId → result registry that /fork resolves over HTTP).
 const sessions = new Map();
 let sessionCounter = 0;
 let rerunCounter = 0;
 const embedder = embeddingCache(mockEmbedder()); // one shared embedder, process-wide
 
-function newSession({ label, forkOf = null, excludedIds = [], transcript = [], ticker = 'NVDA' }) {
+const renderLine = (m) => `${m.role === 'user' ? 'User' : 'Advisor'}: ${m.text}`;
+const makeChat = (opts = {}) => recordedChat({ makeAgent, format: { assistantLabel: 'Advisor' }, ...opts });
+
+function newSession({ label, chat, forkOf = null, excludedIds = [], ticker = 'NVDA' }) {
   const id = `s${++sessionCounter}`;
   const s = {
-    id, label, forkOf,
+    id, label, forkOf, chat, ticker,
     excludedIds: [...excludedIds],
-    seedTranscript: [...transcript], // frozen history the session opened with (forks only)
-    transcript: [...transcript],     // append-only, never rewritten
-    ticker,                          // live mode only; forks inherit the origin turn's ticker
-    turns: [],
+    seedTranscript: chat.seed.map(renderLine), // frozen history the session opened with (forks only)
+    meta: [],                                  // per-turn { world, provenance, system, ticker } (live)
+    reruns: new Map(),                         // rerunId → { result, ignoredIds, turnIndex }
   };
   sessions.set(id, s);
   return s;
 }
 
-// Running turn K in a session (records a frozen TurnRecord). In live mode the
-// three context sources are FETCHED here, once, and the recorded world (facts +
-// system + provenance) is frozen onto the turn so re-runs replay it verbatim.
-async function chatTurn(session, userMessage) {
-  const transcriptBefore = Object.freeze([...session.transcript]);
-  let factsOverride = null; let system = SYSTEM; let provenance = null; let ticker = session.ticker;
-  if (LIVE) {
-    ticker = tickerFromMessage(userMessage, session.ticker);
-    session.ticker = ticker;
-    const world = await fetchWorld(ticker);
-    factsOverride = factsFromWorld(world);
-    provenance = Object.fromEntries(world.map((w) => [w.id, w.provenance]));
-    system = `${SYSTEM} The active ticker under discussion is ${ticker}.`;
-    console.log(`[live] recorded world for ${ticker}: ${world.map((w) => `${w.id}=${w.provenance}`).join(' ')}`);
-  }
-  const t = await runTurn({ transcriptBefore, userMessage, excludedIds: session.excludedIds, live: LIVE, factsOverride, system });
-  session.transcript.push(`User: ${userMessage}`, `Advisor: ${t.content}`);
-  const turn = {
-    index: session.turns.length, userMessage, reply: t.content,
-    transcriptBefore, snapshot: t.snapshot, events: t.events,
-    lastLlmCallId: t.lastLlmCallId, report: null, reruns: new Map(),
-    recordedFacts: factsOverride, system, provenance, ticker, // frozen world for re-runs
-  };
-  session.turns.push(turn);
-  return turn;
+// Running turn K. recordedChat.send freezes the message bytes, snapshot, events
+// and last-LLM-call id on the turn (the three traps it owns). In live mode the
+// three context sources are FETCHED here, once, and the recorded world + system
+// are pinned into `pending` so recordedChat's re-run replays them verbatim.
+function chatTurn(session, userMessage) {
+  // Runs through `serial` so it never overlaps another agent-running op — see
+  // opQueue. fetchWorld is inside the critical section on purpose: `pending`
+  // must be pinned by the SAME operation that fetched the world it points at.
+  return serial(async () => {
+    let world = null; let provenance = null; let ticker = session.ticker; let system = SYSTEM;
+    if (LIVE) {
+      ticker = tickerFromMessage(userMessage, session.ticker);
+      session.ticker = ticker;
+      world = await fetchWorld(ticker);
+      provenance = Object.fromEntries(world.map((w) => [w.id, w.provenance]));
+      system = `${SYSTEM} The active ticker under discussion is ${ticker}.`;
+      console.log(`[live] recorded world for ${ticker}: ${world.map((w) => `${w.id}=${w.provenance}`).join(' ')}`);
+    }
+    pending = { facts: world ? factsFromWorld(world) : FACTS, system };
+    const turn = await session.chat.send(userMessage);
+    session.meta[turn.index] = { world, provenance, system, ticker };
+    return turn;
+  });
 }
 
 // ═══ Reasoning about turn K (the "visible reason" button) ════════════════════
+const getReport = (session, k) =>
+  session.chat.reason(k, { embedder, scorer: semanticAlignmentStrategy }); // memoized per turn
+
 async function reasonAbout(session, k) {
-  const turn = session.turns[k];
-  turn.report ??= await localizeContextBug({
-    artifacts: { snapshot: turn.snapshot, events: turn.events },
-    embedder,
-    atStep: turn.lastLlmCallId,
-    scorer: semanticAlignmentStrategy,
-  });
-  return { map: toInfluenceMap(turn), strategies: strategyOptions() };
+  const report = await getReport(session, k);
+  return { map: toInfluenceMap(session.chat.turn(k), report), strategies: strategyOptions() };
 }
 
 // 06-stock-desk's join, verbatim shape: removableSources × suspects → atui map.
-function toInfluenceMap(turn) {
-  const report = turn.report;
+function toInfluenceMap(turn, report) {
   const sources = removableSources(report).map((r) => {
     const suspect =
       report.suspects.find(
@@ -427,77 +433,75 @@ async function decisionChanged(original, ablated) {
 }
 
 // ═══ Re-running turn K with sources removed (the crux) ═══════════════════════
+// recordedChat.rerunTurn derives the runner from the SAME makeAgent that ran the
+// turn and replays the frozen message bytes verbatim (traps 2 + 3). The host owns
+// only the FROZEN WORLD (the honesty keystone) and the rerunId registry.
 async function rerunTurnK(session, k, ignoreIds) {
-  const turn = session.turns[k];
-  if (!turn.report) await reasonAbout(session, k);
-  // FROZEN WORLD (the honesty keystone): in live mode the runner does NOT re-fetch.
-  // It replays the EXACT recorded tool outputs from the original turn (turn.recordedFacts)
-  // — same world, minus the ignored source (which the ablation specs strip). Only the
-  // LLM calls stay real. We prove it by snapshotting the tool-fetch counter around the
-  // whole re-run: it must not move, while live LLM calls still fire.
-  const fetchesBefore = metrics.toolFetches;
-  let rerunLlmCalls = 0;
-  const result = await rerunWithoutSources({
-    report: turn.report,
-    ignore: ignoreIds, // plain ids from removableSources; unknown ids THROW
-    runner: async (specs) => {
-      const res = await runTurn({
-        transcriptBefore: turn.transcriptBefore, // the FROZEN recorded history
-        userMessage: turn.userMessage,
-        excludedIds: session.excludedIds,        // fork sessions keep their exclusions
-        specs, live: LIVE,
-        factsOverride: turn.recordedFacts,       // replay the frozen world; no re-fetch
-        system: turn.system ?? SYSTEM,
+  await getReport(session, k); // memoize the semantic report BEFORE the re-run resolves `ignore`
+  // Runs through `serial` so the whole re-run (which samples makeAgent across
+  // several awaits) holds `pending` + probeEventSink exclusively — no concurrent
+  // /chat can repoint the frozen world mid-sample or leak fetches/LLM-calls into
+  // the proof counters. getReport above stays outside (memoized, touches neither
+  // `pending` nor the queue) so there is no nested-serial deadlock.
+  return serial(async () => {
+    const meta = session.meta[k] ?? {};
+    // FROZEN WORLD: pin turn K's recorded world + system so every probe/baseline
+    // re-run replays it — no re-fetch. In live mode the ONLY thing kept host-side
+    // (per the guide: the { specs, seed } signature can't carry a per-turn world),
+    // and we prove it: snapshot the tool-fetch counter around the whole re-run — it
+    // must not move, while live LLM calls still fire.
+    pending = { facts: meta.world ? factsFromWorld(meta.world) : FACTS, system: meta.system ?? SYSTEM };
+    const fetchesBefore = metrics.toolFetches;
+    const sink = LIVE ? [] : null; probeEventSink = sink;
+    let result;
+    try {
+      result = await session.chat.rerunTurn(k, {
+        ignore: ignoreIds, // plain ids from removableSources; unknown ids THROW
+        embedder,
+        answerChanged: decisionChanged,
+        checkBaseline: true,   // unlocks the causal verdict
+        samples: LIVE ? 2 : 3, // live cost control (floor is 2)
       });
-      rerunLlmCalls += res.events ? llmCallIdsFromEvents(res.events).length : 0;
-      return res.content;
-    },
-    originalAnswer: turn.reply,
-    embedder,
-    answerChanged: decisionChanged,
-    checkBaseline: true,        // unlocks the causal verdict
-    samples: LIVE ? 2 : 3,      // live cost control (floor is 2)
+    } finally { probeEventSink = null; }
+    if (LIVE) {
+      const rerunLlmCalls = sink.reduce((n, evs) => n + llmCallIdsFromEvents(evs).length, 0);
+      console.log(`[frozen-world] re-run ignoring [${ignoreIds.join(', ')}]: external tool fetches during re-run = ${metrics.toolFetches - fetchesBefore}, live LLM calls = ${rerunLlmCalls}`);
+    }
+    // Key by rerunId (append-only) so every recorded rerun stays forkable for the
+    // process lifetime; /fork resolves the rerunId back to the result object that
+    // recordedChat.fork identity-checks.
+    const rerunId = `r${++rerunCounter}`;
+    session.reruns.set(rerunId, { rerunId, result, ignoredIds: ignoreIds, turnIndex: k });
+    return { rerunId, result };
   });
-  if (LIVE) {
-    console.log(`[frozen-world] re-run ignoring [${ignoreIds.join(', ')}]: external tool fetches during re-run = ${metrics.toolFetches - fetchesBefore}, live LLM calls = ${rerunLlmCalls}`);
-  }
-  const rerunId = `r${++rerunCounter}`;
-  // Key by rerunId (append-only) so every recorded rerun stays forkable for the
-  // process lifetime — re-running the same ignore-set no longer orphans an
-  // earlier rerunId that an embedded fork button might still reference.
-  turn.reruns.set(rerunId, { rerunId, result, ignoredIds: ignoreIds });
-  return { rerunId, result };
 }
 
 // ═══ "Continue from this version" — the fork ═════════════════════════════════
-// Pure host state: a NEW session seeded with a SERVER-RECORDED rerun answer
-// (referenced by rerunId), never client-supplied text. The fork carries the
-// ablation forward (excludedIds persists) — the what-if world stays the what-if
-// world. The original session is never touched.
+// recordedChat.fork owns the transcript seeding + removal merge, identity-checking
+// the re-run result (a fabricated fork throws). The host keeps only the wire id,
+// the label, and the excluded-source ids the page shows. The original is untouched.
 function forkFrom(session, k, rerunId) {
-  const turn = session.turns[k];
-  if (!turn) throw new Error('unknown session/turn');
-  const hit = turn.reruns.get(rerunId);
+  const hit = session.reruns.get(rerunId);
   if (!hit) throw new Error('unknown rerunId — re-run first, then fork');
-  const fork = newSession({
+  const childChat = session.chat.fork(k, { fromRerun: hit.result }); // throws on identity mismatch
+  return newSession({
     label: `fork of turn ${k + 1} (without ${hit.ignoredIds.join(', ')})`,
     forkOf: { sessionId: session.id, turnIndex: k, ignoredIds: hit.ignoredIds },
+    chat: childChat,
     excludedIds: [...new Set([...session.excludedIds, ...hit.ignoredIds])],
-    transcript: [...turn.transcriptBefore, `User: ${turn.userMessage}`, `Advisor: ${hit.result.answer}`],
-    ticker: turn.ticker ?? session.ticker, // carry the origin turn's world forward (live mode)
+    ticker: session.meta[k]?.ticker ?? session.ticker, // carry the origin turn's world forward (live mode)
   });
-  return fork;
 }
 
 // Look up a removable source's human label for a set of ids (for the what-if bubble).
-function labelsFor(turn, ids) {
-  const src = removableSources(turn.report);
+function labelsFor(report, ids) {
+  const src = removableSources(report);
   return ids.map((id) => src.find((r) => r.id === id)?.label ?? id);
 }
 
 // ═══ DEFAULT MODE — the gated, byte-stable summary ═══════════════════════════
 async function defaultMode() {
-  const root = newSession({ label: 'conversation' });
+  const root = newSession({ label: 'conversation', chat: makeChat() });
   // The scripted 3-turn conversation.
   await chatTurn(root, 'How is the position looking?');            // T1 overview
   await chatTurn(root, 'Should we BUY or HOLD this position?');    // T2 → BUY
@@ -514,9 +518,9 @@ async function defaultMode() {
   const fork = forkFrom(root, 1, rerunId);
   await chatTurn(fork, 'How much should we allocate?');
 
-  const origT2 = root.turns[1].reply;
-  const origT3 = root.turns[2].reply;
-  const forkT3 = fork.turns[0].reply;
+  const origT2 = root.chat.turn(1).reply;
+  const origT3 = root.chat.turn(2).reply;
+  const forkT3 = fork.chat.turn(0).reply;
   const diverge = origT3 !== forkT3;
 
   // Assert the whole loop (throw on drift, like af example 18).
@@ -554,7 +558,10 @@ function sessionToData(s) {
     ignoredSourceIds: s.excludedIds,
     seed: s.seedTranscript,
     ticker: s.ticker,
-    turns: s.turns.map((t) => ({ index: t.index, userMessage: t.userMessage, reply: t.reply, provenance: t.provenance, ticker: t.ticker })),
+    turns: s.chat.turns.map((t) => ({
+      index: t.index, userMessage: t.userMessage, reply: t.reply,
+      provenance: s.meta[t.index]?.provenance ?? null, ticker: s.meta[t.index]?.ticker ?? s.ticker,
+    })),
   };
 }
 
@@ -835,7 +842,7 @@ function costNote() {
 
 async function buildStory() {
   // Default (mock) serve: pre-run the full scripted story so the page opens mid-story.
-  const root = newSession({ label: 'conversation' });
+  const root = newSession({ label: 'conversation', chat: makeChat() });
   await chatTurn(root, 'How is the position looking?');
   await chatTurn(root, 'Should we BUY or HOLD this position?');
   await chatTurn(root, 'How much should we allocate?');
@@ -847,7 +854,7 @@ async function buildStory() {
   }
   const { rerunId, result } = await rerunTurnK(root, 1, ['social-sentiment']);
   data.rerun[`${root.id}:1`] = {
-    rerunId, ignoredIds: ['social-sentiment'], ignoredLabels: labelsFor(root.turns[1], ['social-sentiment']), result,
+    rerunId, ignoredIds: ['social-sentiment'], ignoredLabels: labelsFor(await getReport(root, 1), ['social-sentiment']), result,
   };
   const fork = forkFrom(root, 1, rerunId);
   await chatTurn(fork, 'How much should we allocate?');
@@ -864,7 +871,7 @@ async function serveMode() {
   let data;
   if (LIVE) {
     // Live boot: skip the pre-run rerun/fork (cost). Open with an empty conversation + a live badge.
-    const root = newSession({ label: 'conversation' });
+    const root = newSession({ label: 'conversation', chat: makeChat() });
     data = { order: [root.id], active: root.id, live: true, costNote: costNote(),
       sessions: { [root.id]: sessionToData(root) }, reason: {}, rerun: {} };
   } else {
@@ -898,20 +905,21 @@ async function serveMode() {
           session = sessions.get(sessionId);
           if (!session) { send(res, 404, { error: 'unknown sessionId — start a conversation first' }); return; }
         } else {
-          session = newSession({ label: 'conversation' });
+          session = newSession({ label: 'conversation', chat: makeChat() });
         }
         if (typeof message !== 'string' || !message.trim()) throw new Error('message required');
         const turn = await chatTurn(session, message);
+        const m = session.meta[turn.index] ?? {};
         send(res, 200, { sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
           label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
-          ticker: turn.ticker, provenance: turn.provenance });
+          ticker: m.ticker ?? session.ticker, provenance: m.provenance ?? null });
         return;
       }
 
       if (req.method === 'POST' && req.url === '/reason') {
         const { sessionId, turnIndex } = JSON.parse((await readBody(req)) || '{}');
         const session = sessions.get(sessionId);
-        if (!session || !session.turns[turnIndex]) throw new Error('unknown session/turn');
+        if (!session || !session.chat.turns[turnIndex]) throw new Error('unknown session/turn');
         const r = await reasonAbout(session, turnIndex);
         send(res, 200, { map: r.map, strategies: r.strategies });
         return;
@@ -920,10 +928,10 @@ async function serveMode() {
       if (req.method === 'POST' && req.url === '/rerun-turn') {
         const { sessionId, turnIndex, ignore } = JSON.parse((await readBody(req)) || '{}');
         const session = sessions.get(sessionId);
-        if (!session || !session.turns[turnIndex]) throw new Error('unknown session/turn');
+        if (!session || !session.chat.turns[turnIndex]) throw new Error('unknown session/turn');
         const ids = Array.isArray(ignore) ? ignore : [];
         const { rerunId, result } = await rerunTurnK(session, turnIndex, ids);
-        send(res, 200, { rerunId, ignoredLabels: labelsFor(session.turns[turnIndex], ids), result });
+        send(res, 200, { rerunId, ignoredLabels: labelsFor(await getReport(session, turnIndex), ids), result });
         return;
       }
 
