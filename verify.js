@@ -26,4 +26,4 @@ if (failed > 0) {
   console.error(`${failed} example(s) did not match their expected-output.txt`);
   process.exit(1);
 }
-console.log('All 5 summaries match their expected-output.txt files.');
+console.log(`All ${dirs.length} summaries match their expected-output.txt files.`);

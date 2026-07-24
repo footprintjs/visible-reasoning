@@ -1,6 +1,6 @@
 # Visible Reasoning — runnable reference implementations
 
-Five small, self-contained examples that demonstrate the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Each one runs a real pipeline, records it, and shows the paper's third transparency paradigm — **recorded decision evidence**, where the execution substrate owns the trace instead of a model narrating itself. Every example is one `run.js`, costs nothing to run (mock providers only, no API keys), and prints a stable summary checked against an `expected-output.txt`.
+Six small, self-contained examples that demonstrate the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Each one runs a real pipeline, records it, and shows the paper's third transparency paradigm — **recorded decision evidence**, where the execution substrate owns the trace instead of a model narrating itself. Every example is one `run.js`, costs nothing to run (mock providers only, no API keys), and prints a stable summary checked against an `expected-output.txt`. The last one also has an interactive mode — a served page where you tap through the influence map and re-run the agent for real.
 
 ## The paper
 
@@ -19,7 +19,7 @@ npm install
 npm run all
 ```
 
-`npm run all` runs all five examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
+`npm run all` runs all six examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
 
 Or run a single example:
 
@@ -29,6 +29,7 @@ npm run example:2   # 02-one-recording-three-readers
 npm run example:3   # 03-user-facing-why
 npm run example:4   # 04-honest-absence
 npm run example:5   # 05-prove-by-replay
+npm run example:6   # 06-stock-desk (default mode; npm run stock-desk serves the interactive page)
 ```
 
 ## Try it live (optional)
@@ -57,6 +58,7 @@ npm run live         # the live act — costs about two small Haiku calls
 | 3. User-facing "why" | `03-user-facing-why` | A real run emits a self-contained `out/replay.html` an end user can scrub beat-by-beat to see the why-this-tool evidence. |
 | 4. Honest absence | `04-honest-absence` | Two values in one run: one proven back to its origin, one honestly flagged `CANNOT PROVE` because its input (env) was untracked. |
 | 5. Prove by replay | `05-prove-by-replay` | A wrong answer localized to the context that caused it, then confirmed counterfactually by rerunning with that piece ablated. |
+| 6. The stock desk (interactive) | `06-stock-desk` | An influence map you can drive: see what fed a BUY call, suspect social media, ignore it, and re-run the agent for real — the call flips to HOLD, proven by replay. |
 
 ## The examples
 
@@ -175,6 +177,43 @@ confirmation verdict: confirmed
 counterfactual answer flips to in-policy: true
 === END ===
 ```
+
+### 6 — The stock desk (interactive)
+
+The paper's finale, made tap-able. A trading-desk agent weighs three sources — quarterly results (solid-but-unspectacular fundamentals), insider activity (neutral), and social sentiment (hyped bullish chatter) — and calls **BUY**. The scripted mock is wired so social sentiment's *presence* yields BUY and its *absence* yields HOLD, so the flip is real, produced by the re-run, never hand-authored. `localizeContextBug` (semantic-alignment strategy, mock embedder) ranks the sources, `removableSources` is the toggle list, and one `rerunWithoutSources({ ignore: ['social-sentiment'], checkBaseline: true })` ablates-and-reruns to confirm the cause.
+
+```
+=== SUMMARY ===
+scenario: stock (stock desk)
+ranked by: semantic-alignment
+influence (removable sources, ranked — proxy scores, not proof):
+  social-sentiment [injection] score 0.872
+  insider-activity [injection] score 0.841
+  quarterly-results [injection] score 0.811
+original answer: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
+ignored source: social-sentiment
+rerun answer: HOLD — no catalyst beyond fair value: revenue up 4% as guided, insider activity steady, nothing driving a move.
+flipped: true
+verdict: confirmed
+=== END ===
+```
+
+**The interactive routine.** Serve the page and drive it yourself:
+
+```sh
+npm run stock-desk   # generates 06-stock-desk/out/desk.html from real run data and serves it
+```
+
+Then open **http://localhost:4173** and:
+
+1. See the **influence map** — the BUY answer at the centre, every source orbiting it, sized by its influence estimate. Social sentiment towers over the fundamentals.
+2. Suspect the hype drove it. Flip the **✕** on `social-sentiment` to ignore it.
+3. Tap **Re-run without 1 source**. The desk re-runs the agent *for real* on the server (`POST /rerun` → `rerunWithoutSources({ checkBaseline: true })`), minus that one source.
+4. Watch **BUY become HOLD** — shown side by side, with the causal verdict: *"Proven by re-run: removing it changed the answer."*
+
+A **scenario switcher** offers a second drill — career advice (skills assessment / market salaries / trending titles), where the trending-titles hype drives a PIVOT and ignoring it flips the advice to STAY. Same honesty throughout: the scores are labelled a proxy (clues, not proof), the run's honesty flags ride along as plain chips, and only the re-run earns the word *causal*. Ignoring a fundamentals source instead (quarterly results) leaves the call unchanged — the contrast that shows a score alone never convicts.
+
+**Cost: $0.** Everything is a mock provider with a mock embedder — no API keys, no network, offline and deterministic. Opened as a static file (no server), the Re-run button degrades honestly: it tells you it needs the local server rather than pretending to re-run.
 
 ## Citing
 
