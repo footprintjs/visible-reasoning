@@ -113,17 +113,25 @@ ALL THREE consumed fingerprint e65834222993 — one agent.run(), zero re-runs
 
 ### 3 — User-facing "why"
 
-A mock-provider agent (WeatherBot, two tools) runs, the framework records it as a typed agentthinkingui trace, and the generator emits a self-contained `out/replay.html` that inlines React + the ATUI player + that exact recorded trace. An end user can scrub the run beat-by-beat offline. The demo data is produced by the run, never hand-authored.
+A mock-provider agent (WeatherBot, two tools) runs, the framework records it as a typed agentthinkingui trace, and the generator emits a self-contained `out/replay.html` that inlines React + the ATUI player + that exact recorded trace. An end user can scrub the run beat-by-beat offline **and tap the final answer to open a "Why this answer" board** — the chain (answer ← tool output with score ← chosen tool ← context pieces with scores) is computed FROM THE RECORDING by `localizeContextBug` and mapped to the board by `toBacktrackTrace`; the tap is wired through agentthinkingui's real `onBacktrack` hook to a controlled `BacktrackOverlay`. Nothing is hand-authored: where the library cannot prove a link it says so (top suspects are marked path-only upper bounds, and the slice's honesty flags ride along verbatim).
 
 ```
 === SUMMARY ===
 trace beats: 4
 beat kinds: prompt -> ask -> return -> answer
-tools considered: 2 (clock, weather)
+tools considered: 2 (weather, clock)
 tool asked: weather
+why this answer (computed from the recording by localizeContextBug):
+  mode: correlational · suspects ranked: 5 · decided at: call-llm#40
+  top influence (path-only upper bound): stage context#6 via systemPromptInjections score 0.836
+  tool output that fed it: weather "Paris: 72F, sunny" score 0.491
+  honesty flags carried into panel: 2 (untracked-sources, no-control-deps)
+  link proven from the recording: yes
 file emitted: 03-user-facing-why/out/replay.html
 size bucket: 256KB-1MB
 html has embedded trace JSON: yes
+html has embedded why-chain JSON: yes
+html has why-answer panel (onBacktrack -> BacktrackOverlay): yes
 html has atui bootstrap: yes
 === END ===
 ```
