@@ -19,7 +19,7 @@ npm install
 npm run all
 ```
 
-`npm run all` runs all seven examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
+`npm run all` runs all eight examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
 
 Or run a single example:
 
@@ -31,6 +31,7 @@ npm run example:4   # 04-honest-absence
 npm run example:5   # 05-prove-by-replay
 npm run example:6   # 06-stock-desk (default mode; npm run stock-desk serves the interactive page)
 npm run example:7   # 07-chat-desk (default mode; npm run chat-desk serves the interactive chat)
+npm run example:8   # 08-app-gallery (default mode; npm run gallery serves the cards page + all three desks)
 ```
 
 ## Try it live (optional)
@@ -61,6 +62,7 @@ npm run live         # the live act — costs about two small Haiku calls
 | 5. Prove by replay | `05-prove-by-replay` | A wrong answer localized to the context that caused it, then confirmed counterfactually by rerunning with that piece ablated. |
 | 6. The stock desk (interactive) | `06-stock-desk` | An influence map you can drive: see what fed a BUY call, suspect social media, ignore it, and re-run the agent for real — the call flips to HOLD, proven by replay. |
 | 7. The chat desk (conversation) | `07-chat-desk` | A real multi-turn chatbot where transparency lives in the chat: every reply has a "visible reason" button, re-running a turn without a source shows a labeled what-if bubble beside the untouched original, and "continue from this version" forks the conversation forward — branch, never rewrite. |
+| 8. The app gallery (three apps, one machine) | `08-app-gallery` | Three real chat apps — stocks, movies, trips — sharing one visible-reason machine, with every context source served as an **MCP tool the agent calls** and labeled with its own provenance (live, synthetic fallback, or always-synthetic). |
 
 ## The examples
 
@@ -260,6 +262,46 @@ The ticker is parsed from your message (`$NVDA`, or a known company name; defaul
 **Frozen-world re-runs (the honesty keystone).** When you ignore a source and Re-run in live mode, the desk does **not** re-fetch. It replays the exact tool outputs recorded on the original turn — *same world, minus the ignored source* — and only the LLM calls stay real. The what-if bubble is labeled *"(world frozen at the original run)"*, and the server logs `[frozen-world] … external tool fetches during re-run = 0, live LLM calls = N` so the guarantee is auditable. This keeps a counterfactual honest: the answer can only move because a source was removed, never because the market data drifted between runs.
 
 **Cost.** Each reply ≈ 1 Haiku call; a baseline-checked Re-run ≈ up to ~8 small Haiku calls (ablated + baseline samples); forking costs nothing until you chat in it. Offline drill: set `CHATDESK_FORCE_FALLBACK=1` to force every fetcher to fail — all three sources fall back (labeled) and the chat still works.
+
+### 8 — The app gallery (three apps, one machine)
+
+The same machine, three products. A cards landing page opens onto a **stock desk** ("BUY or HOLD $NVDA?"), a **movie desk** ("should I watch *Heat* tonight?") and a **trip advisor** ("should I hike Mission Peak on Saturday?") — all sharing one copy of 07's visible-reason machine, parameterized by a small app pack.
+
+The step past 07 is where the context comes from. An app's sources are no longer facts the host pins into the prompt: they are **MCP tools the agent calls**. One small local MCP server (`08-app-gallery/mcp-server.js`, official `@modelcontextprotocol/sdk`, stdio) hosts every live fetcher; agentfootprint's `mcpClient` turns them into agent tools; a thin host decorator adds per-turn memoization, labeled fallbacks and a dispatch counter. Default mode swaps in `mockMcpClient` — same code path, no subprocess, no network, byte-stable.
+
+Every tool sentence carries its own provenance label, and the trip advisor's `crowd_level` is **synthetic by construction**: it never fetches anything, in any mode, and always says `[source: synthetic — modeled crowd estimate, not measured]`. A source that says what it is.
+
+Tap "visible reason" under any reply, flip a source off, and Re-run: the turn re-runs over the **frozen** tool results of the original turn — 0 new fetches, and the dispatch counter prints the proof — and the counterfactual appears beside the original with its causal verdict. "Continue from this version" forks the conversation forward. Branch, never rewrite.
+
+```
+=== SUMMARY ===
+the app gallery: 3 apps, one scripted turn each (mock provider, mock MCP tools)
+[stocks] Q: Should we BUY or HOLD $NVDA?
+[stocks] reply: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
+[stocks] top influence: social_sentiment [tool] score 0.791
+[movies] Q: Should I watch "Heat" tonight?
+[movies] reply: WATCH — near-universal acclaim outweighs the rental price.
+[movies] top influence: wiki_reception [tool] score 0.659
+[trip] Q: Should I hike Mission Peak on Saturday?
+[trip] reply: GO — Saturday looks clear with a high near 71°F and only a 5% chance of rain.
+[trip] top influence: weather_forecast [tool] score 0.736
+[movies] ignored source: wiki_reception
+[movies] what-if reply: SKIP — mixed signals: price is fine but nothing here says tonight is the night.
+[movies] flipped: true
+[movies] verdict: confirmed
+=== END ===
+```
+
+```sh
+npm run example:8      # scripted run, no network, no key — the verified summary
+npm run gallery        # cards page + all three desks on http://localhost:4175 (mock, no key)
+npm run gallery:live   # real Anthropic (haiku) + real keyless APIs over MCP (needs .env)
+GALLERY_FORCE_FALLBACK=1 npm run gallery:live   # offline drill: every source falls back, labeled
+```
+
+**Live sources, all keyless.** The movie desk reads iTunes Search (price, availability, advisory rating — commerce facts, never critic scores) and Wikipedia (plot + the Reception section, resolved through Wikipedia's search API so "Heat" lands on the 1995 film and not on thermodynamics). The trip advisor reads Open-Meteo (geocode → 7-day forecast → the next Saturday) and Wikipedia; its crowd estimate stays synthetic. The stock desk reuses 06/07's SEC EDGAR + Reddit fetchers — note that SEC's fair-access policy wants a contact **email** in the User-Agent, so out of the box those two tools return a labeled fallback; set `SEC_CONTACT=you@example.com` to make them live. Reddit 403s unauthenticated traffic and falls back too. Nothing is ever faked: a source that could not be fetched says so in its own sentence.
+
+**What the live model does with its tools is its own business.** The agent decides which tools to consult; a tool it skipped shows in the legend as "not consulted" rather than being invented. And a live re-run can honestly come back **not-confirmed** — the real model sometimes keeps its answer without the source you suspected. Scores suggest; re-runs convict.
 
 ## Citing
 

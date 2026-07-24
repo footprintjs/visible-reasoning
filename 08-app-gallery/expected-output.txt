@@ -1,0 +1,16 @@
+=== SUMMARY ===
+the app gallery: 3 apps, one scripted turn each (mock provider, mock MCP tools)
+[stocks] Q: Should we BUY or HOLD $NVDA?
+[stocks] reply: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
+[stocks] top influence: social_sentiment [tool] score 0.791
+[movies] Q: Should I watch "Heat" tonight?
+[movies] reply: WATCH — near-universal acclaim outweighs the rental price.
+[movies] top influence: wiki_reception [tool] score 0.659
+[trip] Q: Should I hike Mission Peak on Saturday?
+[trip] reply: GO — Saturday looks clear with a high near 71°F and only a 5% chance of rain.
+[trip] top influence: weather_forecast [tool] score 0.736
+[movies] ignored source: wiki_reception
+[movies] what-if reply: SKIP — mixed signals: price is fine but nothing here says tonight is the night.
+[movies] flipped: true
+[movies] verdict: confirmed
+=== END ===

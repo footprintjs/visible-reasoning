@@ -1,0 +1,285 @@
+// Example 8 — THE APP GALLERY (one visible-reason machine, three real chat apps).
+//
+// A cards landing page over three chat desks — a stock desk, a movie desk and a
+// trip advisor — that share ONE machine (lib/chat-core.js, lifted from 07 and
+// parameterized by app pack). The architectural step past 07: an app's context
+// sources are no longer facts the host pins into the prompt, they are MCP TOOLS
+// THE AGENT CALLS. One small local MCP server (mcp-server.js, official SDK,
+// stdio) hosts every live fetcher; agentfootprint's mcpClient turns them into
+// agent tools; a thin host decorator adds per-turn memoization (so a re-run
+// replays the ORIGINAL turn's tool bytes — 0 new fetches, and a counter proves
+// it), labeled fallbacks, and the dispatch count.
+//
+// Every tool sentence carries its own provenance label. The trip advisor's crowd
+// estimate is SYNTHETIC BY CONSTRUCTION and says so in every mode — the honesty
+// exhibit of the gallery.
+//
+//   node 08-app-gallery/run.js          → DEFAULT MODE: 1 scripted turn per app on
+//                                          mock MCP tools + the byte-stable SUMMARY
+//   node 08-app-gallery/run.js --serve  → generate out/*.html + serve on :4175
+//   node --env-file=.env 08-app-gallery/run.js --serve --live
+//                                       → real Anthropic (haiku) + the real MCP
+//                                          server over stdio + keyless public APIs
+import { createServer } from 'node:http';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { APPS, appById } from './apps/index.js';
+import { buildLiveClient, buildMockTools, decorateTools, metrics } from './lib/mcp.js';
+import { createChatCore } from './lib/chat-core.js';
+import { buildAppPage, buildGalleryPage } from './lib/page.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const LIVE = args.includes('--live');
+const PORT = 4175;
+
+const core = createChatCore({ live: LIVE });
+
+/** Boot the tool layer once, then hand each app its own subset (in pack order). */
+async function bootTools() {
+  const { client, tools } = LIVE ? await buildLiveClient() : await buildMockTools();
+  const decorated = decorateTools(tools, core.getPending);
+  const byName = new Map(decorated.map((t) => [t.schema.name, t]));
+  const perApp = new Map();
+  for (const app of APPS) {
+    const subset = app.tools.map((t) => {
+      const hit = byName.get(t.name);
+      if (!hit) throw new Error(`MCP server did not serve tool '${t.name}'`);
+      return hit;
+    });
+    perApp.set(app.id, subset);
+  }
+  return { client, perApp, served: decorated.map((t) => t.schema.name) };
+}
+
+const startSession = (app, perApp, label = app.title) =>
+  core.newSession({ pack: app, label, chat: core.makeChat(app), decoratedTools: perApp.get(app.id) });
+
+// ═══ DEFAULT MODE — the gated, byte-stable summary ═══════════════════════════
+async function defaultMode() {
+  const { perApp } = await bootTools();
+  const must = (cond, msg) => { if (!cond) throw new Error(`ASSERT FAILED: ${msg}`); };
+
+  const rows = [];
+  const bySession = new Map();
+  for (const app of APPS) {
+    const session = startSession(app, perApp);
+    bySession.set(app.id, session);
+    const turn = await core.chatTurn(session, app.story[0]);
+    const { map } = await core.reasonAbout(session, 0);
+    rows.push({ app, turn, map });
+    must(app.decisionWords.test(turn.reply), `${app.id} reply should carry a decision word`);
+    must(map.sources[0].id === app.driver, `${app.id} top influence should be ${app.driver}`);
+    must(map.sources[0].kind === 'tool', `${app.id} top influence should be a tool source`);
+  }
+
+  // The ONE gated counterfactual: the movie desk, without its reception source.
+  const movies = APPS.find((a) => a.id === 'movies');
+  const moviesSession = bySession.get('movies');
+  const dispatchesBefore = metrics.toolDispatches;
+  const { result: rerun } = await core.rerunTurnK(moviesSession, 0, [movies.driver]);
+
+  must(rows[0].turn.reply.includes('BUY'), 'stocks reply should be BUY');
+  must(rows[1].turn.reply.includes('WATCH'), 'movies reply should be WATCH');
+  must(rows[2].turn.reply.includes('GO'), 'trip reply should be GO');
+  must(rerun.answer.includes('SKIP'), 'movies what-if should be SKIP');
+  must(rerun.whatChanged.answerFlipped === true, 'movies re-run should flip the decision');
+  must(rerun.verdict?.verdict === 'confirmed', 'movies verdict should be confirmed');
+  must(metrics.toolDispatches - dispatchesBefore === 0, 're-run must dispatch ZERO MCP tool calls');
+
+  const top = (m) => `${m.sources[0].id} [${m.sources[0].kind}] score ${m.sources[0].score.toFixed(3)}`;
+  console.log('=== SUMMARY ===');
+  console.log('the app gallery: 3 apps, one scripted turn each (mock provider, mock MCP tools)');
+  for (const { app, turn, map } of rows) {
+    console.log(`[${app.id}] Q: ${turn.userMessage}`);
+    console.log(`[${app.id}] reply: ${turn.reply}`);
+    console.log(`[${app.id}] top influence: ${top(map)}`);
+  }
+  console.log(`[movies] ignored source: ${movies.driver}`);
+  console.log(`[movies] what-if reply: ${rerun.answer}`);
+  console.log(`[movies] flipped: ${rerun.whatChanged.answerFlipped}`);
+  console.log(`[movies] verdict: ${rerun.verdict.verdict}`);
+  console.log('=== END ===');
+}
+
+// ═══ SERVE MODE ══════════════════════════════════════════════════════════════
+function costNote() {
+  return 'Live mode: each reply ≈ one small Haiku call per tool the agent consults, plus one to answer; '
+    + 'a baseline-checked Re-run is a handful more and replays the frozen tool results of the original '
+    + 'turn — 0 new fetches (the dispatch counter prints the proof); forking costs nothing until you '
+    + 'chat in it. Tool data comes from keyless public APIs over MCP with a 4s timeout and labeled '
+    + 'fallbacks; the trip advisor’s crowd estimate is always synthetic.';
+}
+
+/** Mock serve: pre-run each app's scripted story so every page opens mid-story. */
+async function buildStories(perApp) {
+  const out = new Map();
+  for (const app of APPS) {
+    const session = startSession(app, perApp);
+    await core.chatTurn(session, app.story[0]);
+    const data = { order: [session.id], active: session.id, live: false, costNote: '',
+      sessions: {}, reason: {}, rerun: {} };
+    const r = await core.reasonAbout(session, 0);
+    data.reason[`${session.id}:0`] = { map: r.map, strategies: r.strategies };
+    if (app.id === 'movies') {
+      // Pre-run the gated what-if so the flip is visible the moment the page opens.
+      const { rerunId, result } = await core.rerunTurnK(session, 0, [app.driver]);
+      data.rerun[`${session.id}:0`] = {
+        rerunId, ignoredIds: [app.driver],
+        ignoredLabels: core.labelsFor(await core.getReport(session, 0), [app.driver]), result,
+      };
+    }
+    data.sessions[session.id] = core.sessionToData(session);
+    out.set(app.id, data);
+  }
+  return out;
+}
+
+async function serveMode() {
+  const { client, perApp, served } = await bootTools();
+  console.log(`MCP tool source: ${LIVE ? 'mcpClient (stdio subprocess → mcp-server.js)' : 'mockMcpClient (in-memory)'} `
+    + `— ${served.length} tools: ${served.join(', ')}`);
+
+  let pages;
+  if (LIVE) {
+    // Live boot: skip the pre-runs (cost). Open every desk empty, with the banner.
+    pages = new Map();
+    for (const app of APPS) {
+      const session = startSession(app, perApp);
+      pages.set(app.id, { order: [session.id], active: session.id, live: true, costNote: costNote(),
+        sessions: { [session.id]: core.sessionToData(session) }, reason: {}, rerun: {} });
+    }
+  } else {
+    pages = await buildStories(perApp);
+  }
+
+  const outDir = join(here, 'out');
+  mkdirSync(outDir, { recursive: true });
+  const html = new Map();
+  html.set('gallery', buildGalleryPage(APPS, { live: LIVE }));
+  for (const app of APPS) html.set(app.id, buildAppPage(app, pages.get(app.id)));
+  for (const [name, body] of html) {
+    const file = join(outDir, `${name}.html`);
+    writeFileSync(file, body);
+    console.log(`generated ${file}`);
+  }
+  if (LIVE) console.log(costNote());
+
+  const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => res(b)); });
+  const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const sendHtml = (res, body) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(body); };
+
+  const server = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, `http://localhost:${PORT}`);
+      const path = url.pathname;
+
+      if (req.method === 'GET' && (path === '/' || path === '/gallery.html')) { sendHtml(res, html.get('gallery')); return; }
+      if (req.method === 'GET' && path === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+      const staticApp = path.match(/^\/(\w+)\.html$/);
+      if (req.method === 'GET' && staticApp && html.has(staticApp[1])) { sendHtml(res, html.get(staticApp[1])); return; }
+      const appRoute = path.match(/^\/app\/(\w+)$/);
+      if (req.method === 'GET' && appRoute && html.has(appRoute[1])) { sendHtml(res, html.get(appRoute[1])); return; }
+
+      // POST /app/<id>/{chat,reason,rerun-turn,fork} — 07's four endpoints, scoped per app.
+      const api = path.match(/^\/app\/(\w+)\/([\w-]+)$/);
+      if (req.method === 'POST' && api) {
+        const app = appById(api[1]);
+        if (!app) { send(res, 404, { error: `unknown app '${api[1]}'` }); return; }
+        const body = JSON.parse((await readBody(req)) || '{}');
+        // A supplied-but-unknown sessionId is a bug, not a new conversation.
+        const resolve = () => {
+          const s = core.sessions.get(body.sessionId);
+          if (!s) throw new Error('unknown sessionId — start a conversation first');
+          if (s.appId !== app.id) throw new Error(`session ${s.id} belongs to '${s.appId}', not '${app.id}'`);
+          return s;
+        };
+
+        if (api[2] === 'chat') {
+          let session;
+          if (body.sessionId) {
+            session = core.sessions.get(body.sessionId);
+            if (!session) { send(res, 404, { error: 'unknown sessionId — start a conversation first' }); return; }
+            if (session.appId !== app.id) { send(res, 400, { error: `session ${session.id} belongs to '${session.appId}'` }); return; }
+          } else {
+            session = startSession(app, perApp);
+          }
+          if (typeof body.message !== 'string' || !body.message.trim()) throw new Error('message required');
+          const turn = await core.chatTurn(session, body.message);
+          const m = session.meta[turn.index] ?? {};
+          send(res, 200, { sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
+            label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
+            entity: m.entity ?? session.entity, provenance: m.provenance ?? null });
+          return;
+        }
+
+        if (api[2] === 'reason') {
+          const session = resolve();
+          if (!session.chat.turns[body.turnIndex]) throw new Error('unknown session/turn');
+          const r = await core.reasonAbout(session, body.turnIndex);
+          send(res, 200, { map: r.map, strategies: r.strategies });
+          return;
+        }
+
+        if (api[2] === 'rerun-turn') {
+          const session = resolve();
+          if (!session.chat.turns[body.turnIndex]) throw new Error('unknown session/turn');
+          const ids = Array.isArray(body.ignore) ? body.ignore : [];
+          const { rerunId, result } = await core.rerunTurnK(session, body.turnIndex, ids);
+          send(res, 200, { rerunId, ignoredLabels: core.labelsFor(await core.getReport(session, body.turnIndex), ids), result });
+          return;
+        }
+
+        if (api[2] === 'fork') {
+          const session = resolve();
+          const fork = core.forkFrom(session, body.turnIndex, body.rerunId); // throws on unknown rerunId
+          // `entity` rides the response so the fork's header names the RIGHT subject
+          // from its first paint — without it the client falls back to the pack
+          // default and briefly labels the fork with the wrong movie/ticker/place.
+          send(res, 200, { sessionId: fork.id, label: fork.label, transcript: fork.seedTranscript,
+            ignoredSourceIds: fork.excludedIds, forkOf: fork.forkOf, entity: fork.entity });
+          return;
+        }
+      }
+
+      res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found');
+    } catch (err) {
+      send(res, 400, { error: String(err && err.message ? err.message : err) });
+    }
+  });
+
+  server.listen(PORT, () => {
+    console.log(`The app gallery is live → http://localhost:${PORT}`);
+    console.log(`  ${APPS.map((a) => `/app/${a.id}`).join(' · ')}`);
+    console.log('POST /app/<id>/chat {message} · /reason {sessionId,turnIndex} · /rerun-turn {sessionId,turnIndex,ignore} · /fork {sessionId,turnIndex,rerunId}');
+  });
+
+  // stdio MCP servers die with their parent, but close the client explicitly so
+  // Ctrl-C leaves no orphan and the HTTP socket is released first.
+  const shutdown = async () => {
+    server.close();
+    try { await client.close(); } catch { /* already gone */ }
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+// ═══ Entry ═══════════════════════════════════════════════════════════════════
+if (LIVE && !process.env.ANTHROPIC_API_KEY) {
+  console.error(
+    'ANTHROPIC_API_KEY is not set.\n'
+    + '  1. cp .env.example .env\n'
+    + '  2. paste your Anthropic key into .env\n'
+    + '  3. npm run gallery:live   (it loads .env for you)\n'
+    + 'The mock gallery needs no key:  npm run gallery',
+  );
+  process.exit(1);
+}
+
+if (args.includes('--serve')) {
+  await serveMode();
+} else {
+  await defaultMode();
+}
