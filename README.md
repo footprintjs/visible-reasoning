@@ -245,7 +245,21 @@ npm run chat-desk      # serve the chat on http://localhost:4174
 npm run chat-desk:live # the same desk against the real Anthropic API (needs .env)
 ```
 
-**BRANCH, NEVER REWRITE.** The original reply is immutable; a re-run never replaces it — the counterfactual is a separate, clearly-labeled what-if bubble, and a fork is a new recorded session (the original transcript stays whole). The verdict chip renders only when `checkBaseline: true` earned it; scores suggest, re-runs convict. Opened as a static file the recorded story renders read-only and every interactive control states what it needs and does nothing else — nothing is ever faked. Live mode (`npm run chat-desk:live`) swaps the mock for the real Anthropic API (Haiku); the key is read from `.env` and never printed.
+**BRANCH, NEVER REWRITE.** The original reply is immutable; a re-run never replaces it — the counterfactual is a separate, clearly-labeled what-if bubble, and a fork is a new recorded session (the original transcript stays whole). The verdict chip renders only when `checkBaseline: true` earned it; scores suggest, re-runs convict. Opened as a static file the recorded story renders read-only and every interactive control states what it needs and does nothing else — nothing is ever faked.
+
+### Live mode — real data behind the desk
+
+`npm run chat-desk:live` swaps the mock for the real Anthropic API (Haiku); the key is read from `.env` and never printed. In live mode the three context sources are **fetched for real** (keyless, `node` fetch, ~4s timeout each) instead of scripted:
+
+- **quarterly-results** — SEC EDGAR (`data.sec.gov` company-facts; ticker→CIK via `www.sec.gov/files/company_tickers.json`, cached per process) → the latest reported revenue for the period, as one plain sentence.
+- **insider-activity** — SEC EDGAR submissions → the count of Form 4 (insider) filings in the last 90 days plus the most-recent date (the count carries its own window so it can't read as an unbounded multi-year "spike").
+- **social-sentiment** — a keyless Reddit JSON search over `r/stocks+wallstreetbets` → post count + latest title. (Reddit commonly 403/429s unauthenticated traffic; when it does, this source falls back — see below.)
+
+The ticker is parsed from your message (`$NVDA`, or a known company name; default **NVDA**), and the bot's system prompt notes the active ticker. Every tool result ends with its own **provenance label** — ` [source: live — SEC EDGAR]` or ` [source: synthetic fallback — <reason>]` — so the influence panel's snippet shows exactly where each figure came from. A turn that mixes live and fallback sources is fine; each source is labeled independently. When a source cannot be fetched, a realistic **labeled** synthetic figure is used instead of any scripted test string, and the chat keeps working. The page header shows the active ticker and a per-tool provenance legend (live/fallback dots).
+
+**Frozen-world re-runs (the honesty keystone).** When you ignore a source and Re-run in live mode, the desk does **not** re-fetch. It replays the exact tool outputs recorded on the original turn — *same world, minus the ignored source* — and only the LLM calls stay real. The what-if bubble is labeled *"(world frozen at the original run)"*, and the server logs `[frozen-world] … external tool fetches during re-run = 0, live LLM calls = N` so the guarantee is auditable. This keeps a counterfactual honest: the answer can only move because a source was removed, never because the market data drifted between runs.
+
+**Cost.** Each reply ≈ 1 Haiku call; a baseline-checked Re-run ≈ up to ~8 small Haiku calls (ablated + baseline samples); forking costs nothing until you chat in it. Offline drill: set `CHATDESK_FORCE_FALLBACK=1` to force every fetcher to fail — all three sources fall back (labeled) and the chat still works.
 
 ## Citing
 

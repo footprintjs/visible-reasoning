@@ -92,22 +92,217 @@ function scriptedRespond(req) {
     : 'The position looks steady on fundamentals — Q2 in line with guidance, insider holdings unchanged.';
 }
 
+// ═══ LIVE tool fetchers — real data where possible, labeled fallback otherwise ═
+// ONLY reached in --live mode; mock/default mode never calls any of this. Each
+// fetcher is keyless (node global fetch, ~4s timeout) and returns ONE plain
+// sentence whose tail carries its own provenance label, so the influence panel's
+// snippet shows the source naturally. Every result is labeled independently — a
+// turn that mixes live + fallback sources is fine.
+// SEC's fair-access policy asks for a declarative "name contact-email" User-Agent;
+// this exact format is accepted (a slash/URL UA is 403'd). Reddit instead wants a
+// browser-like UA — and even then commonly 403/429s unauthenticated traffic, which
+// is precisely why social_sentiment carries a labeled fallback.
+// SEC fair-access policy wants a declarative UA with a contact. Default to the
+// repo URL (the maintainer keeps their email off public code by choice); set
+// SEC_CONTACT to your email for heavier use.
+const SEC_UA = 'footprintjs-visible-reasoning ' + (process.env.SEC_CONTACT ?? 'https://github.com/footprintjs/visible-reasoning');
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const FETCH_TIMEOUT_MS = 4000;
+// Offline drill: force every fetcher to fail so we can prove labeled fallback +
+// that chat still works with no network. (env: CHATDESK_FORCE_FALLBACK=1)
+const FORCE_FALLBACK = process.env.CHATDESK_FORCE_FALLBACK === '1';
+
+// Instrumentation the frozen-world evidence reads: counts REAL outbound tool
+// fetches (SEC/Reddit), NOT Anthropic LLM calls. A frozen-world re-run must move
+// this counter by ZERO (it replays recorded outputs) while LLM calls still fire.
+const metrics = { toolFetches: 0 };
+
+async function safeFetch(url, opts = {}) {
+  if (FORCE_FALLBACK) throw new Error('offline drill forced (CHATDESK_FORCE_FALLBACK=1)');
+  metrics.toolFetches += 1;
+  const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+  console.log(`[live-fetch] GET ${host}`);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const r = await fetch(url, {
+      ...opts,
+      signal: ctrl.signal,
+      headers: { 'user-agent': SEC_UA, accept: 'application/json', ...(opts.headers || {}) },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r;
+  } finally { clearTimeout(timer); }
+}
+
+const NAME_TO_TICKER = {
+  nvidia: 'NVDA', apple: 'AAPL', tesla: 'TSLA', microsoft: 'MSFT', amazon: 'AMZN',
+  google: 'GOOGL', alphabet: 'GOOGL', meta: 'META', facebook: 'META', netflix: 'NFLX',
+  amd: 'AMD', intel: 'INTC', palantir: 'PLTR', broadcom: 'AVGO',
+};
+// Parse a ticker from the user message: $TICKER first, then a known-name map,
+// else keep the conversation's current ticker (default NVDA).
+function tickerFromMessage(msg, fallback = 'NVDA') {
+  const cash = String(msg).match(/\$([A-Za-z]{1,5})\b/);
+  if (cash) return cash[1].toUpperCase();
+  const lower = String(msg).toLowerCase();
+  for (const name of Object.keys(NAME_TO_TICKER))
+    if (lower.includes(name)) return NAME_TO_TICKER[name];
+  return fallback || 'NVDA';
+}
+
+const labelLive = (src) => ` [source: live — ${src}]`;
+const labelFallback = (reason) => ` [source: synthetic fallback — ${reason}]`;
+function reasonOf(err) {
+  const m = String((err && err.message) || err || 'fetch failed');
+  return m.length > 64 ? `${m.slice(0, 61)}…` : m;
+}
+function clip(str, n) { const s = String(str); return s.length > n ? `${s.slice(0, n - 1)}…` : s; }
+function fmtUSD(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${n.toLocaleString('en-US')}`;
+}
+// A stable, realistic synthetic revenue per ticker (used only in labeled fallback).
+function synthRevenue(ticker) {
+  let h = 0; for (const c of ticker) h = ((h * 31) + c.charCodeAt(0)) >>> 0;
+  return `$${(5 + ((h % 450) / 10)).toFixed(1)}B`;
+}
+
+// ticker → zero-padded CIK, via the SEC's ticker map (cached per process; a
+// failure is NOT cached, so a transient outage can recover on the next turn).
+let cikMapPromise = null;
+async function tickerToCik(ticker) {
+  if (!cikMapPromise) {
+    cikMapPromise = safeFetch('https://www.sec.gov/files/company_tickers.json')
+      .then((r) => r.json())
+      .then((j) => {
+        const m = new Map();
+        for (const k of Object.keys(j)) m.set(String(j[k].ticker).toUpperCase(), String(j[k].cik_str).padStart(10, '0'));
+        return m;
+      });
+    cikMapPromise.catch(() => { cikMapPromise = null; });
+  }
+  const map = await cikMapPromise;
+  const cik = map.get(ticker.toUpperCase());
+  if (!cik) throw new Error(`no CIK on file for ${ticker}`);
+  return cik;
+}
+
+async function fetchQuarterly(ticker) {
+  try {
+    const cik = await tickerToCik(ticker);
+    const concepts = ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet'];
+    // Pool entries from EVERY concept, then pick the one with the latest period
+    // `end` (tie-break on `filed`). Companies switch us-gaap revenue tags over
+    // time, so first-concept-wins can pin a stale figure while a newer tag holds
+    // the current one — and relying on array order for "last" is unguaranteed.
+    const pool = [];
+    for (const c of concepts) {
+      try {
+        const j = await (await safeFetch(`https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/us-gaap/${c}.json`)).json();
+        const usd = (j.units && j.units.USD) || [];
+        for (const u of usd) if (u.form && u.end && typeof u.val === 'number') pool.push(u);
+      } catch { /* try the next revenue concept */ }
+    }
+    if (!pool.length) throw new Error('no reported revenue concept');
+    const hit = pool.reduce((best, u) => {
+      if (u.end > best.end) return u;
+      if (u.end === best.end && String(u.filed || '') > String(best.filed || '')) return u;
+      return best;
+    });
+    const period = hit.fy
+      ? (hit.fp && hit.fp !== 'FY' ? `${hit.fp} FY${hit.fy}` : `FY${hit.fy}`)
+      : (hit.end || 'the latest period');
+    const sentence = `${ticker} reported revenue of ${fmtUSD(hit.val)} for ${period} (form ${hit.form}, period ending ${hit.end}).`;
+    return { id: 'quarterly-results', provenance: 'live', text: sentence + labelLive('SEC EDGAR') };
+  } catch (err) {
+    const sentence = `${ticker} revenue is an estimated ${synthRevenue(ticker)} for the most recent quarter, roughly in line with guidance (illustrative).`;
+    return { id: 'quarterly-results', provenance: 'fallback', text: sentence + labelFallback(reasonOf(err)) };
+  }
+}
+
+async function fetchInsider(ticker) {
+  try {
+    const cik = await tickerToCik(ticker);
+    const j = await (await safeFetch(`https://data.sec.gov/submissions/CIK${cik}.json`)).json();
+    const forms = (j.filings && j.filings.recent && j.filings.recent.form) || [];
+    const dates = (j.filings && j.filings.recent && j.filings.recent.filingDate) || [];
+    // Bound the count to a stated window so the number carries its own denominator.
+    // EDGAR's `recent` block spans up to 1000 filings of ALL types across multiple
+    // years; an unbounded Form 4 total reads to the model as a "recent spike".
+    // filingDate is ISO YYYY-MM-DD (lexicographic == chronological); recent[] is
+    // newest-first, so `latest` is the most recent Form 4 on record regardless of
+    // the window.
+    const WINDOW_DAYS = 90;
+    const cutoff = new Date(Date.now() - (WINDOW_DAYS * 864e5)).toISOString().slice(0, 10);
+    let count = 0; let latest = null;
+    for (let i = 0; i < forms.length; i += 1) {
+      if (forms[i] !== '4') continue;
+      if (!latest) latest = dates[i];
+      if (dates[i] && dates[i] >= cutoff) count += 1;
+    }
+    const sentence = count
+      ? `${ticker} had ${count} Form 4 insider filing${count === 1 ? '' : 's'} in the last ${WINDOW_DAYS} days, the most recent dated ${latest}.`
+      : (latest
+        ? `${ticker} had no Form 4 insider filings in the last ${WINDOW_DAYS} days (most recent on record dated ${latest}).`
+        : `${ticker} shows no Form 4 insider filings in the latest submissions window.`);
+    return { id: 'insider-activity', provenance: 'live', text: sentence + labelLive('SEC EDGAR Form 4') };
+  } catch (err) {
+    const sentence = `${ticker} shows no unusual insider activity this quarter; holdings appear steady (illustrative).`;
+    return { id: 'insider-activity', provenance: 'fallback', text: sentence + labelFallback(reasonOf(err)) };
+  }
+}
+
+async function fetchSocial(ticker) {
+  try {
+    const url = `https://www.reddit.com/r/stocks+wallstreetbets/search.json?q=${encodeURIComponent(ticker)}&restrict_sr=on&sort=new&limit=25`;
+    const j = await (await safeFetch(url, { headers: { 'user-agent': BROWSER_UA } })).json();
+    const posts = ((j.data && j.data.children) || []).map((c) => c.data).filter(Boolean);
+    if (!posts.length) throw new Error('no matching posts');
+    const sentence = `${posts.length} recent r/stocks+wallstreetbets post${posts.length === 1 ? '' : 's'} mention ${ticker}; the latest is titled "${clip(posts[0].title, 120)}".`;
+    return { id: 'social-sentiment', provenance: 'live', text: sentence + labelLive('Reddit r/stocks+wallstreetbets') };
+  } catch (err) {
+    const sentence = `Social chatter on ${ticker} looks broadly bullish across retail forums right now (illustrative).`;
+    return { id: 'social-sentiment', provenance: 'fallback', text: sentence + labelFallback(reasonOf(err)) };
+  }
+}
+
+const FACT_META = {
+  'quarterly-results': 'Latest quarterly results',
+  'insider-activity': 'Insider trading activity',
+  'social-sentiment': 'Social media sentiment signal',
+};
+// Fetch all three sources for a ticker (parallel), returning the recorded "world":
+// an array of { id, provenance, text } — text already carries its provenance label.
+async function fetchWorld(ticker) {
+  return Promise.all([fetchQuarterly(ticker), fetchInsider(ticker), fetchSocial(ticker)]);
+}
+// The recorded world → the same defineFact injections the mock uses, but with live
+// data. localizeContextBug still ranks them as 'injection' sources, unchanged.
+function factsFromWorld(world) {
+  return world.map((w) => defineFact({ id: w.id, description: FACT_META[w.id], data: w.text }));
+}
+
 // ═══ The ONE turn factory ════════════════════════════════════════════════════
 // Live turns, rerun probes, and fork turns all go through it — a single source of
 // truth. Ablations are applied at CONSTRUCTION (the documented seam): specs list
 // injection ids to exclude; a FRESH provider per call makes removal a real
 // counterfactual. History is the hcifootprint-demo convention: thread the frozen
 // transcript into the message string, byte-exact between the recorded turn and its
-// rerun.
-async function runTurn({ transcriptBefore, userMessage, excludedIds, specs = [], live }) {
+// rerun. `factsOverride` carries a live turn's RECORDED world so re-runs replay it
+// (frozen world, no re-fetch); when null the static mock FACTS are used unchanged.
+async function runTurn({ transcriptBefore, userMessage, excludedIds, specs = [], live, factsOverride = null, system = SYSTEM }) {
   const excluded = new Set(excludedIds);
   for (const spec of specs)
     if (spec.kind === 'injection') for (const id of spec.excludeInjectionIds) excluded.add(id);
-  const facts = FACTS.filter((f) => !excluded.has(f.id));
+  const facts = (factsOverride ?? FACTS).filter((f) => !excluded.has(f.id));
 
   const provider = live ? anthropic() : mock({ respond: scriptedRespond }); // FRESH per call
   const events = [];
-  let builder = Agent.create({ provider, model: live ? MODEL : 'mock-1', maxIterations: 2 }).system(SYSTEM);
+  let builder = Agent.create({ provider, model: live ? MODEL : 'mock-1', maxIterations: 2 }).system(system);
   for (const fact of facts) builder = builder.fact(fact);
   const agent = builder.build();
   agent.on('*', (e) => events.push(e));
@@ -129,28 +324,42 @@ let sessionCounter = 0;
 let rerunCounter = 0;
 const embedder = embeddingCache(mockEmbedder()); // one shared embedder, process-wide
 
-function newSession({ label, forkOf = null, excludedIds = [], transcript = [] }) {
+function newSession({ label, forkOf = null, excludedIds = [], transcript = [], ticker = 'NVDA' }) {
   const id = `s${++sessionCounter}`;
   const s = {
     id, label, forkOf,
     excludedIds: [...excludedIds],
     seedTranscript: [...transcript], // frozen history the session opened with (forks only)
     transcript: [...transcript],     // append-only, never rewritten
+    ticker,                          // live mode only; forks inherit the origin turn's ticker
     turns: [],
   };
   sessions.set(id, s);
   return s;
 }
 
-// Running turn K in a session (records a frozen TurnRecord).
+// Running turn K in a session (records a frozen TurnRecord). In live mode the
+// three context sources are FETCHED here, once, and the recorded world (facts +
+// system + provenance) is frozen onto the turn so re-runs replay it verbatim.
 async function chatTurn(session, userMessage) {
   const transcriptBefore = Object.freeze([...session.transcript]);
-  const t = await runTurn({ transcriptBefore, userMessage, excludedIds: session.excludedIds, live: LIVE });
+  let factsOverride = null; let system = SYSTEM; let provenance = null; let ticker = session.ticker;
+  if (LIVE) {
+    ticker = tickerFromMessage(userMessage, session.ticker);
+    session.ticker = ticker;
+    const world = await fetchWorld(ticker);
+    factsOverride = factsFromWorld(world);
+    provenance = Object.fromEntries(world.map((w) => [w.id, w.provenance]));
+    system = `${SYSTEM} The active ticker under discussion is ${ticker}.`;
+    console.log(`[live] recorded world for ${ticker}: ${world.map((w) => `${w.id}=${w.provenance}`).join(' ')}`);
+  }
+  const t = await runTurn({ transcriptBefore, userMessage, excludedIds: session.excludedIds, live: LIVE, factsOverride, system });
   session.transcript.push(`User: ${userMessage}`, `Advisor: ${t.content}`);
   const turn = {
     index: session.turns.length, userMessage, reply: t.content,
     transcriptBefore, snapshot: t.snapshot, events: t.events,
     lastLlmCallId: t.lastLlmCallId, report: null, reruns: new Map(),
+    recordedFacts: factsOverride, system, provenance, ticker, // frozen world for re-runs
   };
   session.turns.push(turn);
   return turn;
@@ -221,22 +430,37 @@ async function decisionChanged(original, ablated) {
 async function rerunTurnK(session, k, ignoreIds) {
   const turn = session.turns[k];
   if (!turn.report) await reasonAbout(session, k);
+  // FROZEN WORLD (the honesty keystone): in live mode the runner does NOT re-fetch.
+  // It replays the EXACT recorded tool outputs from the original turn (turn.recordedFacts)
+  // — same world, minus the ignored source (which the ablation specs strip). Only the
+  // LLM calls stay real. We prove it by snapshotting the tool-fetch counter around the
+  // whole re-run: it must not move, while live LLM calls still fire.
+  const fetchesBefore = metrics.toolFetches;
+  let rerunLlmCalls = 0;
   const result = await rerunWithoutSources({
     report: turn.report,
     ignore: ignoreIds, // plain ids from removableSources; unknown ids THROW
-    runner: async (specs) =>
-      (await runTurn({
+    runner: async (specs) => {
+      const res = await runTurn({
         transcriptBefore: turn.transcriptBefore, // the FROZEN recorded history
         userMessage: turn.userMessage,
         excludedIds: session.excludedIds,        // fork sessions keep their exclusions
         specs, live: LIVE,
-      })).content,
+        factsOverride: turn.recordedFacts,       // replay the frozen world; no re-fetch
+        system: turn.system ?? SYSTEM,
+      });
+      rerunLlmCalls += res.events ? llmCallIdsFromEvents(res.events).length : 0;
+      return res.content;
+    },
     originalAnswer: turn.reply,
     embedder,
     answerChanged: decisionChanged,
     checkBaseline: true,        // unlocks the causal verdict
     samples: LIVE ? 2 : 3,      // live cost control (floor is 2)
   });
+  if (LIVE) {
+    console.log(`[frozen-world] re-run ignoring [${ignoreIds.join(', ')}]: external tool fetches during re-run = ${metrics.toolFetches - fetchesBefore}, live LLM calls = ${rerunLlmCalls}`);
+  }
   const rerunId = `r${++rerunCounter}`;
   // Key by rerunId (append-only) so every recorded rerun stays forkable for the
   // process lifetime — re-running the same ignore-set no longer orphans an
@@ -260,6 +484,7 @@ function forkFrom(session, k, rerunId) {
     forkOf: { sessionId: session.id, turnIndex: k, ignoredIds: hit.ignoredIds },
     excludedIds: [...new Set([...session.excludedIds, ...hit.ignoredIds])],
     transcript: [...turn.transcriptBefore, `User: ${turn.userMessage}`, `Advisor: ${hit.result.answer}`],
+    ticker: turn.ticker ?? session.ticker, // carry the origin turn's world forward (live mode)
   });
   return fork;
 }
@@ -328,7 +553,8 @@ function sessionToData(s) {
     id: s.id, label: s.label, forkOf: s.forkOf,
     ignoredSourceIds: s.excludedIds,
     seed: s.seedTranscript,
-    turns: s.turns.map((t) => ({ index: t.index, userMessage: t.userMessage, reply: t.reply })),
+    ticker: s.ticker,
+    turns: s.turns.map((t) => ({ index: t.index, userMessage: t.userMessage, reply: t.reply, provenance: t.provenance, ticker: t.ticker })),
   };
 }
 
@@ -385,6 +611,14 @@ function buildPage(data) {
   .cd-inputrow button:disabled, .cd-inputrow input:disabled { opacity: 0.5; cursor: not-allowed; }
   .cd-empty { color: #8A7A66; font-size: 13px; line-height: 1.5; padding: 24px 8px; text-align: center; }
   .cd-disnote { font-size: 11.5px; color: #8A7A66; margin: 5px 0 0; }
+  .cd-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; margin: 0 0 10px;
+    padding: 7px 11px; border-radius: 9px; background: #FFFDFA; border: 1px solid #E6D9C6; font-size: 11.5px; color: #6E5C49; }
+  .cd-legend .cd-ticker { font-weight: 700; color: #C0531F; }
+  .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+  .cd-legend .cd-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .cd-legend .cd-dot.live { background: #3E9C4D; }
+  .cd-legend .cd-dot.fallback { background: #fff; border: 1.5px solid #C9932B; }
+  .cd-legend .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
 </style></head>
 <body><div id="root"></div>
 <script>
@@ -483,7 +717,8 @@ function ChatDesk() {
       setSessions(function (m) {
         var n = Object.assign({}, m);
         var sess = Object.assign({}, n[j.sessionId]);
-        sess.turns = sess.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply }]);
+        sess.turns = sess.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply, provenance: j.provenance, ticker: j.ticker }]);
+        if (j.ticker) sess.ticker = j.ticker;
         n[j.sessionId] = sess; return n;
       });
       if (order.indexOf(j.sessionId) === -1) setOrder(order.concat([j.sessionId]));
@@ -517,7 +752,8 @@ function ChatDesk() {
           ? e('span', { className: 'chip ' + verdict.verdict }, verdict.verdict + ' — ' + verdict.claim)
           : e('span', { className: 'chip observed' }, 'observed only (no baseline check)');
         thread.push(e('div', { key: 'wf' + t.index, className: 'whatif', 'data-testid': 'whatif-' + key },
-          e('p', { className: 'whatif-lbl' }, 'without ' + (wf.ignoredLabels || wf.ignoredIds).join(', ') + ', I would have said:'),
+          e('p', { className: 'whatif-lbl' }, 'without ' + (wf.ignoredLabels || wf.ignoredIds).join(', ') + ', I would have said:'
+            + (DATA.live ? ' (world frozen at the original run)' : '')),
           e('div', { className: 'whatif-ans' }, wf.result.answer),
           chip,
           e('p', { className: 'whatif-sum' }, wf.result.whatChanged.summary),
@@ -537,6 +773,27 @@ function ChatDesk() {
         + (sess.ignoredSourceIds || []).join(', ') + ' stays ignored for every later turn')
     : null;
 
+  // Live-mode header: the active ticker + a per-tool provenance legend (live/fallback
+  // dots), read from the most recent turn that recorded a world.
+  var legend = null;
+  if (DATA.live) {
+    var lastProv = null;
+    var tks = (sess && sess.turns) || [];
+    for (var li = tks.length - 1; li >= 0; li -= 1) { if (tks[li].provenance) { lastProv = tks[li].provenance; break; } }
+    var TOOLS = [['quarterly-results', 'quarterly'], ['insider-activity', 'insider'], ['social-sentiment', 'social']];
+    var dot = function (id, name) {
+      var p = lastProv && lastProv[id];
+      var cls = p === 'live' ? 'live' : (p === 'fallback' ? 'fallback' : 'unknown');
+      var title = p ? name + ': ' + p : name + ': awaiting first reply';
+      return e('span', { key: id, className: 'cd-leg-item', title: title },
+        e('span', { className: 'cd-dot ' + cls }), name + (p ? '' : ' —'));
+    };
+    legend = e('div', { className: 'cd-legend', 'data-testid': 'live-legend' },
+      e('span', { className: 'cd-ticker' }, 'Active ticker: ' + ((sess && sess.ticker) || 'NVDA')),
+      TOOLS.map(function (t) { return dot(t[0], t[1]); }),
+      e('span', { style: { color: '#8A7A66' } }, '● live · ○ fallback'));
+  }
+
   var panel = panelKey && reason[panelKey]
     ? e(InfluenceMap, { key: panelKey, map: reason[panelKey].map, strategies: reason[panelKey].strategies,
         activeStrategy: reason[panelKey].map.rankedBy, onRerun: doRerun, brand: 'The chat desk' })
@@ -552,6 +809,7 @@ function ChatDesk() {
     e('div', { className: 'cd-grid' },
       e('div', { className: 'cd-pane' },
         e('div', { className: 'cd-tabs' }, tabs),
+        legend,
         prov,
         e('div', { className: 'cd-thread' }, thread),
         e('div', { className: 'cd-inputrow' },
@@ -570,8 +828,9 @@ ReactDOMClient.createRoot(document.getElementById('root')).render(e(ChatDesk));
 
 // ═══ SERVE MODE ══════════════════════════════════════════════════════════════
 function costNote() {
-  return 'Live mode: each reply ≈ 1 Haiku call; each Re-run ≈ 4 Haiku calls '
-    + '(2 ablated + 2 baseline); forking costs nothing until you chat in it.';
+  return 'Live mode: each reply ≈ 1 Haiku call; a baseline-checked Re-run ≈ up to ~8 small Haiku calls '
+    + '(ablated + baseline samples); forking costs nothing until you chat in it. Tool data is fetched live '
+    + 'at record time and frozen for re-runs (same world, minus the ignored source).';
 }
 
 async function buildStory() {
@@ -644,7 +903,8 @@ async function serveMode() {
         if (typeof message !== 'string' || !message.trim()) throw new Error('message required');
         const turn = await chatTurn(session, message);
         send(res, 200, { sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
-          label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds });
+          label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
+          ticker: turn.ticker, provenance: turn.provenance });
         return;
       }
 
