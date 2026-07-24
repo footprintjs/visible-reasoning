@@ -13,6 +13,9 @@
     "example:5": "node 05-prove-by-replay/run.js",
     "example:6": "node 06-stock-desk/run.js",
     "stock-desk": "node 06-stock-desk/run.js --serve",
+    "example:7": "node 07-chat-desk/run.js",
+    "chat-desk": "node 07-chat-desk/run.js --serve",
+    "chat-desk:live": "node --env-file=.env 07-chat-desk/run.js --serve --live",
     "live": "node --env-file=.env live/run.js",
     "verify": "node verify.js",
     "all": "node verify.js"

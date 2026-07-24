@@ -1,6 +1,6 @@
 # Visible Reasoning — runnable reference implementations
 
-Six small, self-contained examples that demonstrate the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Each one runs a real pipeline, records it, and shows the paper's third transparency paradigm — **recorded decision evidence**, where the execution substrate owns the trace instead of a model narrating itself. Every example is one `run.js`, costs nothing to run (mock providers only, no API keys), and prints a stable summary checked against an `expected-output.txt`. The last one also has an interactive mode — a served page where you tap through the influence map and re-run the agent for real.
+Seven small, self-contained examples that demonstrate the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Each one runs a real pipeline, records it, and shows the paper's third transparency paradigm — **recorded decision evidence**, where the execution substrate owns the trace instead of a model narrating itself. Every example is one `run.js`, costs nothing to run (mock providers only, no API keys), and prints a stable summary checked against an `expected-output.txt`. The last two also have an interactive mode — a served page where you tap through the influence map, re-run the agent for real, and (in the chat desk) branch the conversation from a counterfactual.
 
 ## The paper
 
@@ -19,7 +19,7 @@ npm install
 npm run all
 ```
 
-`npm run all` runs all six examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
+`npm run all` runs all seven examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
 
 Or run a single example:
 
@@ -30,6 +30,7 @@ npm run example:3   # 03-user-facing-why
 npm run example:4   # 04-honest-absence
 npm run example:5   # 05-prove-by-replay
 npm run example:6   # 06-stock-desk (default mode; npm run stock-desk serves the interactive page)
+npm run example:7   # 07-chat-desk (default mode; npm run chat-desk serves the interactive chat)
 ```
 
 ## Try it live (optional)
@@ -59,6 +60,7 @@ npm run live         # the live act — costs about two small Haiku calls
 | 4. Honest absence | `04-honest-absence` | Two values in one run: one proven back to its origin, one honestly flagged `CANNOT PROVE` because its input (env) was untracked. |
 | 5. Prove by replay | `05-prove-by-replay` | A wrong answer localized to the context that caused it, then confirmed counterfactually by rerunning with that piece ablated. |
 | 6. The stock desk (interactive) | `06-stock-desk` | An influence map you can drive: see what fed a BUY call, suspect social media, ignore it, and re-run the agent for real — the call flips to HOLD, proven by replay. |
+| 7. The chat desk (conversation) | `07-chat-desk` | A real multi-turn chatbot where transparency lives in the chat: every reply has a "visible reason" button, re-running a turn without a source shows a labeled what-if bubble beside the untouched original, and "continue from this version" forks the conversation forward — branch, never rewrite. |
 
 ## The examples
 
@@ -214,6 +216,36 @@ Then open **http://localhost:4173** and:
 A **scenario switcher** offers a second drill — career advice (skills assessment / market salaries / trending titles), where the trending-titles hype drives a PIVOT and ignoring it flips the advice to STAY. Same honesty throughout: the scores are labelled a proxy (clues, not proof), the run's honesty flags ride along as plain chips, and only the re-run earns the word *causal*. Ignoring a fundamentals source instead (quarterly results) leaves the call unchanged — the contrast that shows a score alone never convicts.
 
 **Cost: $0.** Everything is a mock provider with a mock embedder — no API keys, no network, offline and deterministic. Opened as a static file (no server), the Re-run button degrades honestly: it tells you it needs the local server rather than pretending to re-run.
+
+### 7 — The chat desk (conversation)
+
+Transparency where people actually meet an agent: inside the chat. A financial-advisor bot answers over three context sources; under every reply sits a "visible reason" button. Tap it and the right panel shows that reply's influence map (real `localizeContextBug` on that turn's recording). Flip a source to ignore it and Re-run: the desk re-runs THAT TURN for real — same recorded conversation up to that point, minus the source — and the counterfactual appears as a clearly-labeled what-if bubble next to the original ("without social media sentiment, I would have said: HOLD…"), with the causal-verdict chip. "Continue from this version" forks the conversation forward from the what-if as a new recorded session; the original transcript stays whole. The default mode runs a scripted 3-turn conversation and proves the whole loop deterministically: the turn-2 flip AND the fork's turn-3 divergence (ADD in the original, KEEP in the fork).
+
+```
+=== SUMMARY ===
+scripted conversation: 3 turns (financial advisor, mock provider)
+turn 1 top influence: social-sentiment [injection] score 0.838
+turn 2 top influence: social-sentiment [injection] score 0.881
+turn 3 top influence: social-sentiment [injection] score 0.807
+turn 2 original reply: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
+turn 2 ignored source: social-sentiment
+turn 2 what-if reply: HOLD — no catalyst beyond fair value: revenue up 4% as guided, insider activity steady, nothing driving a move.
+turn 2 flipped: true
+turn 2 verdict: confirmed
+fork: continued from the turn-2 what-if (social-sentiment stays ignored)
+turn 3 in the original conversation: ADD — momentum supports adding: the desk is already long on a BUY call, lift allocation by 5%.
+turn 3 in the fork: KEEP — allocation unchanged: the desk is on HOLD, there is no catalyst to add exposure.
+fork continuation proof (replies diverge): true
+=== END ===
+```
+
+```sh
+npm run example:7      # default mode — the gated, byte-stable summary
+npm run chat-desk      # serve the chat on http://localhost:4174
+npm run chat-desk:live # the same desk against the real Anthropic API (needs .env)
+```
+
+**BRANCH, NEVER REWRITE.** The original reply is immutable; a re-run never replaces it — the counterfactual is a separate, clearly-labeled what-if bubble, and a fork is a new recorded session (the original transcript stays whole). The verdict chip renders only when `checkBaseline: true` earned it; scores suggest, re-runs convict. Opened as a static file the recorded story renders read-only and every interactive control states what it needs and does nothing else — nothing is ever faked. Live mode (`npm run chat-desk:live`) swaps the mock for the real Anthropic API (Haiku); the key is read from `.env` and never printed.
 
 ## Citing
 
