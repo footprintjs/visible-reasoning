@@ -407,10 +407,29 @@ function toInfluenceMap(turn, report) {
   };
 }
 
+// The desk ranks every map with ONE scorer (getReport → semanticAlignmentStrategy).
+// atui's InfluenceMap dropdown is a controlled component: it only fires
+// onStrategyChange for an option whose `available` is true, and it natively
+// disables (🔒 + tooltip) any option we mark `available: false`. We haven't wired
+// the re-rank round-trip, so we advertise the OTHER real strategy honestly but
+// lock it — a disabled <option> can't be picked, so the selector can never snap
+// back to semantic with unchanged scores (the old conference-demo hazard).
+const RANKED_STRATEGY = semanticAlignmentStrategy.name;
+
 function strategyOptions() {
-  return listInfluenceStrategies().map((s) => ({
-    name: s.name, description: s.description, requirements: s.requirements.map(String), available: true,
-  }));
+  return listInfluenceStrategies().map((s) => {
+    const available = s.name === RANKED_STRATEGY;
+    return {
+      name: s.name,
+      description: s.description,
+      // `requirements` is what atui shows in the locked tooltip; name the real
+      // reason this option is unavailable HERE rather than leaving it blank.
+      requirements: available
+        ? s.requirements.map(String)
+        : [...s.requirements.map(String), 'live re-ranking is not wired in this demo'],
+      available,
+    };
+  });
 }
 
 // ═══ decisionChanged — the domain comparator (honest in both modes) ══════════
@@ -578,54 +597,126 @@ function buildPage(data) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>The chat desk — transparency inside the conversation</title>
 <style>${read('agentthinkingui/styles.css')}</style>
 <style>
-  body { margin: 0; font-family: system-ui, sans-serif; background: #FBF7F1; color: #33291F; }
-  .cd-page { max-width: 1120px; margin: 0 auto; padding: 18px; }
-  .cd-head { margin: 0 0 2px; font-size: 21px; font-weight: 700; }
-  .cd-sub { color: #6E5C49; margin: 0 0 12px; font-size: 13.5px; line-height: 1.5; }
-  .cd-banner { margin: 0 0 12px; padding: 9px 13px; border-radius: 9px; font-size: 12.5px; line-height: 1.5;
+  /* ── The chat desk — a clean, light, mainstream chat skin (HCII 2026).
+     A single centered conversation column with a fixed bottom composer; the
+     "visible reason" panel slides in from the right (overlay on narrow screens).
+     Light-first + high contrast for bright conference projectors. ── */
+  :root {
+    --bg: #FFFFFF; --panel-bg: #FFFFFF; --soft: #F6F4F0; --ink: #1E1A15; --muted: #786D5E;
+    --line: #E9E3DA; --accent: #C0531F; --accent-dk: #95380F; --user: #EFEAE1; --whatif: #C9932B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  #root { height: 100%; }
+
+  .cd-app { position: fixed; inset: 0; background: var(--bg); }
+  .cd-main { height: 100%; display: flex; flex-direction: column; transition: margin-right .28s ease; }
+
+  /* top bar — minimal chrome: brand, tagline, session/fork tabs */
+  .cd-bar { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); }
+  .cd-brand { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+  .cd-brand .cd-dot { color: var(--accent); font-weight: 700; }
+  .cd-tagline { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cd-tabs { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-self: center; }
+  .cd-tab { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+  .cd-tab.on { background: var(--accent); border-color: var(--accent-dk); color: #fff; }
+
+  /* scrolling conversation + centered ~720px column */
+  .cd-scroll { flex: 1 1 auto; overflow-y: auto; }
+  .cd-col { max-width: 720px; margin: 0 auto; padding: 22px 22px 34px; }
+  .cd-empty-hint { color: var(--muted); font-size: 14.5px; line-height: 1.65; padding: 52px 10px; text-align: center; }
+
+  /* thread — user right in a subtle bubble, advisor left/full-width plain text */
+  .cd-thread { display: flex; flex-direction: column; }
+  .msg-user { align-self: flex-end; max-width: 76%; margin: 16px 0 2px; padding: 10px 15px;
+    border-radius: 18px 18px 5px 18px; background: var(--user); color: var(--ink);
+    font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
+  .msg-advisor { align-self: stretch; margin: 8px 0 0; padding: 2px 1px;
+    font-size: 15.5px; line-height: 1.62; white-space: pre-wrap; color: var(--ink); }
+  .msg-user.seed, .msg-advisor.seed { opacity: 0.62; }
+
+  .cd-reasonbtn { align-self: flex-start; margin: 8px 0 2px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
+  .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* what-if — restyled to match, still clearly a counterfactual (warm dashed accent) */
+  .whatif { align-self: stretch; margin: 12px 0 6px; padding: 13px 15px; border-radius: 13px;
+    border: 1px solid var(--line); border-left: 3px solid var(--whatif); background: var(--soft); }
+  .whatif-lbl { font-size: 12px; font-weight: 700; color: #9A6C15; margin: 0 0 6px; }
+  .whatif-ans { font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; }
+  .whatif-sum { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; margin: 9px 6px 0 0; }
+  .chip.confirmed { background: #E3F1DE; color: #2C6B22; }
+  .chip.not-confirmed { background: #F6E5DA; color: #8A4A22; }
+  .chip.inconclusive { background: #EEE8DD; color: #6E5C49; }
+  .chip.observed { background: #EEE8DD; color: #6E5C49; }
+  .cd-fork { margin-top: 11px; font-size: 12px; font-weight: 700; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 999px; padding: 7px 15px; }
+  .cd-fork:hover { background: var(--accent-dk); }
+
+  /* fork provenance note */
+  .cd-prov { font-size: 12px; color: var(--muted); margin: 0 0 12px; padding: 8px 13px;
+    background: var(--soft); border-radius: 9px; border: 1px solid var(--line); line-height: 1.5; }
+
+  /* live cost banner */
+  .cd-banner { margin: 0 0 12px; padding: 9px 13px; border-radius: 9px; font-size: 12px; line-height: 1.5;
     background: #FBF3E6; border: 1px solid #E6D3B4; color: #7A5B2E; }
-  .cd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-  @media (max-width: 720px) { .cd-grid { grid-template-columns: 1fr; } }
-  .cd-pane { background: #FFFDFA; border: 1px solid #E6D9C6; border-radius: 12px; padding: 12px; min-height: 320px; }
-  .cd-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-  .cd-tab { font-size: 12px; font-weight: 700; padding: 5px 11px; border-radius: 999px; cursor: pointer;
-    border: 1.5px solid #D9C8B2; background: #FFFDFA; color: #6E5C49; }
-  .cd-tab.on { background: #C0531F; border-color: #95380F; color: #fff; }
-  .cd-prov { font-size: 11.5px; color: #8A7A66; margin: 0 0 8px; font-style: italic; }
-  .cd-thread { display: flex; flex-direction: column; gap: 9px; }
-  .bubble { max-width: 86%; padding: 9px 12px; border-radius: 13px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
-  .bubble.user { align-self: flex-end; background: #E9DFCF; color: #3A2E20; border-bottom-right-radius: 4px; }
-  .bubble.advisor { align-self: flex-start; background: #F3ECE0; color: #33291F; border: 1px solid #E1D4BE; border-bottom-left-radius: 4px; }
-  .bubble.seed { opacity: 0.72; }
-  .cd-reasonbtn { align-self: flex-start; margin: -3px 0 2px; font-size: 11.5px; font-weight: 700; cursor: pointer;
-    background: none; border: none; color: #C0531F; padding: 2px 0; text-decoration: underline; }
-  .whatif { align-self: flex-start; max-width: 90%; margin: 2px 0 4px; padding: 10px 12px; border-radius: 13px;
-    border: 1.5px dashed #C9932B; background: #FFF9EC; margin-left: 18px; }
-  .whatif-lbl { font-size: 11.5px; font-weight: 700; color: #9A6C15; margin: 0 0 5px; }
-  .whatif-ans { font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
-  .whatif-sum { font-size: 11px; color: #8A7A66; margin: 6px 0 0; }
-  .chip { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin: 6px 6px 0 0; }
-  .chip.confirmed { background: #DCEFD8; color: #2C6B22; }
-  .chip.not-confirmed { background: #F1E1D6; color: #8A4A22; }
-  .chip.inconclusive { background: #EDE7DA; color: #6E5C49; }
-  .chip.observed { background: #EDE7DA; color: #6E5C49; }
-  .cd-fork { margin-top: 8px; font-size: 11.5px; font-weight: 700; cursor: pointer;
-    background: #C0531F; color: #fff; border: none; border-radius: 999px; padding: 5px 11px; }
-  .cd-inputrow { display: flex; gap: 7px; margin-top: 11px; }
-  .cd-inputrow input { flex: 1; padding: 8px 11px; border-radius: 9px; border: 1.5px solid #D9C8B2; font-size: 13px; }
-  .cd-inputrow button { font-weight: 700; font-size: 13px; padding: 8px 15px; border-radius: 9px; border: none;
-    background: #C0531F; color: #fff; cursor: pointer; }
+
+  /* fixed bottom composer */
+  .cd-composer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--bg); }
+  .cd-composer-col { max-width: 720px; margin: 0 auto; padding: 13px 22px 18px; }
+  .cd-inputrow { display: flex; gap: 10px; align-items: center; }
+  .cd-inputrow input { flex: 1; padding: 12px 17px; border-radius: 999px; border: 1px solid var(--line);
+    font-size: 15px; background: var(--soft); color: var(--ink); outline: none; }
+  .cd-inputrow input:focus { border-color: var(--accent); background: #fff; }
+  .cd-inputrow button { font-weight: 700; font-size: 14px; padding: 11px 22px; border-radius: 999px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer; }
+  .cd-inputrow button:hover:not(:disabled) { background: var(--accent-dk); }
   .cd-inputrow button:disabled, .cd-inputrow input:disabled { opacity: 0.5; cursor: not-allowed; }
-  .cd-empty { color: #8A7A66; font-size: 13px; line-height: 1.5; padding: 24px 8px; text-align: center; }
-  .cd-disnote { font-size: 11.5px; color: #8A7A66; margin: 5px 0 0; }
-  .cd-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; margin: 0 0 10px;
-    padding: 7px 11px; border-radius: 9px; background: #FFFDFA; border: 1px solid #E6D9C6; font-size: 11.5px; color: #6E5C49; }
-  .cd-legend .cd-ticker { font-weight: 700; color: #C0531F; }
+  .cd-disnote { font-size: 11.5px; color: var(--muted); margin: 9px 2px 0; text-align: center; }
+
+  /* live legend — active ticker + per-tool provenance dots */
+  .cd-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 12px;
+    padding: 8px 13px; border-radius: 9px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend .cd-ticker { font-weight: 700; color: var(--accent); }
   .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
   .cd-legend .cd-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .cd-legend .cd-dot.live { background: #3E9C4D; }
   .cd-legend .cd-dot.fallback { background: #fff; border: 1.5px solid #C9932B; }
   .cd-legend .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
+
+  /* the "visible reason" panel — slides in from the right */
+  .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
+    background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
+    transform: translateX(100%); transition: transform .28s ease; z-index: 50; display: flex; flex-direction: column; }
+  .cd-panel.open { transform: translateX(0); }
+  .cd-panel-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .cd-panel-title { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
+  .cd-panel-close { background: none; border: none; font-size: 23px; line-height: 1; color: var(--muted);
+    cursor: pointer; padding: 0 8px 2px; border-radius: 8px; }
+  .cd-panel-close:hover { background: var(--soft); color: var(--ink); }
+  .cd-panel-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 14px 24px; }
+
+  /* backdrop — only on narrow screens, where the panel is a full overlay */
+  .cd-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); opacity: 0; pointer-events: none;
+    transition: opacity .28s ease; z-index: 45; }
+
+  @media (min-width: 721px) {
+    .cd-app.panel-open .cd-main { margin-right: min(480px, 100%); }
+    .cd-backdrop { display: none; }
+  }
+  @media (max-width: 720px) {
+    .cd-panel { width: 100%; box-shadow: none; }
+    .cd-backdrop.show { opacity: 1; pointer-events: auto; }
+    /* Narrow top bar: drop the tagline and keep every tab to a single
+       ellipsized line so a long "fork of turn 2 (without …)" chip can't wrap
+       into a 4-line pill. Desktop (>=721px) is untouched. */
+    .cd-tagline { display: none; }
+    .cd-tab { max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }
 </style></head>
 <body><div id="root"></div>
 <script>
@@ -744,12 +835,12 @@ function ChatDesk() {
   var thread = [];
   if (sess) {
     parseSeed(sess.seed).forEach(function (m, i) {
-      thread.push(e('div', { key: 'seed' + i, className: 'bubble ' + m.role + ' seed' }, m.text));
+      thread.push(e('div', { key: 'seed' + i, className: (m.role === 'user' ? 'msg-user' : 'msg-advisor') + ' seed' }, m.text));
     });
     sess.turns.forEach(function (t) {
       var key = active + ':' + t.index;
-      thread.push(e('div', { key: 'u' + t.index, className: 'bubble user' }, t.userMessage));
-      thread.push(e('div', { key: 'a' + t.index, className: 'bubble advisor', 'data-testid': 'reply-' + key }, t.reply));
+      thread.push(e('div', { key: 'u' + t.index, className: 'msg-user' }, t.userMessage));
+      thread.push(e('div', { key: 'a' + t.index, className: 'msg-advisor', 'data-testid': 'reply-' + key }, t.reply));
       thread.push(e('button', { key: 'rb' + t.index, className: 'cd-reasonbtn', 'data-testid': 'reason-' + key,
         onClick: function () { openReason(active, t.index); } }, 'visible reason'));
       var wf = reruns[key];
@@ -801,32 +892,48 @@ function ChatDesk() {
       e('span', { style: { color: '#8A7A66' } }, '● live · ○ fallback'));
   }
 
-  var panel = panelKey && reason[panelKey]
+  // The influence panel reads as a ranked bar list (view="bars") with a native
+  // strategy dropdown; all data wiring is identical to before.
+  var panelOpen = !!(panelKey && reason[panelKey]);
+  var panelInner = panelOpen
     ? e(InfluenceMap, { key: panelKey, map: reason[panelKey].map, strategies: reason[panelKey].strategies,
-        activeStrategy: reason[panelKey].map.rankedBy, onRerun: doRerun, brand: 'The chat desk' })
-    : e('div', { className: 'cd-empty' }, 'Tap  visible reason  under any advisor reply to see what influenced it — '
-        + 'then flip a source to ignore and Re-run to watch the answer change (for real).');
+        activeStrategy: reason[panelKey].map.rankedBy, onRerun: doRerun,
+        view: 'bars', strategyControl: 'dropdown', brand: 'The chat desk' })
+    : null;
 
-  return e('div', { className: 'cd-page' },
-    e('h1', { className: 'cd-head' }, 'The chat desk — transparency inside the conversation'),
-    e('p', { className: 'cd-sub' }, 'A financial-advisor bot answers over three context sources. Under every reply: '
-      + 'a visible reason button. Flip a source, Re-run, and the counterfactual appears as a what-if bubble beside the '
-      + 'original — never replacing it. Continue from a what-if to fork the conversation. Branch, never rewrite.'),
-    DATA.live ? e('p', { className: 'cd-banner' }, (DATA.costNote || '') + (HAS_SERVER ? '' : ' (static preview)')) : null,
-    e('div', { className: 'cd-grid' },
-      e('div', { className: 'cd-pane' },
-        e('div', { className: 'cd-tabs' }, tabs),
-        legend,
-        prov,
-        e('div', { className: 'cd-thread' }, thread),
-        e('div', { className: 'cd-inputrow' },
-          e('input', { 'data-testid': 'chat-input', value: input, disabled: !HAS_SERVER,
-            placeholder: HAS_SERVER ? 'Message the advisor…' : 'Chatting needs the local server',
-            onChange: function (ev) { setInput(ev.target.value); },
-            onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
-          e('button', { 'data-testid': 'chat-send', disabled: !HAS_SERVER, onClick: send }, 'Send')),
-        HAS_SERVER ? null : e('p', { className: 'cd-disnote' }, NEED_SERVER)),
-      e('div', { className: 'cd-pane', 'data-testid': 'reason-panel' }, panel)));
+  var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length));
+  var conversation = hasContent
+    ? e('div', { className: 'cd-thread' }, thread)
+    : e('div', { className: 'cd-empty-hint' }, 'Ask the advisor a question to begin. Every reply carries a '
+        + '“visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.');
+
+  return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : '') },
+    e('div', { className: 'cd-main' },
+      e('div', { className: 'cd-bar' },
+        e('span', { className: 'cd-brand' }, 'The chat desk ', e('span', { className: 'cd-dot' }, '·'), ' advisor'),
+        e('span', { className: 'cd-tagline' }, 'transparency inside the conversation'),
+        e('div', { className: 'cd-tabs' }, tabs)),
+      e('div', { className: 'cd-scroll' },
+        e('div', { className: 'cd-col' },
+          DATA.live ? e('p', { className: 'cd-banner' }, (DATA.costNote || '') + (HAS_SERVER ? '' : ' (static preview)')) : null,
+          legend,
+          prov,
+          conversation)),
+      e('div', { className: 'cd-composer' },
+        e('div', { className: 'cd-composer-col' },
+          e('div', { className: 'cd-inputrow' },
+            e('input', { 'data-testid': 'chat-input', value: input, disabled: !HAS_SERVER,
+              placeholder: HAS_SERVER ? 'Message the advisor…' : 'Chatting needs the local server',
+              onChange: function (ev) { setInput(ev.target.value); },
+              onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
+            e('button', { 'data-testid': 'chat-send', disabled: !HAS_SERVER, onClick: send }, 'Send')),
+          HAS_SERVER ? null : e('p', { className: 'cd-disnote' }, NEED_SERVER)))),
+    e('div', { className: 'cd-panel' + (panelOpen ? ' open' : ''), 'data-testid': 'reason-panel' },
+      e('div', { className: 'cd-panel-head' },
+        e('span', { className: 'cd-panel-title' }, 'Visible reason'),
+        e('button', { className: 'cd-panel-close', 'aria-label': 'close', onClick: function () { setPanelKey(null); } }, '×')),
+      e('div', { className: 'cd-panel-body' }, panelInner)),
+    e('div', { className: 'cd-backdrop' + (panelOpen ? ' show' : ''), onClick: function () { setPanelKey(null); } }));
 }
 ReactDOMClient.createRoot(document.getElementById('root')).render(e(ChatDesk));
 </script>
