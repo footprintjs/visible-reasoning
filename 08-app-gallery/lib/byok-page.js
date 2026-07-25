@@ -21,6 +21,9 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+// The provenance vocabulary is NOT copied: the plain-words explanations behind
+// the legend are one list in lib/page.js, and both pages render from it.
+import { provenanceHelpScript } from './page.js';
 
 const require = createRequire(import.meta.url);
 const pkgRoot = (name) => dirname(require.resolve(name));
@@ -172,11 +175,31 @@ ${importMap}
   .cd-prov { font-size: 12px; color: var(--muted); margin: 0 0 12px; padding: 8px 13px;
     background: var(--soft); border-radius: 9px; border: 1px solid var(--line); line-height: 1.5; }
 
-  .cd-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 12px;
-    padding: 8px 13px; border-radius: 9px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
+    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
   .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
   .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
-  .cd-legend .cd-key { color: #8A7A66; }
+  .cd-legend .cd-key { color: #8A7A66; min-width: 0; }
+  .cd-legend .cd-key-item { white-space: nowrap; cursor: help; }
+  .cd-legend .cd-key-item:hover { color: var(--ink); }
+
+  /* "what do these mean?" — the legend's plain-words card (see lib/page.js) */
+  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
+    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-help { position: relative; margin: 9px 0 0; padding: 11px 34px 11px 12px; border-radius: 9px;
+    background: var(--bg); border: 1px solid var(--line); font-size: 12.5px; line-height: 1.55; }
+  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px; }
+  .cd-help-item .cd-dot { margin-top: 5px; }
+  .cd-help-item b { color: var(--ink); }
+  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
+  .cd-help-close { position: absolute; top: 5px; right: 6px; background: none; border: none; cursor: pointer;
+    font-size: 17px; line-height: 1; color: var(--muted); padding: 2px 7px; border-radius: 7px; }
+  .cd-help-close:hover { background: var(--soft); color: var(--ink); }
+  .cd-help-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
@@ -285,6 +308,10 @@ import { createLocalApi } from './app/byok/local-api.js';
 var DATA = ${DATA};
 var MODEL = DATA.model;
 var PACKS = [trip, movies];
+${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
+      the states it can honestly show are live / fallback / synthetic / not
+      consulted — the same four its key line has always listed. */
+  provenanceHelpScript(['live', 'fallback', 'synthetic', 'not consulted'])}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
@@ -497,6 +524,9 @@ function safeStringify(value) {
 
 function Byok() {
   var d0 = React.useState(INITIAL); var desks = d0[0], setDesks = d0[1];
+  // The legend's plain-words card: closed on arrival, one tap to open.
+  var hp0 = React.useState(false); var helpOpen = hp0[0], setHelpOpen = hp0[1];
+  var helpBtnRef = React.useRef(null);
   var k0 = React.useState(PACKS[0].id); var deskId = k0[0], setDeskId = k0[1];
   var a0 = React.useState(!!storedKey()); var armed = a0[0], setArmed = a0[1];
   var t0 = React.useState(''); var tail = t0[0], setTail = t0[1];
@@ -754,15 +784,45 @@ function Byok() {
       : p === 'scripted' ? 'scripted'
       : p === 'replay' ? 'replay'
       : p === 'not consulted' ? 'notconsulted' : 'unknown';
-    var title = tool.name + (p ? ': ' + p : ': awaiting first reply')
-      + (tool.alwaysSynthetic ? ' — always synthetic, modeled and never measured' : '');
-    return e('span', { key: tool.name, className: 'cd-leg-item', title: title },
+    return e('span', { key: tool.name, className: 'cd-leg-item', title: provTitle(tool, p) },
       e('span', { className: 'cd-dot ' + cls }), tool.legendLabel + (p ? '' : ' —'));
   };
+
+  // The key line: same glyphs and labels, one span per state so each carries
+  // its own plain-words tooltip.
+  var keyNodes = [];
+  PROV_HELP.forEach(function (h, i) {
+    if (i) keyNodes.push(e('span', { key: 'sep' + i, 'aria-hidden': 'true' }, ' · '));
+    keyNodes.push(e('span', { key: h.state, className: 'cd-key-item', title: h.label + ' — ' + h.what },
+      h.glyph + ' ' + h.label));
+  });
+  function closeHelp() {
+    setHelpOpen(false);
+    if (helpBtnRef.current) helpBtnRef.current.focus();
+  }
+  var helpCard = e('div', { className: 'cd-help', id: 'cd-legend-help', 'data-testid': 'legend-help',
+      onKeyDown: function (ev) { if (ev.key === 'Escape') closeHelp(); } },
+    PROV_HELP.map(function (h) {
+      return e('div', { key: h.state, className: 'cd-help-item' },
+        e('span', { className: 'cd-dot ' + h.dot }),
+        e('span', null, e('b', null, h.label), ' — ', h.what));
+    }),
+    e('p', { className: 'cd-help-foot' }, PROV_CLOSING),
+    e('button', { type: 'button', className: 'cd-help-close', 'data-testid': 'legend-help-close',
+      'aria-label': 'hide the explanations', onClick: closeHelp }, '×'));
   var legend = e('div', { className: 'cd-legend', 'data-testid': 'tool-legend' },
-    e('span', { className: 'cd-entity' }, app.entityLabel + ': ' + ((sess && sess.entity) || app.entityDefault)),
-    app.tools.map(dot),
-    e('span', { className: 'cd-key' }, '● live · ○ fallback · ⬚ synthetic (never measured) · ○ not consulted'));
+    e('div', { className: 'cd-legend-row' },
+      e('span', { className: 'cd-entity' }, app.entityLabel + ': ' + ((sess && sess.entity) || app.entityDefault)),
+      app.tools.map(dot),
+      e('span', { className: 'cd-key' }, keyNodes),
+      e('button', { type: 'button', className: 'cd-help-btn', ref: helpBtnRef, 'data-testid': 'legend-help-toggle',
+        'aria-expanded': helpOpen ? 'true' : 'false', 'aria-controls': 'cd-legend-help',
+        // Functional updater: two taps in the same tick can't both read the
+        // same stale value and land on "open" twice.
+        onClick: function () { setHelpOpen(function (v) { return !v; }); },
+        onKeyDown: function (ev) { if (ev.key === 'Escape') setHelpOpen(false); } },
+        e('span', { 'aria-hidden': 'true' }, 'ⓘ'), 'what do these mean?')),
+    helpOpen ? helpCard : null);
 
   // ═══ custody panel / armed strip ════════════════════════════════════════
   var custody = armed

@@ -20,6 +20,55 @@ const cjs = (name, code) =>
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// ─── The provenance vocabulary, in plain words ──────────────────────────────
+// The dots are the honest core of a desk — and "fallback" / "synthetic (never
+// measured)" are jargon to a conference visitor who has never read the paper.
+// So the vocabulary is defined ONCE, here, and drives all three surfaces: the
+// key line's glyphs, every key item's native title tooltip, and the expandable
+// "what do these mean?" card. A label and its explanation cannot drift apart
+// because there is only one of each. (byok-page.js imports this list too.)
+//
+//   state — the provenance verdict the recorder actually reports
+//   dot   — the .cd-dot class that paints it (same dot the legend row shows)
+//   glyph — the plain character the key line has always used
+export const PROVENANCE_HELP = [
+  { state: 'live', dot: 'live', glyph: '●', label: 'live',
+    what: 'real data fetched from the internet just now (this source really answered)' },
+  { state: 'scripted', dot: 'scripted', glyph: '●', label: 'scripted',
+    what: 'rehearsal data written into the demo; no model or network involved' },
+  { state: 'fallback', dot: 'fallback', glyph: '○', label: 'fallback',
+    what: 'we tried the real source but couldn’t reach it, so the demo used realistic stand-in data — and says so' },
+  { state: 'synthetic', dot: 'synthetic', glyph: '⬚', label: 'synthetic (never measured)',
+    what: 'data that is invented by design (like the crowd estimate); it is always labeled, never passed off as real' },
+  { state: 'not consulted', dot: 'notconsulted', glyph: '○', label: 'not consulted',
+    what: 'the assistant didn’t use this source for this reply' },
+];
+
+/** The card's closing line — where these labels live in the text itself. */
+export const PROVENANCE_CLOSING =
+  'Every tool sentence carries its own [source: …] label — the map never hides where data came from.';
+
+/** The browser-side twin of the list above, plus the tooltip/label helpers. */
+export const provenanceHelpScript = (states) => `
+// The legend's plain-words vocabulary — generated from lib/page.js so the key
+// line, the per-item tooltips and the "what do these mean?" card are one list.
+var PROV_HELP = ${JSON.stringify(PROVENANCE_HELP.filter((h) => states.includes(h.state)))};
+var PROV_CLOSING = ${JSON.stringify(PROVENANCE_CLOSING)};
+var PROV_WORDS = {};
+PROV_HELP.forEach(function (h) { PROV_WORDS[h.state] = h.what; });
+
+/** "wiki_plot — live: real data fetched from the internet just now (…)" */
+function provTitle(tool, p) {
+  var body = p
+    ? p + (PROV_WORDS[p] ? ': ' + PROV_WORDS[p] : '')
+    : 'not used yet: waiting for the first reply';
+  if (tool.alwaysSynthetic && p !== 'synthetic') {
+    body += ' · this source is always synthetic by design — modeled, never measured';
+  }
+  return tool.name + ' — ' + body;
+}
+`;
+
 // ─── The shared skin (07's tokens, verbatim) ────────────────────────────────
 const SKIN = `
   :root {
@@ -217,11 +266,33 @@ export function buildAppPage(app, data) {
     background: #FBF3E6; border: 1px solid #E6D3B4; color: #7A5B2E; }
 
   /* legend — active entity + per-tool provenance dots */
-  .cd-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 12px;
-    padding: 8px 13px; border-radius: 9px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
+    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
   .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
   .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
-  .cd-legend .cd-key { color: #8A7A66; }
+  .cd-legend .cd-key { color: #8A7A66; min-width: 0; }
+  .cd-legend .cd-key-item { white-space: nowrap; cursor: help; }
+  .cd-legend .cd-key-item:hover { color: var(--ink); }
+
+  /* "what do these mean?" — the legend's plain-words card. Collapsed by
+     default (nothing rendered, so nothing moves), one tap to open, and
+     dismissible from the toggle itself, the × or Escape. */
+  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
+    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-help { position: relative; margin: 9px 0 0; padding: 11px 34px 11px 12px; border-radius: 9px;
+    background: var(--bg); border: 1px solid var(--line); font-size: 12.5px; line-height: 1.55; }
+  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px; }
+  .cd-help-item .cd-dot { margin-top: 5px; }
+  .cd-help-item b { color: var(--ink); }
+  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
+  .cd-help-close { position: absolute; top: 5px; right: 6px; background: none; border: none; cursor: pointer;
+    font-size: 17px; line-height: 1; color: var(--muted); padding: 2px 7px; border-radius: 7px; }
+  .cd-help-close:hover { background: var(--soft); color: var(--ink); }
+  .cd-help-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* the "visible reason" panel — slides in from the right */
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
@@ -293,7 +364,7 @@ var HAS_SERVER = location.protocol === 'http:' || location.protocol === 'https:'
 var API = '/app/' + DATA.app.id;
 var GALLERY_HREF = HAS_SERVER ? '/' : './gallery.html';
 var NEED_SERVER = 'Chatting needs the local server — run  npm run gallery  and open http://localhost:4175';
-
+${provenanceHelpScript(['live', 'scripted', 'fallback', 'synthetic', 'not consulted'])}
 function parseSeed(lines) {
   var uP = 'User: ', aP = DATA.app.assistantLabel + ': ';
   return lines.map(function (l) {
@@ -497,6 +568,10 @@ function AppDesk() {
   // then the reply writing itself. Cleared the moment 'final' commits the turn.
   var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
   SET_LIVE = setLiveTurn;
+  // The legend's plain-words card: closed on arrival, so the desk looks exactly
+  // as it always did until a visitor asks what the dots mean.
+  var h0 = React.useState(false); var helpOpen = h0[0], setHelpOpen = h0[1];
+  var helpBtnRef = React.useRef(null);
 
   function openReason(sid, ti) {
     var key = sid + ':' + ti;
@@ -761,14 +836,45 @@ function AppDesk() {
       : p === 'scripted' ? 'scripted'
       : p === 'replay' ? 'replay'
       : p === 'not consulted' ? 'notconsulted' : 'unknown';
-    var title = t.name + (p ? ': ' + p : ': awaiting first reply') + (t.alwaysSynthetic ? ' — always synthetic, modeled and never measured' : '');
-    return e('span', { key: t.name, className: 'cd-leg-item', title: title },
+    return e('span', { key: t.name, className: 'cd-leg-item', title: provTitle(t, p) },
       e('span', { className: 'cd-dot ' + cls }), t.legendLabel + (p ? '' : ' —'));
   };
+
+  // The key line: the same glyphs and labels it has always shown, but split one
+  // span per state so each carries its own plain-words tooltip.
+  var keyNodes = [];
+  PROV_HELP.forEach(function (h, i) {
+    if (i) keyNodes.push(e('span', { key: 'sep' + i, 'aria-hidden': 'true' }, ' · '));
+    keyNodes.push(e('span', { key: h.state, className: 'cd-key-item', title: h.label + ' — ' + h.what },
+      h.glyph + ' ' + h.label));
+  });
+  function closeHelp() {
+    setHelpOpen(false);
+    if (helpBtnRef.current) helpBtnRef.current.focus();
+  }
+  var helpCard = e('div', { className: 'cd-help', id: 'cd-legend-help', 'data-testid': 'legend-help',
+      onKeyDown: function (ev) { if (ev.key === 'Escape') closeHelp(); } },
+    PROV_HELP.map(function (h) {
+      return e('div', { key: h.state, className: 'cd-help-item' },
+        e('span', { className: 'cd-dot ' + h.dot }),
+        e('span', null, e('b', null, h.label), ' — ', h.what));
+    }),
+    e('p', { className: 'cd-help-foot' }, PROV_CLOSING),
+    e('button', { type: 'button', className: 'cd-help-close', 'data-testid': 'legend-help-close',
+      'aria-label': 'hide the explanations', onClick: closeHelp }, '×'));
   var legend = e('div', { className: 'cd-legend', 'data-testid': 'tool-legend' },
-    e('span', { className: 'cd-entity' }, DATA.app.entityLabel + ': ' + ((sess && sess.entity) || DATA.app.entityDefault)),
-    DATA.app.tools.map(dot),
-    e('span', { className: 'cd-key' }, '● live · ● scripted · ○ fallback · ⬚ synthetic (never measured) · ○ not consulted'));
+    e('div', { className: 'cd-legend-row' },
+      e('span', { className: 'cd-entity' }, DATA.app.entityLabel + ': ' + ((sess && sess.entity) || DATA.app.entityDefault)),
+      DATA.app.tools.map(dot),
+      e('span', { className: 'cd-key' }, keyNodes),
+      e('button', { type: 'button', className: 'cd-help-btn', ref: helpBtnRef, 'data-testid': 'legend-help-toggle',
+        'aria-expanded': helpOpen ? 'true' : 'false', 'aria-controls': 'cd-legend-help',
+        // Functional updater: two taps in the same tick can't both read the
+        // same stale value and land on "open" twice.
+        onClick: function () { setHelpOpen(function (v) { return !v; }); },
+        onKeyDown: function (ev) { if (ev.key === 'Escape') setHelpOpen(false); } },
+        e('span', { 'aria-hidden': 'true' }, 'ⓘ'), 'what do these mean?')),
+    helpOpen ? helpCard : null);
 
   // The influence panel reads as a ranked bar list (view="bars") with a native
   // strategy dropdown; all data wiring is identical to 07's.
