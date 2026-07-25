@@ -23,49 +23,264 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 // ─── The provenance vocabulary, in plain words ──────────────────────────────
 // The dots are the honest core of a desk — and "fallback" / "synthetic (never
 // measured)" are jargon to a conference visitor who has never read the paper.
-// So the vocabulary is defined ONCE, here, and drives all three surfaces: the
-// key line's glyphs, every key item's native title tooltip, and the expandable
-// "what do these mean?" card. A label and its explanation cannot drift apart
-// because there is only one of each. (byok-page.js imports this list too.)
+// So the vocabulary is defined ONCE, here, and drives every surface: the tool
+// dots in the legend row, their native title tooltips, and both sections of the
+// "what do these mean?" dialog. A label and its explanation cannot drift apart
+// because there is only one of each. (byok-page.js imports this too.)
 //
 //   state — the provenance verdict the recorder actually reports
-//   dot   — the .cd-dot class that paints it (same dot the legend row shows)
-//   glyph — the plain character the key line has always used
+//   label — the plain name a visitor reads
+//   what  — the one-sentence explanation
 export const PROVENANCE_HELP = [
-  { state: 'live', dot: 'live', glyph: '●', label: 'live',
+  { state: 'live', label: 'live',
     what: 'real data fetched from the internet just now (this source really answered)' },
-  { state: 'scripted', dot: 'scripted', glyph: '●', label: 'scripted',
+  { state: 'scripted', label: 'scripted',
     what: 'rehearsal data written into the demo; no model or network involved' },
-  { state: 'fallback', dot: 'fallback', glyph: '○', label: 'fallback',
+  { state: 'fallback', label: 'fallback',
     what: 'we tried the real source but couldn’t reach it, so the demo used realistic stand-in data — and says so' },
-  { state: 'synthetic', dot: 'synthetic', glyph: '⬚', label: 'synthetic (never measured)',
+  { state: 'synthetic', label: 'synthetic (never measured)',
     what: 'data that is invented by design (like the crowd estimate); it is always labeled, never passed off as real' },
-  { state: 'not consulted', dot: 'notconsulted', glyph: '○', label: 'not consulted',
+  { state: 'not consulted', label: 'not consulted',
     what: 'the assistant didn’t use this source for this reply' },
 ];
 
-/** The card's closing line — where these labels live in the text itself. */
+// THE ONE state→paint mapping. Nothing else in either page may turn a
+// provenance verdict into a dot class: the legend row's tool dots, the
+// dialog's current-run rows and the dialog's definitions all call
+// provDotClass(), so the definition dot IS the row dot, byte for byte.
+// 'replay' never appears in the definitions list (it is a re-run artifact,
+// not a source verdict) but a row can still report it, so it lives here.
+const PROVENANCE_DOT_CLASS = {
+  live: 'live',
+  scripted: 'scripted',
+  fallback: 'fallback',
+  synthetic: 'synthetic',
+  'not consulted': 'notconsulted',
+  replay: 'replay',
+};
+
+// Build-time guard: a new vocabulary entry without a paint is a build error,
+// not a silently gray dot.
+for (const h of PROVENANCE_HELP) {
+  if (!PROVENANCE_DOT_CLASS[h.state]) {
+    throw new Error(`PROVENANCE_DOT_CLASS is missing a dot class for state '${h.state}'`);
+  }
+}
+
+/** The dialog's closing line — where these labels live in the text itself. */
 export const PROVENANCE_CLOSING =
   'Every tool sentence carries its own [source: …] label — the map never hides where data came from.';
 
-/** The browser-side twin of the list above, plus the tooltip/label helpers. */
+/**
+ * The legend + its explanation dialog, as CSS. Imported by BOTH page shells so
+ * the two desks cannot drift apart on paint either.
+ */
+export const PROVENANCE_CSS = `
+  /* legend — active entity + per-tool provenance dots */
+  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
+    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
+  .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+
+  /* "ⓘ what do these mean?" — the only always-visible explanation control.
+     There is no glyph key row: the dots explain themselves in the dialog. */
+  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
+    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* the explanation dialog — quiet, light, same skin as the desk */
+  .cd-modal-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); z-index: 60; }
+  .cd-modal { position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(520px, calc(100vw - 32px)); max-height: min(80vh, 660px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(40,30,20,.18); }
+  .cd-modal:focus { outline: none; }
+  .cd-modal-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 10px 11px 16px; border-bottom: 1px solid var(--line); }
+  .cd-modal-title { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--accent); }
+  .cd-modal-close { background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1;
+    color: var(--muted); padding: 3px 9px; border-radius: 7px; }
+  .cd-modal-close:hover { background: var(--soft); color: var(--ink); }
+  .cd-modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .cd-modal-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 13px 16px 16px;
+    font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+  .cd-modal-sec + .cd-modal-sec { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .cd-modal-sec h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--ink);
+    letter-spacing: .01em; }
+  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px;
+    overflow-wrap: anywhere; }
+  .cd-help-item .cd-dot { margin-top: 5px; }
+  .cd-help-item b { color: var(--ink); }
+  .cd-help-none { margin: 0; font-style: italic; }
+  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
+
+  /* narrow screens: the dialog becomes a bottom sheet, full width, no overflow */
+  @media (max-width: 520px) {
+    .cd-modal { top: auto; bottom: 0; left: 0; transform: none; width: 100%; max-width: 100%;
+      max-height: 86vh; border-radius: 14px 14px 0 0; border-left: 0; border-right: 0; border-bottom: 0; }
+  }
+`;
+
+/**
+ * The browser-side twin of the vocabulary above, plus the ONE legend component
+ * both pages render. Emitted into the page script; nothing here is forked.
+ *
+ * @param states  the provenance verdicts this page can honestly show
+ */
 export const provenanceHelpScript = (states) => `
-// The legend's plain-words vocabulary — generated from lib/page.js so the key
-// line, the per-item tooltips and the "what do these mean?" card are one list.
+// ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
+// The legend's plain-words vocabulary, its state→dot paint, and the legend
+// component itself all come from here, so the desk pages and the BYOK page
+// render the SAME DOM with the SAME classes.
 var PROV_HELP = ${JSON.stringify(PROVENANCE_HELP.filter((h) => states.includes(h.state)))};
 var PROV_CLOSING = ${JSON.stringify(PROVENANCE_CLOSING)};
+var PROV_DOT_CLASS = ${JSON.stringify(PROVENANCE_DOT_CLASS)};
 var PROV_WORDS = {};
 PROV_HELP.forEach(function (h) { PROV_WORDS[h.state] = h.what; });
 
-/** "wiki_plot — live: real data fetched from the internet just now (…)" */
-function provTitle(tool, p) {
+/** THE state→class function. Every dot on the page is painted through it. */
+function provDotClass(state) {
+  return 'cd-dot ' + (PROV_DOT_CLASS[state] || 'unknown');
+}
+
+/** THE dot element. One call site shape ⇒ the legend row and the dialog agree. */
+function provDot(state) {
+  return React.createElement('span', { className: provDotClass(state) });
+}
+
+/** "live: real data fetched from the internet just now (…)" — no tool name. */
+function provBody(tool, p) {
   var body = p
     ? p + (PROV_WORDS[p] ? ': ' + PROV_WORDS[p] : '')
     : 'not used yet: waiting for the first reply';
   if (tool.alwaysSynthetic && p !== 'synthetic') {
     body += ' · this source is always synthetic by design — modeled, never measured';
   }
-  return tool.name + ' — ' + body;
+  return body;
+}
+
+/** "wiki_plot — live: real data fetched from the internet just now (…)" */
+function provTitle(tool, p) {
+  return tool.name + ' — ' + provBody(tool, p);
+}
+
+var PROV_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The explanation dialog. Two sections: what THIS reply actually used, then
+ * what each state means. Both paint their dots with provDotClass(), so a
+ * definition dot is literally the same element as the row dot.
+ *
+ * Accessibility: role=dialog + aria-modal, focus moves in on open, Tab is
+ * trapped, Escape / backdrop / × all close, and the caller returns focus to
+ * the ⓘ button that opened it.
+ */
+function ProvHelpModal(props) {
+  var boxRef = React.useRef(null);
+  // The latest onClose, so the once-only key listener never calls a stale one.
+  var closeRef = React.useRef(props.onClose);
+  closeRef.current = props.onClose;
+
+  React.useEffect(function () {
+    var box = boxRef.current;
+    if (box) box.focus();
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); closeRef.current(); return; }
+      if (ev.key !== 'Tab' || !box) return;
+      var items = Array.prototype.slice.call(box.querySelectorAll(PROV_FOCUSABLE))
+        .filter(function (el) { return !el.disabled && el.getClientRects().length > 0; });
+      if (!items.length) { ev.preventDefault(); box.focus(); return; }
+      var first = items[0];
+      var last = items[items.length - 1];
+      var here = document.activeElement;
+      var inside = box.contains(here) && here !== box;
+      if (ev.shiftKey) {
+        if (!inside || here === first) { ev.preventDefault(); last.focus(); }
+      } else if (!inside || here === last) { ev.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () { document.removeEventListener('keydown', onKey, true); };
+  }, []);
+
+  var tools = props.tools || [];
+  var prov = props.provenance || null;
+  var sources = prov
+    ? tools.map(function (t) {
+        var p = prov[t.name];
+        return React.createElement('div', { key: t.name, className: 'cd-help-item' },
+          provDot(p),
+          React.createElement('span', null,
+            React.createElement('b', null, t.name), ' — ', provBody(t, p)));
+      })
+    : React.createElement('p', { className: 'cd-help-none', 'data-testid': 'legend-help-noreply' },
+        'no reply yet — sources appear here after you ask something');
+
+  return React.createElement('div', { className: 'cd-modal-wrap' },
+    React.createElement('div', { className: 'cd-modal-backdrop', 'data-testid': 'legend-help-backdrop',
+      onClick: function () { closeRef.current(); } }),
+    React.createElement('div', { className: 'cd-modal', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'cd-legend-help-title', id: 'cd-legend-help', 'data-testid': 'legend-help',
+        tabIndex: -1, ref: boxRef },
+      React.createElement('div', { className: 'cd-modal-head' },
+        React.createElement('h2', { className: 'cd-modal-title', id: 'cd-legend-help-title' },
+          'Where this reply’s data came from'),
+        React.createElement('button', { type: 'button', className: 'cd-modal-close',
+          'data-testid': 'legend-help-close', 'aria-label': 'close',
+          onClick: function () { closeRef.current(); } }, '×')),
+      React.createElement('div', { className: 'cd-modal-body' },
+        React.createElement('section', { className: 'cd-modal-sec', 'data-testid': 'legend-help-sources' },
+          React.createElement('h3', null, 'This reply’s sources'),
+          sources),
+        React.createElement('section', { className: 'cd-modal-sec', 'data-testid': 'legend-help-defs' },
+          React.createElement('h3', null, 'What each dot means'),
+          PROV_HELP.map(function (h) {
+            return React.createElement('div', { key: h.state, className: 'cd-help-item' },
+              provDot(h.state),
+              React.createElement('span', null,
+                React.createElement('b', null, h.label), ' — ', h.what));
+          }),
+          React.createElement('p', { className: 'cd-help-foot' }, PROV_CLOSING)))));
+}
+
+/**
+ * The legend: the entity line, the per-tool dots (with their tooltips), and the
+ * quiet ⓘ control. Both page shells render THIS — there is no second copy.
+ *
+ * @param props.entityLabel/entityValue  the "Trail: Mission Peak" line
+ * @param props.tools        the pack's page-safe tool descriptors
+ * @param props.provenance   the newest turn's verdict map, or null before one
+ */
+function ProvLegend(props) {
+  var o0 = React.useState(false);
+  var open = o0[0];
+  var setOpen = o0[1];
+  var btnRef = React.useRef(null);
+  function close() {
+    setOpen(false);
+    // Focus returns to the control that opened the dialog.
+    if (btnRef.current) btnRef.current.focus();
+  }
+  var tools = props.tools || [];
+  var prov = props.provenance || null;
+  return React.createElement('div', { className: 'cd-legend', 'data-testid': 'tool-legend' },
+    React.createElement('div', { className: 'cd-legend-row' },
+      React.createElement('span', { className: 'cd-entity' }, props.entityLabel + ': ' + props.entityValue),
+      tools.map(function (t) {
+        var p = prov && prov[t.name];
+        return React.createElement('span', { key: t.name, className: 'cd-leg-item', title: provTitle(t, p) },
+          provDot(p), t.legendLabel + (p ? '' : ' —'));
+      }),
+      React.createElement('button', { type: 'button', className: 'cd-help-btn', ref: btnRef,
+        'data-testid': 'legend-help-toggle', 'aria-haspopup': 'dialog',
+        'aria-expanded': open ? 'true' : 'false', 'aria-controls': 'cd-legend-help',
+        onClick: function () { setOpen(true); } },
+        React.createElement('span', { 'aria-hidden': 'true' }, 'ⓘ'), 'what do these mean?')),
+    open ? React.createElement(ProvHelpModal, { tools: tools, provenance: prov, onClose: close }) : null);
 }
 `;
 
@@ -265,34 +480,7 @@ export function buildAppPage(app, data) {
   .cd-banner { margin: 0 0 12px; padding: 9px 13px; border-radius: 9px; font-size: 12px; line-height: 1.5;
     background: #FBF3E6; border: 1px solid #E6D3B4; color: #7A5B2E; }
 
-  /* legend — active entity + per-tool provenance dots */
-  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
-    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-  .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
-  .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
-  .cd-legend .cd-key { color: #8A7A66; min-width: 0; }
-  .cd-legend .cd-key-item { white-space: nowrap; cursor: help; }
-  .cd-legend .cd-key-item:hover { color: var(--ink); }
-
-  /* "what do these mean?" — the legend's plain-words card. Collapsed by
-     default (nothing rendered, so nothing moves), one tap to open, and
-     dismissible from the toggle itself, the × or Escape. */
-  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
-    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
-    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
-  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .cd-help { position: relative; margin: 9px 0 0; padding: 11px 34px 11px 12px; border-radius: 9px;
-    background: var(--bg); border: 1px solid var(--line); font-size: 12.5px; line-height: 1.55; }
-  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px; }
-  .cd-help-item .cd-dot { margin-top: 5px; }
-  .cd-help-item b { color: var(--ink); }
-  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
-  .cd-help-close { position: absolute; top: 5px; right: 6px; background: none; border: none; cursor: pointer;
-    font-size: 17px; line-height: 1; color: var(--muted); padding: 2px 7px; border-radius: 7px; }
-  .cd-help-close:hover { background: var(--soft); color: var(--ink); }
-  .cd-help-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+${PROVENANCE_CSS}
 
   /* the "visible reason" panel — slides in from the right */
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
@@ -568,10 +756,6 @@ function AppDesk() {
   // then the reply writing itself. Cleared the moment 'final' commits the turn.
   var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
   SET_LIVE = setLiveTurn;
-  // The legend's plain-words card: closed on arrival, so the desk looks exactly
-  // as it always did until a visitor asks what the dots mean.
-  var h0 = React.useState(false); var helpOpen = h0[0], setHelpOpen = h0[1];
-  var helpBtnRef = React.useRef(null);
 
   function openReason(sid, ti) {
     var key = sid + ':' + ti;
@@ -825,56 +1009,17 @@ function AppDesk() {
     : null;
 
   // Per-tool provenance legend, read from the most recent turn that recorded one.
+  // The legend itself is the SHARED ProvLegend (generated by lib/page.js's
+  // provenanceHelpScript) — the same component the BYOK page renders.
   var lastProv = null;
   var tks = (sess && sess.turns) || [];
   for (var li = tks.length - 1; li >= 0; li -= 1) { if (tks[li].provenance) { lastProv = tks[li].provenance; break; } }
-  var dot = function (t) {
-    var p = lastProv && lastProv[t.name];
-    var cls = p === 'live' ? 'live'
-      : p === 'fallback' ? 'fallback'
-      : p === 'synthetic' ? 'synthetic'
-      : p === 'scripted' ? 'scripted'
-      : p === 'replay' ? 'replay'
-      : p === 'not consulted' ? 'notconsulted' : 'unknown';
-    return e('span', { key: t.name, className: 'cd-leg-item', title: provTitle(t, p) },
-      e('span', { className: 'cd-dot ' + cls }), t.legendLabel + (p ? '' : ' —'));
-  };
-
-  // The key line: the same glyphs and labels it has always shown, but split one
-  // span per state so each carries its own plain-words tooltip.
-  var keyNodes = [];
-  PROV_HELP.forEach(function (h, i) {
-    if (i) keyNodes.push(e('span', { key: 'sep' + i, 'aria-hidden': 'true' }, ' · '));
-    keyNodes.push(e('span', { key: h.state, className: 'cd-key-item', title: h.label + ' — ' + h.what },
-      h.glyph + ' ' + h.label));
+  var legend = e(ProvLegend, {
+    entityLabel: DATA.app.entityLabel,
+    entityValue: (sess && sess.entity) || DATA.app.entityDefault,
+    tools: DATA.app.tools,
+    provenance: lastProv,
   });
-  function closeHelp() {
-    setHelpOpen(false);
-    if (helpBtnRef.current) helpBtnRef.current.focus();
-  }
-  var helpCard = e('div', { className: 'cd-help', id: 'cd-legend-help', 'data-testid': 'legend-help',
-      onKeyDown: function (ev) { if (ev.key === 'Escape') closeHelp(); } },
-    PROV_HELP.map(function (h) {
-      return e('div', { key: h.state, className: 'cd-help-item' },
-        e('span', { className: 'cd-dot ' + h.dot }),
-        e('span', null, e('b', null, h.label), ' — ', h.what));
-    }),
-    e('p', { className: 'cd-help-foot' }, PROV_CLOSING),
-    e('button', { type: 'button', className: 'cd-help-close', 'data-testid': 'legend-help-close',
-      'aria-label': 'hide the explanations', onClick: closeHelp }, '×'));
-  var legend = e('div', { className: 'cd-legend', 'data-testid': 'tool-legend' },
-    e('div', { className: 'cd-legend-row' },
-      e('span', { className: 'cd-entity' }, DATA.app.entityLabel + ': ' + ((sess && sess.entity) || DATA.app.entityDefault)),
-      DATA.app.tools.map(dot),
-      e('span', { className: 'cd-key' }, keyNodes),
-      e('button', { type: 'button', className: 'cd-help-btn', ref: helpBtnRef, 'data-testid': 'legend-help-toggle',
-        'aria-expanded': helpOpen ? 'true' : 'false', 'aria-controls': 'cd-legend-help',
-        // Functional updater: two taps in the same tick can't both read the
-        // same stale value and land on "open" twice.
-        onClick: function () { setHelpOpen(function (v) { return !v; }); },
-        onKeyDown: function (ev) { if (ev.key === 'Escape') setHelpOpen(false); } },
-        e('span', { 'aria-hidden': 'true' }, 'ⓘ'), 'what do these mean?')),
-    helpOpen ? helpCard : null);
 
   // The influence panel reads as a ranked bar list (view="bars") with a native
   // strategy dropdown; all data wiring is identical to 07's.
