@@ -303,6 +303,43 @@ GALLERY_FORCE_FALLBACK=1 npm run gallery:live   # offline drill: every source fa
 
 **What the live model does with its tools is its own business.** The agent decides which tools to consult; a tool it skipped shows in the legend as "not consulted" rather than being invented. And a live re-run can honestly come back **not-confirmed** — the real model sometimes keeps its answer without the source you suspected. Scores suggest; re-runs convict.
 
+## Try it with your own key (BYOK)
+
+The app gallery has a bring-your-own-key page: paste your Anthropic API key and
+chat with the trip advisor and the movie desk — visible reasons, verified
+what-if re-runs and forks included — with everything running in your browser.
+
+**Your key stays in your tab.** Every Claude call goes straight from your
+browser to `api.anthropic.com` (agentfootprint's browser provider); the tools
+are keyless public APIs (Open-Meteo, Wikipedia, iTunes) called from your
+browser too. There is no backend: the page is a plain static file, so there is
+no server code that *could* see your key. Verify it yourself in DevTools →
+Network — the only requests carrying your key go to `api.anthropic.com`.
+
+```sh
+npm run byok        # generate 08-app-gallery/out/byok/ and serve it on :4176
+```
+
+The folder is fully static — any file server works the same:
+
+```sh
+npm run byok:build
+python3 -m http.server 4176 -d 08-app-gallery/out/byok
+```
+
+(A double-clicked `file://` page won't load ES modules — that's a browser
+platform rule; use any dumb file server, including GitHub Pages.)
+
+Your key is kept in a page variable only. Tick "remember my key in this tab"
+and it is kept in `sessionStorage` until the tab closes; "Forget my key"
+erases it instantly. It is never sent to us, never logged, never in a URL.
+`npm run verify:byok` re-generates the page and asserts all of that.
+
+Honest scope: two desks, not three. The SEC's servers don't allow browser
+calls, so the stock desk runs only in the server demo (`npm run gallery:live`).
+Each reply spends a handful of small Haiku calls on your key; re-runs replay
+the original turn's frozen tool results — zero new fetches.
+
 ## Citing
 
 To cite the paper:

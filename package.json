@@ -19,6 +19,9 @@
     "example:8": "node 08-app-gallery/run.js",
     "gallery": "node 08-app-gallery/run.js --serve",
     "gallery:live": "node --env-file=.env 08-app-gallery/run.js --serve --live",
+    "byok": "node 08-app-gallery/byok.js --serve",
+    "byok:build": "node 08-app-gallery/byok.js",
+    "verify:byok": "node 08-app-gallery/verify-byok.mjs",
     "live": "node --env-file=.env live/run.js",
     "verify": "node verify.js",
     "all": "node verify.js"

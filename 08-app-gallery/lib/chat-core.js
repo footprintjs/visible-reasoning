@@ -18,7 +18,12 @@ import {
 } from 'agentfootprint/debug';
 import { metrics, provenanceFromToolLog } from './mcp.js';
 
-export function createChatCore({ live = false, model = 'claude-haiku-4-5-20251001' } = {}) {
+// `makeProvider` is the browser seam: the BYOK page (08-app-gallery/byok/) hands
+// in a factory that returns a fresh `browserAnthropic({ apiKey })` reading the
+// visitor's CURRENT in-tab key. Omitted (every server path), the core behaves
+// exactly as before — node `anthropic()` live, `mock()` otherwise — so the frozen
+// byte gate is untouched.
+export function createChatCore({ live = false, model = 'claude-haiku-4-5-20251001', makeProvider = null } = {}) {
   // ═══ The ONE turn factory ═════════════════════════════════════════════════
   // Live turns, rerun probes, baseline probes and fork turns ALL go through this
   // single factory. recordedChat calls it with the union of the session's
@@ -52,9 +57,14 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   function makeAgent({ specs }) {
     const { tools } = applyAblations([...specs], { tools: pending.tools });
     const toolNames = tools.map((t) => t.schema.name);
-    const provider = live
-      ? anthropic()
-      : mock({ respond: (req) => pending.scriptedRespond(req, { toolNames }) }); // FRESH per call
+    // FRESH per call — and for BYOK that is load-bearing twice: it keeps the
+    // counterfactual discipline AND means swapping or forgetting a key takes
+    // effect on the very next send with no re-wiring.
+    const provider = makeProvider
+      ? makeProvider()
+      : live
+        ? anthropic()
+        : mock({ respond: (req) => pending.scriptedRespond(req, { toolNames }) });
     const agent = Agent.create({
       provider, model: live ? model : 'mock-1', maxIterations: pending.maxIterations,
     }).system(pending.system).tools(tools).build();

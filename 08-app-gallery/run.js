@@ -33,8 +33,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const LIVE = args.includes('--live');
 const PORT = 4175;
+// The model badge names what actually answers. Live turns go to THIS id (it is
+// what Agent.create sends on every request); mock turns go to no model at all,
+// and the pages say so rather than borrowing a real model's name.
+const MODEL = 'claude-haiku-4-5-20251001';
 
-const core = createChatCore({ live: LIVE });
+const core = createChatCore({ live: LIVE, model: MODEL });
 
 /** Boot the tool layer once, then hand each app its own subset (in pack order). */
 async function bootTools() {
@@ -118,8 +122,8 @@ async function buildStories(perApp) {
   for (const app of APPS) {
     const session = startSession(app, perApp);
     await core.chatTurn(session, app.story[0]);
-    const data = { order: [session.id], active: session.id, live: false, costNote: '',
-      sessions: {}, reason: {}, rerun: {} };
+    const data = { order: [session.id], active: session.id, live: false, model: LIVE ? MODEL : null,
+      costNote: '', sessions: {}, reason: {}, rerun: {} };
     const r = await core.reasonAbout(session, 0);
     data.reason[`${session.id}:0`] = { map: r.map, strategies: r.strategies };
     if (app.id === 'movies') {
@@ -147,8 +151,8 @@ async function serveMode() {
     pages = new Map();
     for (const app of APPS) {
       const session = startSession(app, perApp);
-      pages.set(app.id, { order: [session.id], active: session.id, live: true, costNote: costNote(),
-        sessions: { [session.id]: core.sessionToData(session) }, reason: {}, rerun: {} });
+      pages.set(app.id, { order: [session.id], active: session.id, live: true, model: LIVE ? MODEL : null,
+        costNote: costNote(), sessions: { [session.id]: core.sessionToData(session) }, reason: {}, rerun: {} });
     }
   } else {
     pages = await buildStories(perApp);
@@ -157,7 +161,7 @@ async function serveMode() {
   const outDir = join(here, 'out');
   mkdirSync(outDir, { recursive: true });
   const html = new Map();
-  html.set('gallery', buildGalleryPage(APPS, { live: LIVE }));
+  html.set('gallery', buildGalleryPage(APPS, { live: LIVE, model: MODEL }));
   for (const app of APPS) html.set(app.id, buildAppPage(app, pages.get(app.id)));
   for (const [name, body] of html) {
     const file = join(outDir, `${name}.html`);

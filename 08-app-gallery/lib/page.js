@@ -49,9 +49,13 @@ const SKIN = `
  *   tools come from agentfootprint's in-memory mockMcpClient — no subprocess and
  *   no protocol frames — so the card must NOT claim MCP. Same honesty rule as
  *   every tool sentence: the label names what actually happened.
+ * @param opts.model  the model id live turns actually send. Shown only when
+ *   `live` — a mock desk calls no model, and the card says exactly that rather
+ *   than borrowing a real model's name.
  */
-export function buildGalleryPage(apps, { live = false } = {}) {
+export function buildGalleryPage(apps, { live = false, model = null } = {}) {
   const toolSourceLine = live ? 'tools served over MCP' : 'scripted mock tools — no MCP server';
+  const modelLine = live && model ? `model: ${model}` : 'scripted mock — no model';
   const cards = apps.map((app) => {
     const tools = app.tools.map((t) => `
         <span class="ag-tool" title="${esc(t.description)}">
@@ -65,6 +69,7 @@ export function buildGalleryPage(apps, { live = false } = {}) {
       <p class="ag-tag">${esc(app.tagline)}</p>
       <div class="ag-tools">${tools}</div>
       <p class="ag-mcp">${esc(toolSourceLine)}</p>
+      <p class="ag-model">${esc(modelLine)}</p>
       <div class="ag-chips">${chips}</div>
       <span class="ag-cta">Open the desk →</span>
     </a>`;
@@ -89,7 +94,8 @@ export function buildGalleryPage(apps, { live = false } = {}) {
   .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 7px; }
   .ag-tool { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
   .ag-mcp { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--accent);
-    font-weight: 700; margin: 0 0 14px; }
+    font-weight: 700; margin: 0 0 4px; }
+  .ag-model { font-size: 11px; color: var(--muted); margin: 0 0 14px; }
   .ag-chips { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
   .ag-chip { font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line);
     border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
@@ -150,6 +156,12 @@ export function buildAppPage(app, data) {
   .cd-brand { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
   .cd-brand .cd-mark { color: var(--accent); font-weight: 700; }
   .cd-tagline { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* model badge — names what actually answers, in the same dot language as the
+     tool legend: green dot + the real model id when a model is called, gray dot
+     + "scripted mock — no model" when nothing is. */
+  .cd-model { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+  .cd-model.live { color: #2C6B22; }
   .cd-tabs { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-self: center; }
   .cd-tab { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; cursor: pointer;
     border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
@@ -243,7 +255,7 @@ export function buildAppPage(app, data) {
     /* Narrow top bar: drop the tagline and keep every tab to a single ellipsized
        line so a long "fork of turn 1 (without …)" chip can't wrap into a
        4-line pill. Desktop (>=721px) is untouched. */
-    .cd-tagline { display: none; }
+    .cd-tagline, .cd-model { display: none; }
     .cd-tab { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 </style></head>
@@ -472,6 +484,11 @@ function AppDesk() {
         e('a', { className: 'cd-back', href: GALLERY_HREF, 'data-testid': 'back-to-gallery' }, '← gallery'),
         e('span', { className: 'cd-brand' }, DATA.app.title, ' ', e('span', { className: 'cd-mark' }, '·'), ' ', DATA.app.assistantLabel),
         e('span', { className: 'cd-tagline' }, DATA.app.tagline),
+        e('span', { className: 'cd-model' + (DATA.model ? ' live' : ''), 'data-testid': 'model-badge',
+          title: DATA.model ? 'The model id sent on every request from this desk'
+                            : 'Replies are scripted by the demo — no LLM is called' },
+          e('span', { className: 'cd-dot ' + (DATA.model ? 'live' : 'scripted') }),
+          DATA.model ? DATA.model : 'scripted mock — no model'),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
