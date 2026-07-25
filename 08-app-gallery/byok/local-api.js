@@ -30,11 +30,15 @@ export function createLocalApi({ core, packs, perApp }) {
     return s;
   };
 
-  async function chat({ appId, sessionId, message }) {
+  // `onEvent` is the page's live status/token sink. It is forwarded ONLY here —
+  // reason/rerunTurn/fork never take one, so a counterfactual probe cannot paint
+  // into a visitor's bubble. There is still no request in this file: the agent
+  // runs in the tab, so these events are already local.
+  async function chat({ appId, sessionId, message, onEvent }) {
     const app = appOr404(appId);
     const session = sessionId ? resolve(app, sessionId) : startSession(app);
     if (typeof message !== 'string' || !message.trim()) throw new Error('message required');
-    const turn = await core.chatTurn(session, message);
+    const turn = await core.chatTurn(session, message, { onEvent });
     const m = session.meta[turn.index] ?? {};
     return {
       sessionId: session.id, turnIndex: turn.index, reply: turn.reply,

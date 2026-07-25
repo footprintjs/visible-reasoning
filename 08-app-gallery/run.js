@@ -21,6 +21,7 @@
 //                                       → real Anthropic (haiku) + the real MCP
 //                                          server over stdio + keyless public APIs
 import { createServer } from 'node:http';
+import { encodeSSE } from 'agentfootprint/stream';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +117,53 @@ function costNote() {
     + 'fallbacks; the trip advisor’s crowd estimate is always synthetic.';
 }
 
+// The ONE chat response body. `/chat`'s 200 and `/chat-stream`'s `final` frame
+// are the same bytes by construction — a visitor who falls back to the plain
+// endpoint gets a payload the page cannot tell apart.
+const chatPayload = (session, turn) => {
+  const m = session.meta[turn.index] ?? {};
+  return {
+    sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
+    label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
+    entity: m.entity ?? session.entity, provenance: m.provenance ?? null,
+  };
+};
+
+// ─── The status vocabulary: real events only ────────────────────────────────
+// Every wire `status` frame is 1:1 with an event the agent's own dispatcher
+// produced. There is no status without an event, and no event outside this map
+// makes one. A `tool_end` WITHOUT an error deliberately produces nothing: the
+// next real event replaces the line, which is honest — the agent moved on.
+const plainToolNames = (app) =>
+  new Map(app.tools.map((t) => [t.name, t.legendLabel ?? t.name.replace(/_/g, ' ')]));
+
+/**
+ * Build the event→frame mapper for one streamed turn.
+ * @param plain  toolName → the pack's human label
+ * @param frame  (name, payload) => void — writes one SSE frame
+ */
+function statusMapper(plain, frame) {
+  const nameOf = new Map();  // toolCallId → toolName, learned on tool_start
+  const label = (name) => plain.get(name) ?? String(name).replace(/_/g, ' ');
+  return (e) => {
+    const p = e.payload ?? {};
+    if (e.type === 'agentfootprint.stream.llm_start') {
+      frame('status', { kind: 'thinking', label: 'thinking…' });
+    } else if (e.type === 'agentfootprint.stream.tool_start') {
+      nameOf.set(p.toolCallId, p.toolName);
+      frame('status', { kind: 'tool', tool: p.toolName, label: `consulting ${label(p.toolName)}…` });
+    } else if (e.type === 'agentfootprint.stream.tool_end' && p.error) {
+      // Rare by design: the tool decorator turns fetch failures into labeled
+      // fallback SENTENCES (a normal result), so this only fires if the
+      // decorator itself threw. Mapped anyway — honesty over tidiness.
+      const name = nameOf.get(p.toolCallId) ?? 'a source';
+      frame('status', { kind: 'tool', tool: name, label: `${label(name)} hit an error — answering without it` });
+    } else if (e.type === 'agentfootprint.stream.token') {
+      frame('token', { i: p.tokenIndex, text: p.content });
+    }
+  };
+}
+
 /** Mock serve: pre-run each app's scripted story so every page opens mid-story. */
 async function buildStories(perApp) {
   const out = new Map();
@@ -200,21 +248,68 @@ async function serveMode() {
           return s;
         };
 
+        // A supplied-but-unknown sessionId is a bug; no sessionId starts a
+        // conversation. Shared verbatim by /chat and /chat-stream so their
+        // failure modes are identical — and so the stream's failures happen
+        // BEFORE any stream header is written.
+        const resolveOrStart = () => {
+          if (!body.sessionId) return startSession(app, perApp);
+          const s = core.sessions.get(body.sessionId);
+          if (!s) { send(res, 404, { error: 'unknown sessionId — start a conversation first' }); return null; }
+          if (s.appId !== app.id) { send(res, 400, { error: `session ${s.id} belongs to '${s.appId}'` }); return null; }
+          return s;
+        };
+
         if (api[2] === 'chat') {
-          let session;
-          if (body.sessionId) {
-            session = core.sessions.get(body.sessionId);
-            if (!session) { send(res, 404, { error: 'unknown sessionId — start a conversation first' }); return; }
-            if (session.appId !== app.id) { send(res, 400, { error: `session ${session.id} belongs to '${session.appId}'` }); return; }
-          } else {
-            session = startSession(app, perApp);
-          }
+          const session = resolveOrStart();
+          if (!session) return;
           if (typeof body.message !== 'string' || !body.message.trim()) throw new Error('message required');
-          const turn = await core.chatTurn(session, body.message);
-          const m = session.meta[turn.index] ?? {};
-          send(res, 200, { sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
-            label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
-            entity: m.entity ?? session.entity, provenance: m.provenance ?? null });
+          // `dedupe` is the client's mid-stream recovery flag and nothing else:
+          // a visitor legitimately repeating a message never sends it.
+          const turn = await core.chatTurn(session, body.message, { dedupe: body.dedupe === true });
+          send(res, 200, chatPayload(session, turn));
+          return;
+        }
+
+        // ─── POST /app/<id>/chat-stream — the SSE sibling of /chat ───────────
+        // Same request body, same final payload, same failures. The ONLY thing
+        // it adds is a faithful projection of the agent's own event stream while
+        // the turn runs: `status` frames (one per real llm_start / tool_start /
+        // failed tool_end) and `token` frames (one per real stream.token).
+        // The server never delays, pads or invents a frame — display pacing is
+        // the page's business, and dies under prefers-reduced-motion.
+        if (api[2] === 'chat-stream') {
+          const session = resolveOrStart();
+          if (!session) return;
+          if (typeof body.message !== 'string' || !body.message.trim()) throw new Error('message required');
+
+          res.writeHead(200, {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          });
+          // After this point the outer try/catch must never answer: it would
+          // write a JSON body into an open event stream. This branch owns its
+          // errors and always returns.
+          const frame = (name, payload) => {
+            if (!res.writableEnded && !res.destroyed) res.write(encodeSSE(name, payload));
+          };
+          // The opener. A fresh conversation learns its wire id here rather than
+          // at `final` — which is what makes mid-stream recovery of a FIRST turn
+          // possible at all.
+          frame('session', { sessionId: session.id });
+          const onEvent = statusMapper(plainToolNames(app), frame);
+          try {
+            // A disconnected client does NOT abort the turn: it runs to
+            // completion inside the serialized queue (frames are dropped by the
+            // guard above), which is exactly what makes the client's
+            // `dedupe: true` recovery a deterministic read rather than a race.
+            const turn = await core.chatTurn(session, body.message, { onEvent });
+            frame('final', chatPayload(session, turn));
+          } catch (err) {
+            frame('error', { error: String(err && err.message ? err.message : err) });
+          }
+          res.end();
           return;
         }
 
@@ -257,6 +352,7 @@ async function serveMode() {
     console.log(`The app gallery is live → http://localhost:${PORT}`);
     console.log(`  ${APPS.map((a) => `/app/${a.id}`).join(' · ')}`);
     console.log('POST /app/<id>/chat {message} · /reason {sessionId,turnIndex} · /rerun-turn {sessionId,turnIndex,ignore} · /fork {sessionId,turnIndex,rerunId}');
+    console.log('POST /app/<id>/chat-stream {message} → text/event-stream: session · status · token · final|error (the page falls back to /chat if it fails)');
   });
 
   // stdio MCP servers die with their parent, but close the client explicitly so

@@ -142,6 +142,14 @@ ${importMap}
     font-size: 15.5px; line-height: 1.62; white-space: pre-wrap; color: var(--ink); }
   .msg-user.seed, .msg-advisor.seed { opacity: 0.62; }
 
+  /* the live status row — one line per REAL agent event, in this tab */
+  .cd-status { display: flex; align-items: center; gap: 7px; margin: 10px 0 0;
+    font-size: 12.5px; color: var(--muted); }
+  .cd-status .cd-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    animation: cdpulse 1.1s ease-in-out infinite; }
+  @keyframes cdpulse { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { .cd-status .cd-pulse { animation: none; } }
+
   .cd-reasonbtn { align-self: flex-start; margin: 8px 0 2px; font-size: 12.5px; font-weight: 600; cursor: pointer;
     background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
   .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
@@ -359,6 +367,110 @@ function mdHtml(text) {
 }
 function md(text) { return { __html: mdHtml(text) }; }
 
+// ═══ STREAMING — the same honest status vocabulary, with no wire at all ═════
+// The agent runs IN THIS TAB, so its events are already local: no SSE, no
+// server, no new key path. browserAnthropic implements stream(), so the agent
+// loop consumes Anthropic's own SSE and fires agentfootprint.stream.token per
+// chunk — the typewriter pacing here is REAL arrival pacing, not a timer.
+// The event→status map is lib/page.js's, duplicated per the freeze-and-copy
+// convention: llm_start → "thinking…", tool_start → "consulting <plain>…",
+// a FAILED tool_end → "<plain> hit an error — answering without it". Nothing else
+// makes a status, and no status exists without an event.
+var REDUCED = false;
+try { REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (err) {}
+document.documentElement.setAttribute('data-stream-motion', REDUCED ? 'reduced' : 'full');
+var STATUS_HOLD_MS = REDUCED ? 0 : 300;
+
+var TOOL_LABEL = {};
+DATA.apps.forEach(function (a) {
+  a.tools.forEach(function (t) { TOOL_LABEL[t.name] = t.legendLabel || t.name.replace(/_/g, ' '); });
+});
+function plainTool(name) { return TOOL_LABEL[name] || String(name).replace(/_/g, ' '); }
+
+var LIVE = null;
+var SET_LIVE = null;
+var LAST_STREAM = null;
+
+function paint() {
+  if (!SET_LIVE) return;
+  SET_LIVE(LIVE ? { userMessage: LIVE.userMessage, status: LIVE.status, text: LIVE.text } : null);
+}
+
+var scrollPending = false;
+function scrollDown() {
+  if (scrollPending) return;
+  scrollPending = true;
+  window.requestAnimationFrame(function () {
+    scrollPending = false;
+    var el = document.querySelector('.cd-scroll');
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+// Display pacing only (lib/page.js's pacer, duplicated per the freeze-and-copy
+// convention): statuses show in ARRIVAL order, each with a minimum display floor
+// of STATUS_HOLD_MS. retire() — the first token — stops further statuses and
+// lets the one on screen finish its floor while the reply streams underneath;
+// clear() — the committed turn — drops everything. Reduced motion → floor 0.
+var PACER = {
+  queue: [], timer: null, busy: false, shownAt: 0,
+  push: function (s) {
+    if (LAST_STREAM) LAST_STREAM.statuses.push(s);
+    PACER.queue.push(s);
+    if (!PACER.busy) {
+      if (PACER.timer) { clearTimeout(PACER.timer); PACER.timer = null; }
+      PACER.pump();
+    }
+  },
+  pump: function () {
+    if (!PACER.queue.length) { PACER.busy = false; PACER.timer = null; return; }
+    PACER.busy = true;
+    var s = PACER.queue.shift();
+    if (LIVE) { LIVE.status = s; PACER.shownAt = Date.now(); paint(); }
+    PACER.timer = setTimeout(PACER.pump, STATUS_HOLD_MS);
+  },
+  retire: function () {
+    PACER.queue = []; PACER.busy = false;
+    if (PACER.timer) { clearTimeout(PACER.timer); PACER.timer = null; }
+    var left = Math.max(0, STATUS_HOLD_MS - (Date.now() - PACER.shownAt));
+    if (left === 0) { if (LIVE) LIVE.status = null; return; }
+    PACER.timer = setTimeout(function () {
+      PACER.timer = null;
+      if (LIVE) { LIVE.status = null; paint(); }
+    }, left);
+  },
+  clear: function () {
+    PACER.queue = []; PACER.busy = false;
+    if (PACER.timer) clearTimeout(PACER.timer);
+    PACER.timer = null;
+  },
+};
+
+/** One raw agentfootprint event → at most one UI effect. Real events only. */
+function makeLiveSink() {
+  var nameOf = {};        // toolCallId → toolName, learned on tool_start
+  var sawToken = false;
+  return function (ev) {
+    var p = ev.payload || {};
+    if (ev.type === 'agentfootprint.stream.llm_start') {
+      if (LIVE) { LIVE.text = ''; sawToken = false; }
+      PACER.push({ kind: 'thinking', label: 'thinking…' });
+    } else if (ev.type === 'agentfootprint.stream.tool_start') {
+      nameOf[p.toolCallId] = p.toolName;
+      PACER.push({ kind: 'tool', tool: p.toolName, label: 'consulting ' + plainTool(p.toolName) + '…' });
+    } else if (ev.type === 'agentfootprint.stream.tool_end' && p.error) {
+      var name = nameOf[p.toolCallId] || 'a source';
+      PACER.push({ kind: 'tool', tool: name, label: plainTool(name) + ' hit an error — answering without it' });
+    } else if (ev.type === 'agentfootprint.stream.token') {
+      if (LAST_STREAM) LAST_STREAM.tokenCount += 1;
+      if (!LIVE) return;
+      if (!sawToken) { sawToken = true; PACER.retire(); }
+      LIVE.text += (p.content == null ? '' : p.content);
+      if (!REDUCED) { paint(); scrollDown(); }
+    }
+  };
+}
+
 /** Render one rich-text line of the custody copy. */
 function richLine(segs, key) {
   return e('p', { key: key }, segs.map(function (s, i) {
@@ -390,6 +502,10 @@ function Byok() {
   var t0 = React.useState(''); var tail = t0[0], setTail = t0[1];
   var r0 = React.useState(false); var remember = r0[0], setRemember = r0[1];
   var i0 = React.useState(''); var input = i0[0], setInput = i0[1];
+  // The in-flight turn — user bubble at once, then the honest status row, then
+  // the reply writing itself from Anthropic's own arrival cadence.
+  var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
+  SET_LIVE = setLiveTurn;
   var keyRef = React.useRef(null);
   // Which turn the reason panel is showing, tracked in a ref as well as in
   // state: a re-run fired in the same tick as the reason that opened the panel
@@ -468,9 +584,16 @@ function Byok() {
     // variable that actually enables a call, and unlike a rendered flag it is
     // never one render behind. (armed still drives the disabled composer.)
     if (!msg || !apiKey) return;
+    if (LIVE) return;                    // one in-flight turn per page
     setInput('');
     var id = deskId;
-    return api.chat({ appId: id, sessionId: desk.active, message: msg }).then(function (j) {
+    LIVE = { userMessage: msg, status: null, text: '' };
+    LAST_STREAM = { statuses: [], tokenCount: 0, finalReceived: false };
+    paint(); scrollDown();
+    var done = function () { PACER.clear(); LIVE = null; paint(); };
+    return api.chat({ appId: id, sessionId: desk.active, message: msg, onEvent: makeLiveSink() }).then(function (j) {
+      LAST_STREAM.finalReceived = true;
+      done();
       patch(id, function (d) {
         var sessions = Object.assign({}, d.sessions);
         var s = Object.assign({}, sessions[j.sessionId]);
@@ -484,7 +607,7 @@ function Byok() {
         return d;
       });
       return j;
-    }).catch(fail);
+    }).catch(function (err) { done(); return fail(err); });
   }
 
   function openReason(sid, ti) {
@@ -548,6 +671,8 @@ function Byok() {
     send: function (m) { setInput(m); return send(m); },
     reason: openReason, rerun: doRerun, fork: doFork,
     getState: function () { return { deskId: deskId, desks: desks, armed: armed, tail: tail }; },
+    // What the last send really saw on the in-tab event channel.
+    get lastStream() { return LAST_STREAM; },
     // Everything the page holds, deep-serialized — the assertion that the key
     // never entered the recorded state, run against real bytes.
     dump: function () {
@@ -594,6 +719,17 @@ function Byok() {
             onClick: function () { doFork(desk.active, t.index, wf.rerunId); } }, 'Continue from this version')));
       }
     });
+    if (liveTurn) {
+      thread.push(e('div', { key: 'live-u', className: 'msg-user' }, liveTurn.userMessage));
+      if (liveTurn.status) {
+        thread.push(e('div', { key: 'live-s', className: 'cd-status', 'data-testid': 'live-status' },
+          e('span', { className: 'cd-pulse' }), liveTurn.status.label));
+      }
+      if (liveTurn.text) {
+        thread.push(e('div', { key: 'live-a', className: 'msg-advisor', 'data-testid': 'reply-live',
+          dangerouslySetInnerHTML: md(liveTurn.text) }));
+      }
+    }
   }
 
   var tabs = desk.order.map(function (id) {
@@ -673,7 +809,7 @@ function Byok() {
         view: 'bars', strategyControl: 'dropdown', brand: app.title })
     : null;
 
-  var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length));
+  var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, armed
@@ -701,11 +837,11 @@ function Byok() {
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
           e('div', { className: 'cd-inputrow' },
-            e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed,
+            e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed || !!liveTurn,
               placeholder: armed ? app.starters[0] : 'Paste your Anthropic key above to start',
               onChange: function (ev) { setInput(ev.target.value); },
               onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
-            e('button', { 'data-testid': 'chat-send', disabled: !armed, onClick: send }, 'Send'))))),
+            e('button', { 'data-testid': 'chat-send', disabled: !armed || !!liveTurn, onClick: send }, 'Send'))))),
     e('div', { className: 'cd-panel' + (panelOpen ? ' open' : ''), 'data-testid': 'reason-panel' },
       e('div', { className: 'cd-panel-head' },
         e('span', { className: 'cd-panel-title' }, 'Visible reason'),

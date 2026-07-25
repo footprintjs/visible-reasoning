@@ -40,6 +40,12 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     toolLog: new Map(), maxIterations: 2,
   };
   let probeEventSink = null; // set during a live re-run to count real LLM calls
+  // The LIVE event sink — the one seam the streaming UI rides. It is set ONLY
+  // inside chatTurn's serialized op and cleared in its finally, so a rerun or
+  // baseline probe (which runs in its own op, with the sink null and
+  // pending.mode === 'replay') can never paint tokens into a visitor's bubble.
+  // Absent an `onEvent` option the sink stays null and nothing changes.
+  let liveEventSink = null;
 
   // `pending` is a shared single-slot: every makeAgent call inside an awaited
   // operation reads it. A re-run samples makeAgent across several awaits, so two
@@ -69,6 +75,10 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       provider, model: live ? model : 'mock-1', maxIterations: pending.maxIterations,
     }).system(pending.system).tools(tools).build();
     if (probeEventSink) { const evs = []; agent.on('*', (e) => evs.push(e)); probeEventSink.push(evs); }
+    // The live tap. Double-gated on purpose: a sink exists ONLY while a
+    // chatTurn op is in flight, and the mode check makes a replay probe's
+    // events structurally unable to reach it.
+    agent.on('*', (e) => { if (liveEventSink && pending.mode === 'record') liveEventSink(e); });
     return agent;
   }
 
@@ -118,8 +128,22 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   // last-LLM-call id on the turn. There is NO host-side pre-fetch here: the AGENT
   // decides which of its tools to consult, and whatever it consulted lands in
   // this turn's toolLog — which IS the frozen world a re-run replays.
-  function chatTurn(session, userMessage) {
+  //
+  // `opts.onEvent`  — a per-call live event sink (the streaming UI). Absent, the
+  //                   sink stays null and this function behaves byte-identically.
+  // `opts.dedupe`   — the transparent-recovery read. It runs INSIDE the
+  //                   serialized queue, so it naturally waits out an in-flight
+  //                   streamed turn before checking: if the last recorded turn
+  //                   already carries these exact message bytes, the turn ALREADY
+  //                   ran (the SSE connection died, the server finished anyway)
+  //                   and we hand back that turn instead of running a second one.
+  //                   Only the client's mid-stream recovery ever sets it.
+  function chatTurn(session, userMessage, opts = {}) {
     return serial(async () => {
+      if (opts.dedupe) {
+        const last = session.chat.turns[session.chat.turns.length - 1];
+        if (last && last.userMessage === userMessage) return last;
+      }
       const pack = session.pack;
       const entity = pack.entity.parse(userMessage, session.entity);
       session.entity = entity;
@@ -134,14 +158,17 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         // one LLM call per tool the agent consults, plus one to answer.
         maxIterations: session.decoratedTools.length + 2,
       };
-      const turn = await session.chat.send(userMessage);
-      const provenance = provenanceFromToolLog(toolLog, pack.tools.map((t) => t.name));
-      session.meta[turn.index] = { toolLog, provenance, system, entity };
-      if (live) {
-        console.log(`[live][${pack.id}] ${entity}: `
-          + Object.entries(provenance).map(([k, v]) => `${k}=${v}`).join(' '));
-      }
-      return turn;
+      liveEventSink = opts.onEvent ?? null;
+      try {
+        const turn = await session.chat.send(userMessage);
+        const provenance = provenanceFromToolLog(toolLog, pack.tools.map((t) => t.name));
+        session.meta[turn.index] = { toolLog, provenance, system, entity };
+        if (live) {
+          console.log(`[live][${pack.id}] ${entity}: `
+            + Object.entries(provenance).map(([k, v]) => `${k}=${v}`).join(' '));
+        }
+        return turn;
+      } finally { liveEventSink = null; }
     });
   }
 

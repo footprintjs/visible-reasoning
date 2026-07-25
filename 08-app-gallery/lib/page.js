@@ -181,6 +181,14 @@ export function buildAppPage(app, data) {
     font-size: 15.5px; line-height: 1.62; white-space: pre-wrap; color: var(--ink); }
   .msg-user.seed, .msg-advisor.seed { opacity: 0.62; }
 
+  /* the live status row — one line per REAL agent event, where the reply will land */
+  .cd-status { display: flex; align-items: center; gap: 7px; margin: 10px 0 0;
+    font-size: 12.5px; color: var(--muted); }
+  .cd-status .cd-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    animation: cdpulse 1.1s ease-in-out infinite; }
+  @keyframes cdpulse { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { .cd-status .cd-pulse { animation: none; } }
+
   .cd-reasonbtn { align-self: flex-start; margin: 8px 0 2px; font-size: 12.5px; font-weight: 600; cursor: pointer;
     background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
   .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
@@ -317,6 +325,164 @@ function mdHtml(text) {
 /** React's dangerous-HTML shape, fed only by mdHtml's escaped output. */
 function md(text) { return { __html: mdHtml(text) }; }
 
+// ═══ STREAMING — honest status, token-by-token replies ══════════════════════
+// Every status line on this page is a projection of a REAL agentfootprint event
+// the server forwarded (llm_start → "thinking…", tool_start → "consulting X…",
+// a FAILED tool_end → "X hit an error…"). Nothing is invented, nothing is
+// padded. The one presentation liberty is DISPLAY pacing — a minimum hold so a
+// fast tool bracket is readable — and it collapses to zero under reduced motion.
+var REDUCED = false;
+try { REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (err) {}
+document.documentElement.setAttribute('data-stream-motion', REDUCED ? 'reduced' : 'full');
+var STATUS_HOLD_MS = REDUCED ? 0 : 300;   // display min-hold per status line
+var BEAT_MS = 350;                        // fallback presenter only
+var WORD_MS = 30;                         // mirrors the mock provider's own chunk cadence
+
+// A MOCK desk calls no model and touches no network: the agent's entire tool
+// phase finishes inside a millisecond, so EVERY status frame is already on the
+// wire before the first token. The order is real, the wall clock is not — left
+// alone, three true lines ("consulting weather…/place…/crowd…") would be retired
+// by the first token before a single one of them was ever painted.
+//
+// So a mock turn is PRESENTED rather than raced: the recorded statuses play out
+// in their real recorded order at the same min-hold, and only then does the
+// (already complete, already authoritative) reply type itself. Nothing is
+// invented and nothing is reordered — the only liberty is the clock.
+//
+// A LIVE turn is never presented: its content is never delayed by us, and the
+// first token retires the status line exactly as it did before. Reduced motion
+// turns the whole thing off on both.
+var PACED = !DATA.live && !REDUCED;
+
+var TOOL_LABEL = {};
+DATA.app.tools.forEach(function (t) { TOOL_LABEL[t.name] = t.legendLabel || t.name.replace(/_/g, ' '); });
+function plainTool(name) { return TOOL_LABEL[name] || String(name).replace(/_/g, ' '); }
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// The in-flight turn's mutable state, plus the bridge that copies it into React.
+var LIVE = null;
+var SET_LIVE = null;
+var LAST_STREAM = null;   // what the headless drive reads (window.__appDesk.lastStream)
+
+function paint() {
+  if (!SET_LIVE) return;
+  SET_LIVE(LIVE ? { userMessage: LIVE.userMessage, status: LIVE.status, text: LIVE.text } : null);
+}
+
+var scrollPending = false;
+function scrollDown() {
+  if (scrollPending) return;
+  scrollPending = true;
+  window.requestAnimationFrame(function () {
+    scrollPending = false;
+    var el = document.querySelector('.cd-scroll');
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+// Statuses are DISPLAYED in arrival order, each held a minimum of
+// STATUS_HOLD_MS before the next queued one replaces it. That floor is the ONLY
+// presentation liberty: the whole tool phase of a mock turn arrives in a single
+// network chunk, so without it a real status line would exist for a fraction of
+// a frame and the visitor would see nothing at all.
+//
+// On a LIVE turn it never delays content. retire() (the first token) stops any
+// further status from showing and lets the one on screen finish its floor while
+// the reply streams underneath it; clear() (the final payload) drops everything
+// at once. Under reduced motion the floor is 0, so both are immediate.
+//
+// On a PACED (mock) turn nothing retires the queue: the presenter awaits
+// drained() — every recorded status shown, in order, for its full floor — and
+// only then types the reply. There is no content to delay yet, because a mock
+// turn's tokens have all arrived already.
+var PACER = {
+  queue: [], timer: null, busy: false, shownAt: 0, waiters: [],
+  push: function (s) {
+    if (LAST_STREAM) LAST_STREAM.statuses.push(s);   // recorded in ARRIVAL order
+    PACER.queue.push(s);
+    if (!PACER.busy) {
+      if (PACER.timer) { clearTimeout(PACER.timer); PACER.timer = null; }
+      PACER.pump();
+    }
+  },
+  pump: function () {
+    if (!PACER.queue.length) { PACER.busy = false; PACER.timer = null; PACER.settle(); return; }
+    PACER.busy = true;
+    var s = PACER.queue.shift();
+    if (LIVE) { LIVE.status = s; PACER.shownAt = Date.now(); paint(); }
+    PACER.timer = setTimeout(PACER.pump, STATUS_HOLD_MS);
+  },
+  /** Wake everyone waiting on drained() — the queue is spent, one way or another. */
+  settle: function () {
+    var ws = PACER.waiters; PACER.waiters = [];
+    ws.forEach(function (r) { r(); });
+  },
+  /**
+   * Resolves once every status pushed so far has been SHOWN for its full floor
+   * (or the pacer was cleared). The mock presenter's only ordering primitive.
+   */
+  drained: function () {
+    if (!PACER.busy && !PACER.queue.length) return Promise.resolve();
+    return new Promise(function (resolve) { PACER.waiters.push(resolve); });
+  },
+  retire: function () {
+    PACER.queue = []; PACER.busy = false;
+    if (PACER.timer) { clearTimeout(PACER.timer); PACER.timer = null; }
+    var left = Math.max(0, STATUS_HOLD_MS - (Date.now() - PACER.shownAt));
+    if (left === 0) { if (LIVE) LIVE.status = null; return; }
+    PACER.timer = setTimeout(function () {
+      PACER.timer = null;
+      if (LIVE) { LIVE.status = null; paint(); }
+    }, left);
+  },
+  clear: function () {
+    PACER.queue = []; PACER.busy = false;
+    if (PACER.timer) clearTimeout(PACER.timer);
+    PACER.timer = null;
+    PACER.settle();   // a cleared pacer must never leave a presenter awaiting it
+  },
+};
+
+/**
+ * POST + SSE, dependency-free (EventSource cannot POST a body).
+ * Rejects with { phase: 'connect' }  — the turn never started; re-POST /chat.
+ * Rejects with { phase: 'midstream' } — frames arrived but no final/error; the
+ *   server is finishing the turn regardless, so recover with dedupe.
+ */
+function streamChat(body, on) {
+  return fetch(API + '/chat-stream', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }).then(function (r) {
+    var ct = r.headers.get('content-type') || '';
+    if (!r.ok || ct.indexOf('text/event-stream') !== 0) return Promise.reject({ phase: 'connect' });
+    var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', terminal = false, opened = false;
+    function pump() {
+      return reader.read().then(function (step) {
+        if (step.done) return terminal ? undefined : Promise.reject({ phase: opened ? 'midstream' : 'connect' });
+        buf += dec.decode(step.value, { stream: true });
+        var idx;
+        while ((idx = buf.indexOf('\\n\\n')) !== -1) {
+          var raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          var ev = null, data = '';
+          raw.split('\\n').forEach(function (l) {
+            if (l.indexOf('event: ') === 0) ev = l.slice(7);
+            else if (l.indexOf('data: ') === 0) data = l.slice(6);
+          });
+          if (ev) {
+            opened = true;
+            if (ev === 'final' || ev === 'error') terminal = true;
+            if (on[ev]) on[ev](JSON.parse(data));
+          }
+        }
+        return pump();
+      }, function () {
+        return Promise.reject({ phase: opened ? 'midstream' : 'connect' });
+      });
+    }
+    return pump();
+  }, function () { return Promise.reject({ phase: 'connect' }); });
+}
+
 function AppDesk() {
   var sInit = {};
   Object.keys(DATA.sessions).forEach(function (k) { sInit[k] = DATA.sessions[k]; });
@@ -327,6 +493,10 @@ function AppDesk() {
   var w0 = React.useState(Object.assign({}, DATA.rerun)); var reruns = w0[0], setReruns = w0[1];
   var p0 = React.useState(null); var panelKey = p0[0], setPanelKey = p0[1];
   var i0 = React.useState(''); var input = i0[0], setInput = i0[1];
+  // The in-flight turn: the user's bubble lands at once, then the status row,
+  // then the reply writing itself. Cleared the moment 'final' commits the turn.
+  var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
+  SET_LIVE = setLiveTurn;
 
   function openReason(sid, ti) {
     var key = sid + ':' + ti;
@@ -369,23 +539,146 @@ function AppDesk() {
     }).catch(function (err) { window.alert(String(err.message || err)); });
   }
 
+  // The turn is RECORDED here and nowhere else — which is why the "visible
+  // reason" button appears exactly here too: it renders off sess.turns, so no
+  // reason or re-run is ever offered for a reply that is still streaming.
+  function commitFinal(j, msg) {
+    PACER.clear();
+    LIVE = null; paint();
+    setSessions(function (m) {
+      var n = Object.assign({}, m);
+      var sess = Object.assign({}, n[j.sessionId]);
+      sess.turns = sess.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply, provenance: j.provenance, entity: j.entity }]);
+      if (j.entity) sess.entity = j.entity;
+      n[j.sessionId] = sess; return n;
+    });
+    if (order.indexOf(j.sessionId) === -1) setOrder(order.concat([j.sessionId]));
+    setActive(j.sessionId);
+    scrollDown();
+  }
+
+  // ── The fallback presenter (plain /chat only) ──────────────────────────────
+  // The reply is already complete and authoritative; this re-paces its DISPLAY.
+  // The beats are read off the turn's OWN recorded provenance — the sources it
+  // really consulted — never invented. (Provenance is a set, not a sequence, so
+  // pack order is the honest approximation; the content is real either way.)
+  function presentFallback(j, msg) {
+    // This presenter owns the status line from here on — drop anything the dead
+    // stream left queued so two clocks can't drive one row.
+    PACER.clear();
+    var beats = [{ kind: 'thinking', label: 'thinking…' }];
+    var prov = j.provenance || {};
+    DATA.app.tools.forEach(function (t) {
+      if (prov[t.name] && prov[t.name] !== 'not consulted') {
+        beats.push({ kind: 'tool', tool: t.name, label: 'consulting ' + plainTool(t.name) + '…' });
+      }
+    });
+    var chain = beats.reduce(function (p, s) {
+      return p.then(function () {
+        if (!LIVE) return null;
+        if (LAST_STREAM) LAST_STREAM.statuses.push(s);
+        LIVE.status = s; paint();
+        return delay(BEAT_MS);
+      });
+    }, Promise.resolve());
+    return chain.then(function () { return typewrite(j.reply); })
+      .then(function () { commitFinal(j, msg); return j; });
+  }
+
+  function typewrite(reply) {
+    if (!LIVE) return Promise.resolve();
+    LIVE.status = null;
+    var words = String(reply == null ? '' : reply).match(/\\S+\\s*/g) || [];
+    var i = 0;
+    function step() {
+      if (!LIVE || i >= words.length) return Promise.resolve();
+      LIVE.text += words[i]; i += 1;
+      paint(); scrollDown();
+      if (i >= words.length) return Promise.resolve();
+      return delay(WORD_MS).then(step);
+    }
+    return step();
+  }
+
   function send(explicit) {
     // An explicit string (the test seam) sends that; an event/undefined (button
     // click, Enter key) falls back to the current input box.
     var msg = (typeof explicit === 'string' ? explicit : input).trim(); if (!msg || !HAS_SERVER) return;
+    if (LIVE) return;                     // one in-flight turn, mirroring the server's queue
     setInput('');
-    return post('/chat', { sessionId: active, message: msg }).then(function (j) {
-      setSessions(function (m) {
-        var n = Object.assign({}, m);
-        var sess = Object.assign({}, n[j.sessionId]);
-        sess.turns = sess.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply, provenance: j.provenance, entity: j.entity }]);
-        if (j.entity) sess.entity = j.entity;
-        n[j.sessionId] = sess; return n;
+    var sid = active;
+    LIVE = { userMessage: msg, status: null, text: '' };
+    LAST_STREAM = { sessionId: sid || null, statuses: [], tokenCount: 0, finalReceived: false, fellBack: null };
+    paint(); scrollDown();
+    // presented — the mock desk's presentation promise. Set only on a PACED
+    // turn, and awaited by the caller so send() still resolves when the turn is
+    // actually on screen and committed.
+    var finalJson = null, sawToken = false, presented = null;
+
+    return streamChat({ sessionId: sid, message: msg }, {
+      session: function (j) { LAST_STREAM.sessionId = j.sessionId; },
+      status: function (j) {
+        // A fresh 'thinking' means a fresh model pass: any prose an earlier
+        // iteration streamed belongs to THAT pass, not to the answer. 'final'
+        // corrects everything regardless.
+        if (j.kind === 'thinking' && LIVE) { LIVE.text = ''; sawToken = false; }
+        PACER.push(j);
+      },
+      token: function (j) {
+        LAST_STREAM.tokenCount += 1;
+        if (!LIVE) return;
+        // PACED (mock): the tokens are real and still counted, but they all
+        // arrived in the same millisecond as the statuses. Retiring the status
+        // line on them would kill lines nobody has seen yet, so the presenter
+        // types the authoritative 'final' reply instead — after the statuses.
+        if (PACED) return;
+        // The reply is now visibly writing itself — the status line has done its job.
+        if (!sawToken) { sawToken = true; PACER.retire(); }
+        LIVE.text += (j.text == null ? '' : j.text);
+        // Under reduced motion the tokens are still consumed (arrival pacing is
+        // the server's, never ours) but the bubble paints once, on 'final'.
+        if (!REDUCED) { paint(); scrollDown(); }
+      },
+      final: function (j) {
+        LAST_STREAM.finalReceived = true; finalJson = j;
+        if (!PACED) { commitFinal(j, msg); return; }
+        // Every recorded status, in its recorded order, held long enough to
+        // read — THEN the reply writes itself. Same bytes, same order, a clock
+        // a human can follow.
+        presented = PACER.drained()
+          .then(function () { return typewrite(j.reply); })
+          .then(function () { commitFinal(j, msg); });
+      },
+      error: function (j) {
+        // The server answered authoritatively: the turn threw. Re-POSTing /chat
+        // would only fail the same way, and re-running a turn is never transparent.
+        PACER.clear(); LIVE = null; paint();
+        window.alert(String(j.error || 'request failed'));
+      },
+    }).then(function () {
+      // A paced turn is not done when the wire is done — it is done when the
+      // presentation is.
+      return presented ? presented.then(function () { return finalJson; }) : finalJson;
+    }, function (rej) {
+      // If the authoritative payload already landed, a later reader hiccup is
+      // not a reason to run anything again — the turn is done and committed.
+      if (LAST_STREAM.finalReceived) return finalJson;
+      var phase = (rej && rej.phase) || 'connect';
+      LAST_STREAM.fellBack = phase;
+      var body = { sessionId: LAST_STREAM.sessionId || sid, message: msg };
+      // Mid-stream death: the server finished (or is finishing) the turn. The
+      // dedupe read waits it out inside the serialized queue and hands back the
+      // very turn we lost — no second turn, no second model call.
+      if (phase === 'midstream') body.dedupe = true;
+      return post('/chat', body).then(function (j) {
+        LAST_STREAM.finalReceived = true;
+        if (phase === 'midstream' || REDUCED) { commitFinal(j, msg); return j; }
+        return presentFallback(j, msg);
+      }).catch(function (err) {
+        PACER.clear(); LIVE = null; paint();
+        window.alert(String(err.message || err));
       });
-      if (order.indexOf(j.sessionId) === -1) setOrder(order.concat([j.sessionId]));
-      setActive(j.sessionId);
-      return j;
-    }).catch(function (err) { window.alert(String(err.message || err)); });
+    });
   }
 
   // A real test seam (not theater): the exact handlers, callable headless.
@@ -394,6 +687,9 @@ function AppDesk() {
     reason: openReason, rerun: doRerun, fork: doFork,
     send: function (m) { setInput(m); return send(m); },
     getState: function () { return { order: order, active: active, sessions: sessions, reruns: reruns, panelKey: panelKey }; },
+    // What the last send actually received on the wire — statuses in arrival
+    // order, real token count, and which degrade path (if any) was taken.
+    get lastStream() { return LAST_STREAM; },
   };
 
   var sess = sessions[active];
@@ -430,6 +726,17 @@ function AppDesk() {
             onClick: function () { doFork(active, t.index, wf.rerunId); } }, 'Continue from this version')));
       }
     });
+    if (liveTurn) {
+      thread.push(e('div', { key: 'live-u', className: 'msg-user' }, liveTurn.userMessage));
+      if (liveTurn.status) {
+        thread.push(e('div', { key: 'live-s', className: 'cd-status', 'data-testid': 'live-status' },
+          e('span', { className: 'cd-pulse' }), liveTurn.status.label));
+      }
+      if (liveTurn.text) {
+        thread.push(e('div', { key: 'live-a', className: 'msg-advisor', 'data-testid': 'reply-live',
+          dangerouslySetInnerHTML: md(liveTurn.text) }));
+      }
+    }
   }
 
   var tabs = order.map(function (id) {
@@ -472,7 +779,7 @@ function AppDesk() {
         view: 'bars', strategyControl: 'dropdown', brand: DATA.app.title })
     : null;
 
-  var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length));
+  var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, 'Ask a question to begin. Every reply carries a '
@@ -499,11 +806,11 @@ function AppDesk() {
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
           e('div', { className: 'cd-inputrow' },
-            e('input', { 'data-testid': 'chat-input', value: input, disabled: !HAS_SERVER,
+            e('input', { 'data-testid': 'chat-input', value: input, disabled: !HAS_SERVER || !!liveTurn,
               placeholder: HAS_SERVER ? DATA.app.starters[0] : 'Chatting needs the local server',
               onChange: function (ev) { setInput(ev.target.value); },
               onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
-            e('button', { 'data-testid': 'chat-send', disabled: !HAS_SERVER, onClick: send }, 'Send')),
+            e('button', { 'data-testid': 'chat-send', disabled: !HAS_SERVER || !!liveTurn, onClick: send }, 'Send')),
           HAS_SERVER ? null : e('p', { className: 'cd-disnote' }, NEED_SERVER)))),
     e('div', { className: 'cd-panel' + (panelOpen ? ' open' : ''), 'data-testid': 'reason-panel' },
       e('div', { className: 'cd-panel-head' },
