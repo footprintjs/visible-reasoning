@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bring your own key — the app gallery</title>
+<meta name="description" content="Two small advisors you can chat with on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23C0531F%22%2F%3E%3Ccircle%20cx%3D%2212.5%22%20cy%3D%2212.5%22%20r%3D%225%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%2F%3E%3Cpath%20d%3D%22M16.2%2016.2%20L24%2024%20M20.5%2020.5%20l3.2%20-3.2%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
+<style>
+  :root {
+    --bg: #FFFFFF; --panel-bg: #FFFFFF; --soft: #F6F4F0; --ink: #1E1A15; --muted: #786D5E;
+    --line: #E9E3DA; --accent: #C0531F; --accent-dk: #95380F; --user: #EFEAE1; --whatif: #C9932B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+  /* provenance dots — one style per honest verdict */
+  .cd-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+  .cd-dot.live { background: #3E9C4D; }
+  .cd-dot.scripted { background: #8AA1B8; }
+  .cd-dot.fallback { background: #fff; border: 1.5px solid #C9932B; }
+  .cd-dot.synthetic { background: #FFF6E4; border: 1.5px dashed #C9932B; }
+  .cd-dot.replay { background: #fff; border: 1.5px solid #7A4CBF; }
+  .cd-dot.notconsulted { background: #fff; border: 1.5px solid #CDBFA9; }
+  .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
+
+  .ag-wrap { max-width: 1040px; margin: 0 auto; padding: 46px 22px 60px; }
+  .ag-head { text-align: center; margin: 0 0 34px; }
+  .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
+  .ag-head p { font-size: 15px; line-height: 1.65; color: var(--muted); margin: 0 auto; max-width: 640px; }
+  .ag-cost { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 12px auto 0; max-width: 640px; }
+  .ag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .ag-card { display: flex; flex-direction: column; text-decoration: none; color: inherit;
+    border: 1px solid var(--line); border-radius: 14px; padding: 0 18px 18px; background: var(--bg);
+    overflow: hidden; transition: box-shadow .18s ease, transform .18s ease; }
+  a.ag-card:hover { box-shadow: 0 8px 26px rgba(40,30,20,.10); transform: translateY(-2px); }
+  .ag-rule { display: block; height: 4px; margin: 0 -18px 16px; background: var(--accent); }
+  .ag-title { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
+  .ag-tag { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
+  .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 12px; }
+  .ag-tool { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  /* the capability strip — one icon+line per thing this build can actually do */
+  .ag-caps { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px;
+    padding: 10px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+  .ag-cap { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+  .ag-cap svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+  .ag-chips { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
+  .ag-chip { font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
+  .ag-cta { margin-top: auto; align-self: flex-start; font-size: 13px; font-weight: 700;
+    color: #fff; background: var(--accent); border-radius: 999px; padding: 8px 16px; }
+  a.ag-card:hover .ag-cta { background: var(--accent-dk); }
+
+  /* the program notes: how to read the demo, what the buttons do, take-it-home */
+  .ag-sec { margin: 34px auto 0; max-width: 760px; }
+  #guide, #buttons, #byok { scroll-margin-top: 18px; }
+  .ag-sec h2 { font-size: 16px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .ag-sec p { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 10px; }
+  .ag-defs { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .ag-defs .cd-help-item { margin-bottom: 8px; }
+  .ag-note { font-size: 12.5px; line-height: 1.65; color: var(--muted); margin: 0 0 8px; }
+  .ag-btn-strip { display: flex; flex-wrap: wrap; gap: 10px; }
+  .ag-btn-item { flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px;
+    padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+  .ag-btn-head { display: flex; align-items: center; gap: 8px; }
+  .ag-btn-head svg { flex: 0 0 auto; color: var(--accent); }
+  .ag-btn-what { font-size: 12px; line-height: 1.55; color: var(--muted); }
+  .ag-fakebtn { font-size: 11.5px; font-weight: 600; color: var(--muted); background: none;
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+  .ag-fakebtn.solid { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+  .ag-byok { padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--whatif, #C9932B);
+    border-radius: 11px; background: var(--soft); }
+  .ag-byok p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
+  .ag-byok strong { color: var(--ink); }
+  .ag-byok a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .ag-byok a:hover { text-decoration: underline; }
+
+  .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
+  .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+
+  /* legend — active entity + per-tool provenance dots */
+  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
+    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
+  .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
+
+  /* "ⓘ what do these mean?" — the only always-visible explanation control.
+     There is no glyph key row: the dots explain themselves in the dialog. */
+  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
+    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* the explanation dialog — quiet, light, same skin as the desk */
+  .cd-modal-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); z-index: 60; }
+  .cd-modal { position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(520px, calc(100vw - 32px)); max-height: min(80vh, 660px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(40,30,20,.18); }
+  .cd-modal:focus { outline: none; }
+  .cd-modal-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 10px 11px 16px; border-bottom: 1px solid var(--line); }
+  .cd-modal-title { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--accent); }
+  .cd-modal-close { background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1;
+    color: var(--muted); padding: 3px 9px; border-radius: 7px; }
+  .cd-modal-close:hover { background: var(--soft); color: var(--ink); }
+  .cd-modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .cd-modal-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 13px 16px 16px;
+    font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+  .cd-modal-sec + .cd-modal-sec { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .cd-modal-sec h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--ink);
+    letter-spacing: .01em; }
+  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px;
+    overflow-wrap: anywhere; }
+  .cd-help-item .cd-dot { margin-top: 5px; }
+  .cd-help-item b { color: var(--ink); }
+  .cd-help-none { margin: 0; font-style: italic; }
+  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
+  /* desk mode: the vocabulary is not in the dialog — this is the way to it */
+  a.cd-help-guide { display: block; color: var(--muted); font-weight: 600; text-decoration: none; }
+  a.cd-help-guide:hover { color: var(--accent); }
+  a.cd-help-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  /* narrow screens: the dialog becomes a bottom sheet, full width, no overflow */
+  @media (max-width: 520px) {
+    .cd-modal { top: auto; bottom: 0; left: 0; transform: none; width: 100%; max-width: 100%;
+      max-height: 86vh; border-radius: 14px 14px 0 0; border-left: 0; border-right: 0; border-bottom: 0; }
+  }
+
+  .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
+    background: var(--soft); padding: 15px 17px; }
+  .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .by-copy p { font-size: 13px; line-height: 1.62; color: var(--ink); margin: 0 0 8px; }
+  .by-copy p:last-child { margin-bottom: 0; }
+  .by-copy code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
+  .by-travel { margin: 12px 0 0; padding-top: 11px; border-top: 1px solid var(--line); }
+  /* a desk this build honestly cannot run: readable, not a link, and it says why */
+  .ag-card.off { opacity: .72; background: var(--soft); }
+  .ag-card.off .ag-cta { background: none; color: var(--muted); border: 1px dashed var(--line); }
+  .ag-cardnote { font-size: 12.5px; line-height: 1.55; color: #8A4A22; margin: 0 0 14px; }
+  .by-src { margin-top: 26px; }
+  .by-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .by-src a:hover { text-decoration: underline; }
+
+</style></head>
+<body>
+<div class="ag-wrap">
+  <header class="ag-head">
+    <h1>Bring your own key · the app gallery</h1>
+    <p>Two real chat desks share one machine: every context source is a tool the agent calls, and
+    every reply can be re-run without a source to see what that source really changed. They run
+    entirely in your browser, on your own Anthropic key — pick a desk to start.</p>
+  </header>
+
+  <section class="ag-sec" id="custody">
+    <div class="by-custody" data-testid="landing-custody">
+      <h2>Where your key goes</h2>
+      <div class="by-copy"><p><strong>Your key stays in this tab.</strong></p>
+      <p>This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.</p>
+      <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. <strong>Forget my key</strong> erases it instantly.</p>
+      <p>This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that <em>could</em> see your key.</p>
+      <p><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to <code>api.anthropic.com</code>. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
+        <div class="by-travel" data-testid="landing-key-travel"><p>You’ll paste your key on the desk you open — this page never asks for one. Tick <strong>remember</strong> there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="ag-grid" data-testid="landing-cards">
+    <a class="ag-card" href="./trip.html" style="--accent: #2E7D4F; --accent-dk: #1E5C38">
+      <span class="ag-rule"></span>
+      <h2 class="ag-title">The trip advisor</h2>
+      <p class="ag-tag">should I hike it? — with visible reasons</p>
+      <div class="ag-tools">
+        <span class="ag-tool" title="Saturday's forecast for a place — condition, high temperature and rain chance (Open-Meteo, keyless).">
+          <span class="cd-dot live"></span>weather
+        </span>
+        <span class="ag-tool" title="What a place is — a one-paragraph description (Wikipedia, keyless).">
+          <span class="cd-dot live"></span>place
+        </span>
+        <span class="ag-tool" title="How busy a trail tends to be on a Saturday morning — a MODELED estimate, not measured data.">
+          <span class="cd-dot synthetic"></span>crowd
+        </span></div>
+      <div class="ag-caps">
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/></svg><span>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/><path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/></svg><span>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/><path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/><path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/></svg><span>statuses and reply arrive as they happen</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/><path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/></svg><span>every reply: visible reason → re-run without a source → fork</span></span></div>
+      <div class="ag-chips"><span class="ag-chip">Should I hike Mission Peak on Saturday?</span><span class="ag-chip">What about &quot;Mount Tamalpais&quot;?</span></div>
+      <span class="ag-cta">Open the desk →</span>
+    </a>
+    <a class="ag-card" href="./movies.html" style="--accent: #7A4CBF; --accent-dk: #5A3395">
+      <span class="ag-rule"></span>
+      <h2 class="ag-title">The movie desk</h2>
+      <p class="ag-tag">should I watch it? — with visible reasons</p>
+      <div class="ag-tools">
+        <span class="ag-tool" title="Price, availability and advisory rating for a movie (iTunes Search, keyless).">
+          <span class="cd-dot live"></span>itunes
+        </span>
+        <span class="ag-tool" title="One-paragraph plot / overview for a movie (Wikipedia, keyless).">
+          <span class="cd-dot live"></span>plot
+        </span>
+        <span class="ag-tool" title="What critics said about a movie — its critical reception (Wikipedia, keyless).">
+          <span class="cd-dot live"></span>reception
+        </span></div>
+      <div class="ag-caps">
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/></svg><span>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/><path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/></svg><span>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/><path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/><path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/></svg><span>statuses and reply arrive as they happen</span></span>
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/><path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/></svg><span>every reply: visible reason → re-run without a source → fork</span></span></div>
+      <div class="ag-chips"><span class="ag-chip">Should I watch &quot;Heat&quot; tonight?</span><span class="ag-chip">Is &quot;Dune&quot; worth renting?</span></div>
+      <span class="ag-cta">Open the desk →</span>
+    </a>
+    <div class="ag-card off" style="--accent: #C0531F; --accent-dk: #95380F">
+      <span class="ag-rule"></span>
+      <h2 class="ag-title">The stock desk</h2>
+      <p class="ag-tag">buy or hold? — with visible reasons</p>
+      <p class="ag-cardnote">The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Run it yourself with npm run gallery:live.</p>
+      <div class="ag-caps">
+        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2v4.3"/></svg><span>runs in the server demo only — SEC EDGAR + Reddit over MCP</span></span></div>
+      <span class="ag-cta">Server-only — run it locally</span>
+    </div></div>
+
+  <section class="ag-sec" id="guide">
+    <h2>How to read the demo</h2>
+    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
+    that tool's data actually came from on the latest reply:</p>
+    <div class="ag-defs">
+      <div class="cd-help-item">
+        <span class="cd-dot live"></span>
+        <span><b>live</b> — real data fetched from the internet just now (this source really answered)</span>
+      </div>
+      <div class="cd-help-item">
+        <span class="cd-dot fallback"></span>
+        <span><b>fallback</b> — we tried the real source but couldn’t reach it, so the demo used realistic stand-in data — and says so</span>
+      </div>
+      <div class="cd-help-item">
+        <span class="cd-dot synthetic"></span>
+        <span><b>synthetic (never measured)</b> — data that is invented by design (like the crowd estimate); it is always labeled, never passed off as real</span>
+      </div>
+      <div class="cd-help-item">
+        <span class="cd-dot notconsulted"></span>
+        <span><b>not consulted</b> — the assistant didn’t use this source for this reply</span>
+      </div>
+    </div>
+    <p class="ag-note">Every tool sentence carries its own [source: …] label — the map never hides where data came from.</p>
+    <p class="ag-note">The rule everywhere: the label names what actually happened. A desk that can't reach a source says so, and data that was invented is never passed off as real.</p>
+    <p class="ag-note">The trip advisor's crowd estimate is always synthetic — modeled, never measured — and always says so.</p>
+  </section>
+
+  <section class="ag-sec" id="notes">
+    <h2>What a reply costs</h2>
+    <div class="by-copy"><p>Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the <strong>frozen</strong> tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.</p>
+      <p>Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.</p>
+    </div>
+  </section>
+
+  <p class="ag-foot by-src">Every file here — this page, the desks, the vendored library bytes — is
+  generated from the repo and served as-is.
+  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener noreferrer">github.com/footprintjs/visible-reasoning</a></p>
+</div>
+</body></html>

@@ -1,0 +1,50 @@
+/**
+ * agentfootprint/observability-providers — vendor observability strategies.
+ *
+ * Grouped subpath following the parallel-providers pattern v2.5
+ * established for `llm-providers` / `tool-providers` /
+ * `memory-providers`. Adding a new vendor adds an export here, NOT
+ * a new subpath — keeps `package.json#exports` from sprawling.
+ *
+ * Each adapter lazy-imports its vendor SDK via `lib/lazyRequire.ts`,
+ * so consumers who never call a particular factory don't have to
+ * install that SDK. Peer-deps are declared in package.json with
+ * `peerDependenciesMeta.{name}.optional = true`.
+ *
+ * @example
+ * ```ts
+ * import { agentcoreObservability } from 'agentfootprint/observability-providers';
+ * import { microtaskBatchDriver } from 'footprintjs/detach';
+ *
+ * agent.enable.observability({
+ *   strategy: agentcoreObservability({
+ *     region: 'us-east-1',
+ *     logGroupName: '/agentfootprint/my-agent',
+ *   }),
+ *   // Recommended — keeps the agent loop unblocked by network latency.
+ *   detach: { driver: microtaskBatchDriver, mode: 'forget' },
+ * });
+ * ```
+ *
+ * Roadmap:
+ *   - agentcoreObservability   ← v2.8.1
+ *   - cloudwatchObservability  ← v2.8.2
+ *   - xrayObservability        ← v2.8.3
+ *   - otelObservability        ← v2.9.0 (this release)
+ *
+ * Note: `datadogObservability` was on the v2.9 roadmap, but Datadog
+ * APM accepts OTLP — point your OTel SDK at Datadog's OTLP endpoint
+ * and `otelObservability` covers the Datadog use case. We'll ship a
+ * dedicated `dd-trace`-based adapter only if real-world feedback
+ * demands the native Datadog APM client.
+ */
+export { agentcoreObservability, } from './adapters/observability/agentcore.js';
+export { cloudwatchObservability, } from './adapters/observability/cloudwatch.js';
+export { xrayObservability, } from './adapters/observability/xray.js';
+export { otelObservability, } from './adapters/observability/otel.js';
+// Tamper-evident audit export (#20) — the one vendor-free strategy in
+// this subpath (its only runtime requirement is `node:crypto`, lazily
+// imported the same way the vendor SDKs are).
+export { auditExport, verifyAuditBundle, AUDIT_BUNDLE_FORMAT, AUDIT_GENESIS_EVENT_TYPE, AUDIT_ZERO_HASH, } from './adapters/observability/audit.js';
+export { canonicalJson, CANONICAL_JSON_VERSION } from './lib/canonicalJson.js';
+//# sourceMappingURL=observability-providers.js.map

@@ -1,0 +1,16 @@
+/* istanbul ignore file */
+/**
+ * capture/ — Shared value-capture / retention primitives (zero deps, leaf
+ * module — `memory/` imports it, never the reverse).
+ *
+ * One home for "what do we keep about a tracked operation's value?":
+ *   - `RetentionPolicy` — the `'full' | 'summary' | 'off'` family behind the
+ *     #14 `readTracking` and #13c-A `writeTracking` dials.
+ *   - `summarizeReadValue` / `summarizeWriteValue` — the parameterized
+ *     summary-marker builders sharing one classification path.
+ *
+ * RFC-001 (deferred observer delivery) builds its capture tier on this
+ * module — see the mapping notes in `policies.ts`.
+ */
+export { READ_PREVIEW_LENGTH, summarizeReadValue, summarizeWriteValue, SUMMARY_PREVIEW_LENGTH } from './summarize.js';
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi8uLi8uLi9zcmMvbGliL2NhcHR1cmUvaW5kZXgudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUEsMEJBQTBCO0FBQzFCOzs7Ozs7Ozs7Ozs7R0FZRztBQUlILE9BQU8sRUFBRSxtQkFBbUIsRUFBRSxrQkFBa0IsRUFBRSxtQkFBbUIsRUFBRSxzQkFBc0IsRUFBRSxNQUFNLGdCQUFnQixDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiLyogaXN0YW5idWwgaWdub3JlIGZpbGUgKi9cbi8qKlxuICogY2FwdHVyZS8g4oCUIFNoYXJlZCB2YWx1ZS1jYXB0dXJlIC8gcmV0ZW50aW9uIHByaW1pdGl2ZXMgKHplcm8gZGVwcywgbGVhZlxuICogbW9kdWxlIOKAlCBgbWVtb3J5L2AgaW1wb3J0cyBpdCwgbmV2ZXIgdGhlIHJldmVyc2UpLlxuICpcbiAqIE9uZSBob21lIGZvciBcIndoYXQgZG8gd2Uga2VlcCBhYm91dCBhIHRyYWNrZWQgb3BlcmF0aW9uJ3MgdmFsdWU/XCI6XG4gKiAgIC0gYFJldGVudGlvblBvbGljeWAg4oCUIHRoZSBgJ2Z1bGwnIHwgJ3N1bW1hcnknIHwgJ29mZidgIGZhbWlseSBiZWhpbmQgdGhlXG4gKiAgICAgIzE0IGByZWFkVHJhY2tpbmdgIGFuZCAjMTNjLUEgYHdyaXRlVHJhY2tpbmdgIGRpYWxzLlxuICogICAtIGBzdW1tYXJpemVSZWFkVmFsdWVgIC8gYHN1bW1hcml6ZVdyaXRlVmFsdWVgIOKAlCB0aGUgcGFyYW1ldGVyaXplZFxuICogICAgIHN1bW1hcnktbWFya2VyIGJ1aWxkZXJzIHNoYXJpbmcgb25lIGNsYXNzaWZpY2F0aW9uIHBhdGguXG4gKlxuICogUkZDLTAwMSAoZGVmZXJyZWQgb2JzZXJ2ZXIgZGVsaXZlcnkpIGJ1aWxkcyBpdHMgY2FwdHVyZSB0aWVyIG9uIHRoaXNcbiAqIG1vZHVsZSDigJQgc2VlIHRoZSBtYXBwaW5nIG5vdGVzIGluIGBwb2xpY2llcy50c2AuXG4gKi9cblxuZXhwb3J0IHR5cGUgeyBSZXRlbnRpb25Qb2xpY3kgfSBmcm9tICcuL3BvbGljaWVzLmpzJztcbmV4cG9ydCB0eXBlIHsgUmVhZFN1bW1hcnlNYXJrZXIsIFN1bW1hcnlWYWx1ZVR5cGUsIFdyaXRlU3VtbWFyeU1hcmtlciB9IGZyb20gJy4vc3VtbWFyaXplLmpzJztcbmV4cG9ydCB7IFJFQURfUFJFVklFV19MRU5HVEgsIHN1bW1hcml6ZVJlYWRWYWx1ZSwgc3VtbWFyaXplV3JpdGVWYWx1ZSwgU1VNTUFSWV9QUkVWSUVXX0xFTkdUSCB9IGZyb20gJy4vc3VtbWFyaXplLmpzJztcbiJdfQ==

@@ -1,0 +1,57 @@
+/**
+ * footprintjs/detach — Fire-and-forget child flowchart execution.
+ *
+ * A library of scheduling drivers that lets you detach work from the
+ * parent stage's hot path. The parent stage returns immediately; the
+ * child runs on whichever driver you pick (microtask, immediate, plus
+ * setImmediate / setTimeout / sendBeacon / worker-thread in v4.17.1+).
+ *
+ * Two shapes:
+ *
+ *   - `detachAndJoinLater(driver, child, input)` — returns a `DetachHandle`
+ *     you can `wait()` on (Promise) or read `.status` from (sync).
+ *   - `detachAndForget(driver, child, input)` — discards the handle.
+ *     Use for fire-and-forget telemetry where the caller never needs to
+ *     know how the child finished.
+ *
+ * Two entry points:
+ *
+ *   - `scope.$detachAndJoinLater(driver, child, input)` — from inside a
+ *     stage. refIds are minted from the calling stage's runtimeStageId
+ *     for diagnostic correlation.
+ *   - `executor.detachAndJoinLater(driver, child, input)` — from outside
+ *     any chart (consumer code). refIds use the synthetic `__executor__`
+ *     prefix.
+ *
+ * @example
+ * ```typescript
+ * import { microtaskBatchDriver } from 'footprintjs/detach';
+ * import { flowChart, FlowChartExecutor } from 'footprintjs';
+ *
+ * const telemetry = flowChart('telemetry', async (scope) => {
+ *   await fetch('/log', { method: 'POST', body: JSON.stringify(scope.$getArgs()) });
+ * }, 'telemetry').build();
+ *
+ * const main = flowChart('process', async (scope) => {
+ *   scope.result = await heavyWork();
+ *   // Fire telemetry without blocking the parent.
+ *   scope.$detachAndForget(microtaskBatchDriver, telemetry, { event: 'processed' });
+ * }, 'process').build();
+ *
+ * await new FlowChartExecutor(main).run();
+ * ```
+ */
+// ─── Driver factories + default singletons ───────────────────────────
+export { createImmediateDriver, immediateDriver } from './lib/detach/drivers/immediate.js';
+export { createMicrotaskBatchDriver, microtaskBatchDriver } from './lib/detach/drivers/microtaskBatch.js';
+export { createSendBeaconDriver } from './lib/detach/drivers/sendBeacon.js';
+export { createSetImmediateDriver, setImmediateDriver } from './lib/detach/drivers/setImmediate.js';
+export { createSetTimeoutDriver, setTimeoutDriver } from './lib/detach/drivers/setTimeout.js';
+export { createWorkerThreadDriver } from './lib/detach/drivers/workerThread.js';
+// ─── Handle factory + helpers (for custom-driver authors) ────────────
+export { asImpl, createHandle, HandleImpl } from './lib/detach/handle.js';
+export { defaultRunChild } from './lib/detach/runChild.js';
+// ─── Registry — diagnostic surface ───────────────────────────────────
+export { size as detachedCount, ids as listDetachedIds, lookup as lookupDetachedHandle, } from './lib/detach/registry.js';
+export { flushAllDetached } from './lib/detach/flush.js';
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZGV0YWNoLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiLi4vLi4vc3JjL2RldGFjaC50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBMENHO0FBV0gsd0VBQXdFO0FBQ3hFLE9BQU8sRUFBRSxxQkFBcUIsRUFBRSxlQUFlLEVBQUUsTUFBTSxtQ0FBbUMsQ0FBQztBQUMzRixPQUFPLEVBQUUsMEJBQTBCLEVBQUUsb0JBQW9CLEVBQUUsTUFBTSx3Q0FBd0MsQ0FBQztBQUUxRyxPQUFPLEVBQUUsc0JBQXNCLEVBQUUsTUFBTSxvQ0FBb0MsQ0FBQztBQUM1RSxPQUFPLEVBQUUsd0JBQXdCLEVBQUUsa0JBQWtCLEVBQUUsTUFBTSxzQ0FBc0MsQ0FBQztBQUVwRyxPQUFPLEVBQUUsc0JBQXNCLEVBQUUsZ0JBQWdCLEVBQUUsTUFBTSxvQ0FBb0MsQ0FBQztBQUU5RixPQUFPLEVBQUUsd0JBQXdCLEVBQUUsTUFBTSxzQ0FBc0MsQ0FBQztBQUVoRix3RUFBd0U7QUFDeEUsT0FBTyxFQUFFLE1BQU0sRUFBRSxZQUFZLEVBQUUsVUFBVSxFQUFFLE1BQU0sd0JBQXdCLENBQUM7QUFFMUUsT0FBTyxFQUFFLGVBQWUsRUFBRSxNQUFNLDBCQUEwQixDQUFDO0FBRTNELHdFQUF3RTtBQUN4RSxPQUFPLEVBQ0wsSUFBSSxJQUFJLGFBQWEsRUFDckIsR0FBRyxJQUFJLGVBQWUsRUFDdEIsTUFBTSxJQUFJLG9CQUFvQixHQUMvQixNQUFNLDBCQUEwQixDQUFDO0FBSWxDLE9BQU8sRUFBRSxnQkFBZ0IsRUFBRSxNQUFNLHVCQUF1QixDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBmb290cHJpbnRqcy9kZXRhY2gg4oCUIEZpcmUtYW5kLWZvcmdldCBjaGlsZCBmbG93Y2hhcnQgZXhlY3V0aW9uLlxuICpcbiAqIEEgbGlicmFyeSBvZiBzY2hlZHVsaW5nIGRyaXZlcnMgdGhhdCBsZXRzIHlvdSBkZXRhY2ggd29yayBmcm9tIHRoZVxuICogcGFyZW50IHN0YWdlJ3MgaG90IHBhdGguIFRoZSBwYXJlbnQgc3RhZ2UgcmV0dXJucyBpbW1lZGlhdGVseTsgdGhlXG4gKiBjaGlsZCBydW5zIG9uIHdoaWNoZXZlciBkcml2ZXIgeW91IHBpY2sgKG1pY3JvdGFzaywgaW1tZWRpYXRlLCBwbHVzXG4gKiBzZXRJbW1lZGlhdGUgLyBzZXRUaW1lb3V0IC8gc2VuZEJlYWNvbiAvIHdvcmtlci10aHJlYWQgaW4gdjQuMTcuMSspLlxuICpcbiAqIFR3byBzaGFwZXM6XG4gKlxuICogICAtIGBkZXRhY2hBbmRKb2luTGF0ZXIoZHJpdmVyLCBjaGlsZCwgaW5wdXQpYCDigJQgcmV0dXJucyBhIGBEZXRhY2hIYW5kbGVgXG4gKiAgICAgeW91IGNhbiBgd2FpdCgpYCBvbiAoUHJvbWlzZSkgb3IgcmVhZCBgLnN0YXR1c2AgZnJvbSAoc3luYykuXG4gKiAgIC0gYGRldGFjaEFuZEZvcmdldChkcml2ZXIsIGNoaWxkLCBpbnB1dClgIOKAlCBkaXNjYXJkcyB0aGUgaGFuZGxlLlxuICogICAgIFVzZSBmb3IgZmlyZS1hbmQtZm9yZ2V0IHRlbGVtZXRyeSB3aGVyZSB0aGUgY2FsbGVyIG5ldmVyIG5lZWRzIHRvXG4gKiAgICAga25vdyBob3cgdGhlIGNoaWxkIGZpbmlzaGVkLlxuICpcbiAqIFR3byBlbnRyeSBwb2ludHM6XG4gKlxuICogICAtIGBzY29wZS4kZGV0YWNoQW5kSm9pbkxhdGVyKGRyaXZlciwgY2hpbGQsIGlucHV0KWAg4oCUIGZyb20gaW5zaWRlIGFcbiAqICAgICBzdGFnZS4gcmVmSWRzIGFyZSBtaW50ZWQgZnJvbSB0aGUgY2FsbGluZyBzdGFnZSdzIHJ1bnRpbWVTdGFnZUlkXG4gKiAgICAgZm9yIGRpYWdub3N0aWMgY29ycmVsYXRpb24uXG4gKiAgIC0gYGV4ZWN1dG9yLmRldGFjaEFuZEpvaW5MYXRlcihkcml2ZXIsIGNoaWxkLCBpbnB1dClgIOKAlCBmcm9tIG91dHNpZGVcbiAqICAgICBhbnkgY2hhcnQgKGNvbnN1bWVyIGNvZGUpLiByZWZJZHMgdXNlIHRoZSBzeW50aGV0aWMgYF9fZXhlY3V0b3JfX2BcbiAqICAgICBwcmVmaXguXG4gKlxuICogQGV4YW1wbGVcbiAqIGBgYHR5cGVzY3JpcHRcbiAqIGltcG9ydCB7IG1pY3JvdGFza0JhdGNoRHJpdmVyIH0gZnJvbSAnZm9vdHByaW50anMvZGV0YWNoJztcbiAqIGltcG9ydCB7IGZsb3dDaGFydCwgRmxvd0NoYXJ0RXhlY3V0b3IgfSBmcm9tICdmb290cHJpbnRqcyc7XG4gKlxuICogY29uc3QgdGVsZW1ldHJ5ID0gZmxvd0NoYXJ0KCd0ZWxlbWV0cnknLCBhc3luYyAoc2NvcGUpID0+IHtcbiAqICAgYXdhaXQgZmV0Y2goJy9sb2cnLCB7IG1ldGhvZDogJ1BPU1QnLCBib2R5OiBKU09OLnN0cmluZ2lmeShzY29wZS4kZ2V0QXJncygpKSB9KTtcbiAqIH0sICd0ZWxlbWV0cnknKS5idWlsZCgpO1xuICpcbiAqIGNvbnN0IG1haW4gPSBmbG93Q2hhcnQoJ3Byb2Nlc3MnLCBhc3luYyAoc2NvcGUpID0+IHtcbiAqICAgc2NvcGUucmVzdWx0ID0gYXdhaXQgaGVhdnlXb3JrKCk7XG4gKiAgIC8vIEZpcmUgdGVsZW1ldHJ5IHdpdGhvdXQgYmxvY2tpbmcgdGhlIHBhcmVudC5cbiAqICAgc2NvcGUuJGRldGFjaEFuZEZvcmdldChtaWNyb3Rhc2tCYXRjaERyaXZlciwgdGVsZW1ldHJ5LCB7IGV2ZW50OiAncHJvY2Vzc2VkJyB9KTtcbiAqIH0sICdwcm9jZXNzJykuYnVpbGQoKTtcbiAqXG4gKiBhd2FpdCBuZXcgRmxvd0NoYXJ0RXhlY3V0b3IobWFpbikucnVuKCk7XG4gKiBgYGBcbiAqL1xuXG4vLyDilIDilIDilIAgVHlwZXMg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSAXG5leHBvcnQgdHlwZSB7XG4gIERldGFjaERyaXZlcixcbiAgRGV0YWNoSGFuZGxlLFxuICBEZXRhY2hQb2xsUmVzdWx0LFxuICBEZXRhY2hXYWl0UmVzdWx0LFxuICBEcml2ZXJDYXBhYmlsaXRpZXMsXG59IGZyb20gJy4vbGliL2RldGFjaC90eXBlcy5qcyc7XG5cbi8vIOKUgOKUgOKUgCBEcml2ZXIgZmFjdG9yaWVzICsgZGVmYXVsdCBzaW5nbGV0b25zIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgFxuZXhwb3J0IHsgY3JlYXRlSW1tZWRpYXRlRHJpdmVyLCBpbW1lZGlhdGVEcml2ZXIgfSBmcm9tICcuL2xpYi9kZXRhY2gvZHJpdmVycy9pbW1lZGlhdGUuanMnO1xuZXhwb3J0IHsgY3JlYXRlTWljcm90YXNrQmF0Y2hEcml2ZXIsIG1pY3JvdGFza0JhdGNoRHJpdmVyIH0gZnJvbSAnLi9saWIvZGV0YWNoL2RyaXZlcnMvbWljcm90YXNrQmF0Y2guanMnO1xuZXhwb3J0IHR5cGUgeyBTZW5kQmVhY29uRHJpdmVyT3B0aW9ucyB9IGZyb20gJy4vbGliL2RldGFjaC9kcml2ZXJzL3NlbmRCZWFjb24uanMnO1xuZXhwb3J0IHsgY3JlYXRlU2VuZEJlYWNvbkRyaXZlciB9IGZyb20gJy4vbGliL2RldGFjaC9kcml2ZXJzL3NlbmRCZWFjb24uanMnO1xuZXhwb3J0IHsgY3JlYXRlU2V0SW1tZWRpYXRlRHJpdmVyLCBzZXRJbW1lZGlhdGVEcml2ZXIgfSBmcm9tICcuL2xpYi9kZXRhY2gvZHJpdmVycy9zZXRJbW1lZGlhdGUuanMnO1xuZXhwb3J0IHR5cGUgeyBTZXRUaW1lb3V0RHJpdmVyT3B0aW9ucyB9IGZyb20gJy4vbGliL2RldGFjaC9kcml2ZXJzL3NldFRpbWVvdXQuanMnO1xuZXhwb3J0IHsgY3JlYXRlU2V0VGltZW91dERyaXZlciwgc2V0VGltZW91dERyaXZlciB9IGZyb20gJy4vbGliL2RldGFjaC9kcml2ZXJzL3NldFRpbWVvdXQuanMnO1xuZXhwb3J0IHR5cGUgeyBXb3JrZXJUaHJlYWREcml2ZXJPcHRpb25zIH0gZnJvbSAnLi9saWIvZGV0YWNoL2RyaXZlcnMvd29ya2VyVGhyZWFkLmpzJztcbmV4cG9ydCB7IGNyZWF0ZVdvcmtlclRocmVhZERyaXZlciB9IGZyb20gJy4vbGliL2RldGFjaC9kcml2ZXJzL3dvcmtlclRocmVhZC5qcyc7XG5cbi8vIOKUgOKUgOKUgCBIYW5kbGUgZmFjdG9yeSArIGhlbHBlcnMgKGZvciBjdXN0b20tZHJpdmVyIGF1dGhvcnMpIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgFxuZXhwb3J0IHsgYXNJbXBsLCBjcmVhdGVIYW5kbGUsIEhhbmRsZUltcGwgfSBmcm9tICcuL2xpYi9kZXRhY2gvaGFuZGxlLmpzJztcbmV4cG9ydCB0eXBlIHsgQ2hpbGRSdW5uZXIgfSBmcm9tICcuL2xpYi9kZXRhY2gvcnVuQ2hpbGQuanMnO1xuZXhwb3J0IHsgZGVmYXVsdFJ1bkNoaWxkIH0gZnJvbSAnLi9saWIvZGV0YWNoL3J1bkNoaWxkLmpzJztcblxuLy8g4pSA4pSA4pSAIFJlZ2lzdHJ5IOKAlCBkaWFnbm9zdGljIHN1cmZhY2Ug4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSAXG5leHBvcnQge1xuICBzaXplIGFzIGRldGFjaGVkQ291bnQsXG4gIGlkcyBhcyBsaXN0RGV0YWNoZWRJZHMsXG4gIGxvb2t1cCBhcyBsb29rdXBEZXRhY2hlZEhhbmRsZSxcbn0gZnJvbSAnLi9saWIvZGV0YWNoL3JlZ2lzdHJ5LmpzJztcblxuLy8g4pSA4pSA4pSAIEZsdXNoIOKAlCBncmFjZWZ1bC1zaHV0ZG93biBoZWxwZXIg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSAXG5leHBvcnQgdHlwZSB7IEZsdXNoT3B0aW9ucywgRmx1c2hSZXN1bHQgfSBmcm9tICcuL2xpYi9kZXRhY2gvZmx1c2guanMnO1xuZXhwb3J0IHsgZmx1c2hBbGxEZXRhY2hlZCB9IGZyb20gJy4vbGliL2RldGFjaC9mbHVzaC5qcyc7XG4iXX0=

@@ -1,0 +1,57 @@
+/**
+ * gatedTools — wrap any ToolProvider with a per-tool gating predicate.
+ *
+ * The DECORATOR for tool providers. Filters the inner provider's
+ * output by running the predicate against each tool name. Composes
+ * freely:
+ *
+ *   gatedTools(
+ *     gatedTools(staticTools(allTools), readOnlyPredicate),
+ *     skillGatePredicate,
+ *   )
+ *
+ * Reads as: "static list of all tools, filtered by readonly policy,
+ * then further filtered by the active skill's tool set." Each gate
+ * is one concern; composition handles the rest.
+ *
+ * Pattern: Decorator (GoF) — wraps any ToolProvider with an additional
+ *          filter. Mirrors `withRetry` / `withFallback` over LLMProvider.
+ *
+ * @example  Read-only enforcement
+ *   const readOnly = gatedTools(
+ *     staticTools([read, write]),
+ *     (toolName) => toolName.startsWith('read_'),
+ *   );
+ *   readOnly.list(ctx); // → [read]
+ *
+ * @example  Skill-gated dispatch (autoActivate use case)
+ *   const skillGated = gatedTools(
+ *     staticTools(allTools),
+ *     (toolName, ctx) => ctx.activeSkillId
+ *       ? skillToolMap[ctx.activeSkillId].includes(toolName)
+ *       : alwaysVisible.includes(toolName),
+ *   );
+ */
+// #region gatedTools
+export function gatedTools(inner, predicate) {
+    return {
+        id: 'gated',
+        list(ctx) {
+            // Pull from the inner provider first; each recomputation sees
+            // the freshest state from any nested gates. Inner may be sync
+            // or async — we mirror what we get back so a sync chain stays
+            // sync (zero microtask overhead) and an async chain stays
+            // async (no premature `Promise.resolve` wrapping).
+            const innerResult = inner.list(ctx);
+            const filter = (innerTools) => 
+            // Filter by predicate — tool name from `tool.schema.name`.
+            // Predicates throwing escape: a buggy predicate should crash
+            // loudly, not silently allow tools through. Per the
+            // permission-as-defense-in-depth principle.
+            innerTools.filter((t) => predicate(t.schema.name, ctx));
+            return innerResult instanceof Promise ? innerResult.then(filter) : filter(innerResult);
+        },
+    };
+}
+// #endregion gatedTools
+//# sourceMappingURL=gatedTools.js.map

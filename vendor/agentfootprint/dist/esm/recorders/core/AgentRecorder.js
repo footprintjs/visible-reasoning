@@ -1,0 +1,20 @@
+/**
+ * AgentRecorder — forwards `agentfootprint.agent.*` emits to the dispatcher.
+ *
+ * Pattern: Factory (GoF) returning an EmitBridge instance.
+ * Role:    Convenience constructor for the agent-lifecycle bridge recorder.
+ *          Same mechanics as StreamRecorder, scoped to agent.* events
+ *          (turns + iterations + route decisions + handoffs).
+ * Emits:   agentfootprint.agent.turn_start / turn_end / iteration_start /
+ *          iteration_end / route_decided / handoff
+ */
+import { EmitBridge } from './EmitBridge.js';
+export function agentRecorder(options) {
+    return new EmitBridge({
+        id: options.id ?? 'agentfootprint.agent-recorder',
+        prefix: 'agentfootprint.agent.',
+        dispatcher: options.dispatcher,
+        getRunContext: options.getRunContext,
+    });
+}
+//# sourceMappingURL=AgentRecorder.js.map

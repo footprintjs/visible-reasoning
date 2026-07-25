@@ -1,0 +1,19 @@
+/**
+ * SkillRecorder — forwards `agentfootprint.skill.*` emits to the dispatcher.
+ *
+ * Pattern: Factory over EmitBridge.
+ * Role:    Bridges skill lifecycle events (activated, deactivated) emitted
+ *          by consumer skill-management code. Skills are a consumer-owned
+ *          context-engineering concern; the library only provides transport.
+ * Emits:   agentfootprint.skill.activated / skill.deactivated
+ */
+import { EmitBridge } from './EmitBridge.js';
+export function skillRecorder(options) {
+    return new EmitBridge({
+        id: options.id ?? 'agentfootprint.skill-recorder',
+        prefix: 'agentfootprint.skill.',
+        dispatcher: options.dispatcher,
+        getRunContext: options.getRunContext,
+    });
+}
+//# sourceMappingURL=SkillRecorder.js.map

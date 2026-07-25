@@ -1,0 +1,62 @@
+/**
+ * agentfootprint/debug — diagnosis tools for a BROKEN run.
+ *
+ * Where `agentfootprint/observe` watches a HEALTHY run (recorders), this
+ * subpath is the autopsy kit for a wrong answer. Split out of `observe` in
+ * the surface cleanup — same code, dedicated home, so the import path now
+ * matches the Debug docs category. The honesty discipline is unchanged:
+ * scores/weights are embedding-geometry PROXIES; ablation verdicts are the
+ * ONLY causal claims; slice completeness is bounded by tracking — and says so.
+ *
+ * Four libraries:
+ *   • influence-core   — embedding-based scoring (proxy, never causal)
+ *   • trace-toolpack   — traceToolpack + traceDebugAgent + `.selfExplain()`
+ *   • context-bisect   — localizeContextBug + ablation/restoration probes
+ *   • tool-lint        — build-time tool-catalog confusability lint
+ *
+ * For backward compatibility these are ALSO re-exported (deprecated) from
+ * `agentfootprint/observe` for one transition version.
+ */
+// influence-core — the ONE embedding-based scoring engine (RFC-002/003
+// block D6). Not a recorder: pure, embedder-injected scoring functions
+// + the shared bounded embedding cache. Honest claim: every score is an
+// embedding-geometry PROXY — semantic alignment, never model internals,
+// never causal attribution.
+export { adaptWeights, averageRelevancy, compositeScore, contentHash, DEFAULT_CLEAR_WINNER_MARGIN, DEFAULT_CLEAR_WINNER_RATIO, DEFAULT_INFLUENCE_WEIGHTS, DEFAULT_MARGIN_THRESHOLD, DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_SHORTLIST_BAND, EmbeddingCache, embeddingCache, finalAnswerSimilarity, attributeChoice, explainChoice, lexicalOverlapStrategy, listInfluenceStrategies, marginStrategy, pairwiseSimilarity, persistence, rankingConfidence, ratioStrategy, scoreContrastiveInfluence, scoreInfluence, scoreLexicalInfluence, scoreMargin, semanticAlignmentStrategy, snippetUnits, structuralProximity, } from './lib/influence-core/index.js';
+// Introspection toolpack (RFC-003 Part C) — footprintjs trace evidence
+// exposed as TOOLS a debugging LLM calls over a COMPLETED run's artifacts.
+// Bounded, honest (⚠ markers), redaction-respecting, id-navigable.
+export { callTraceTool, lazyTraceToolpack, NO_COMPLETED_RUN_MESSAGE, TOOLPACK_HARD_CAPS, traceToolpack, } from './lib/trace-toolpack/index.js';
+// The two conversational doors over the toolpack: a DEDICATED debugger
+// agent (separate session, any provider — cheap models welcome), and the
+// in-conversation `.selfExplain()` builder option's types. Same evidence,
+// same honesty discipline as the UI doors (BacktrackView / Lens).
+export { buildSelfExplainSkill, buildSelfExplainToolProvider, SelfExplainBinding, traceDebugAgent, } from './lib/trace-toolpack/index.js';
+// Contextual-bug localizer (RFC-003 Part B, D7–D9) — "git bisect for
+// context". Assembly: footprintjs causal DAG (control edges + honesty
+// markers + EdgeWeigher) × influence-core scoring (D6) × consumer-run
+// counterfactual ablation. §B2 claim tiers: scores/weights are
+// embedding-geometry PROXIES; ablation verdicts are the ONLY causal
+// claims; slice completeness is bounded by tracking — and says so.
+export { ablationForSuspect, applyAblations, assembleTrajectory, assignCostVerdicts, bisectCulprits, bucketByAnchors, shortlistEarlyCulprits, walkToRoot, walkTrajectory, buildWriterFrameIndex, DEFAULT_RECENCY_DECAY, classifySuspect, findLoopHeads, CONTEXT_BISECT_DEFAULTS, defaultOutcomeComparator, defaultSuspectClassifier, findDroppedContext, formatContextBugReport, llmCallIdsFromEvents, llmEdgeWeigher, localizeContextBug, probeFlipped, removableSources, rerunWithoutSources, runAblationProbe, runRestorationProbe, stepOutputText, suspectLabel, verdictFor, } from './lib/context-bisect/index.js';
+// BacktrackTrace serializer — feeds agentThinkingUI's <BacktrackView>
+// (the "why?" board) straight off a localizer report. Pure mapping, no
+// UI dependency; the interfaces mirror agentthinkingui's contract.
+export { sliceToBacktrackTrace, toBacktrackTrace, } from './lib/context-bisect/index.js';
+// Tool-catalog confusability lint (RFC-002 tier 1, C1–C3) — build-time,
+// CI-gateable, framework-agnostic: plain { name, description?, inputSchema? }
+// tools in (OpenAI/Anthropic/MCP lists coerce via coerceCatalog; the
+// library's Tool[] via catalogFromTools), a report with a gateable `ok`
+// out. Pluggable structural rule pack; thresholds + embedder consumer-
+// injected with our defaults. Bin: `agentfootprint-lint-tools`.
+// Front door: docs/guides/tool-catalog-lint.md.
+export { analyzeToolCatalog, catalogFromTools, coerceCatalog, confusabilityText, DEFAULT_CONFUSABILITY_THRESHOLD, DEFAULT_OMISSION_CUES, DEFAULT_WATCH_BAND, DEFAULT_WHEN_CUES, defaultStructuralRules, descriptionRule, differentiationHint, enumInProseRule, formatToolCatalogReport, MOCK_EMBEDDER_CALIBRATION, optionalParamRule, runToolLintCli, saysWhatNotWhenRule, } from './lib/tool-lint/index.js';
+// recorded-chat — the session-scoped turn recorder. Wraps a consumer agent
+// factory into a recorded conversation: send() freezes each turn's evidence,
+// reason(k)/rerunTurn(k)/fork(k) are the per-turn transparency loop. Absorbs
+// the three glue traps (per-turn artifact freezing, byte-exact history
+// threading, same-factory runner derivation) while COMPOSING with the loop
+// above (localizeContextBug + rerunWithoutSources returned UNMODIFIED), never
+// duplicating it. Branch, never rewrite.
+export { recordedChat, } from './lib/recorded-chat/index.js';
+//# sourceMappingURL=debug.js.map

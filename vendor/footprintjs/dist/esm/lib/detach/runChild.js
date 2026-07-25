@@ -1,0 +1,40 @@
+/**
+ * detach/runChild.ts — The "how do I actually run a child flowchart?" hook.
+ *
+ * Pattern:  Strategy (GoF). Drivers are decoupled from the FlowChartExecutor
+ *           — each driver is created with a `ChildRunner` it calls to
+ *           materialize the work. Default implementation imports the
+ *           executor lazily so drivers can be picked up by tree-shakers
+ *           that don't pull the runner module into the bundle.
+ * Role:     Glue between drivers and the engine. Without this seam, every
+ *           driver would have to import `FlowChartExecutor` directly,
+ *           creating circular import risk and bundle bloat.
+ *
+ * Why a separate module (not inlined in each driver):
+ *   - DRY — every driver shares the same "instantiate executor, run, return
+ *     result" sequence
+ *   - Allows test code to swap the runner via factory injection without
+ *     having to rebuild the whole driver
+ *   - Future-proofs for the case where we want to inject env/recorders
+ *     into the child (the runner is the natural place to do that)
+ */
+/**
+ * Default runner — instantiates a fresh `FlowChartExecutor` for each
+ * child and awaits its run. Returns the executor's traversal result.
+ *
+ * Lazy-imports `FlowChartExecutor` so drivers that consumers create with
+ * their own runner don't pull the engine into their bundle.
+ *
+ * Uses dynamic import — see https://v8.dev/features/dynamic-import.
+ */
+export const defaultRunChild = async (child, input) => {
+    // Lazy import keeps tree-shakers honest for consumers who pass a
+    // custom runner (e.g., a worker-thread bridge).
+    const { FlowChartExecutor } = await import('../runner/FlowChartExecutor.js');
+    // The executor expects an unknown-typed FlowChart; cast at the boundary
+    // since the FlowChart shape is generic-erased at the detach level.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const executor = new FlowChartExecutor(child);
+    return executor.run({ input });
+};
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicnVuQ2hpbGQuanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi8uLi8uLi9zcmMvbGliL2RldGFjaC9ydW5DaGlsZC50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQTs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQW1CRztBQWVIOzs7Ozs7OztHQVFHO0FBQ0gsTUFBTSxDQUFDLE1BQU0sZUFBZSxHQUFnQixLQUFLLEVBQUUsS0FBSyxFQUFFLEtBQUssRUFBRSxFQUFFO0lBQ2pFLGlFQUFpRTtJQUNqRSxnREFBZ0Q7SUFDaEQsTUFBTSxFQUFFLGlCQUFpQixFQUFFLEdBQUcsTUFBTSxNQUFNLENBQUMsZ0NBQWdDLENBQUMsQ0FBQztJQUM3RSx3RUFBd0U7SUFDeEUsbUVBQW1FO0lBQ25FLDhEQUE4RDtJQUM5RCxNQUFNLFFBQVEsR0FBRyxJQUFJLGlCQUFpQixDQUFDLEtBQVksQ0FBQyxDQUFDO0lBQ3JELE9BQU8sUUFBUSxDQUFDLEdBQUcsQ0FBQyxFQUFFLEtBQUssRUFBRSxDQUFDLENBQUM7QUFDakMsQ0FBQyxDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBkZXRhY2gvcnVuQ2hpbGQudHMg4oCUIFRoZSBcImhvdyBkbyBJIGFjdHVhbGx5IHJ1biBhIGNoaWxkIGZsb3djaGFydD9cIiBob29rLlxuICpcbiAqIFBhdHRlcm46ICBTdHJhdGVneSAoR29GKS4gRHJpdmVycyBhcmUgZGVjb3VwbGVkIGZyb20gdGhlIEZsb3dDaGFydEV4ZWN1dG9yXG4gKiAgICAgICAgICAg4oCUIGVhY2ggZHJpdmVyIGlzIGNyZWF0ZWQgd2l0aCBhIGBDaGlsZFJ1bm5lcmAgaXQgY2FsbHMgdG9cbiAqICAgICAgICAgICBtYXRlcmlhbGl6ZSB0aGUgd29yay4gRGVmYXVsdCBpbXBsZW1lbnRhdGlvbiBpbXBvcnRzIHRoZVxuICogICAgICAgICAgIGV4ZWN1dG9yIGxhemlseSBzbyBkcml2ZXJzIGNhbiBiZSBwaWNrZWQgdXAgYnkgdHJlZS1zaGFrZXJzXG4gKiAgICAgICAgICAgdGhhdCBkb24ndCBwdWxsIHRoZSBydW5uZXIgbW9kdWxlIGludG8gdGhlIGJ1bmRsZS5cbiAqIFJvbGU6ICAgICBHbHVlIGJldHdlZW4gZHJpdmVycyBhbmQgdGhlIGVuZ2luZS4gV2l0aG91dCB0aGlzIHNlYW0sIGV2ZXJ5XG4gKiAgICAgICAgICAgZHJpdmVyIHdvdWxkIGhhdmUgdG8gaW1wb3J0IGBGbG93Q2hhcnRFeGVjdXRvcmAgZGlyZWN0bHksXG4gKiAgICAgICAgICAgY3JlYXRpbmcgY2lyY3VsYXIgaW1wb3J0IHJpc2sgYW5kIGJ1bmRsZSBibG9hdC5cbiAqXG4gKiBXaHkgYSBzZXBhcmF0ZSBtb2R1bGUgKG5vdCBpbmxpbmVkIGluIGVhY2ggZHJpdmVyKTpcbiAqICAgLSBEUlkg4oCUIGV2ZXJ5IGRyaXZlciBzaGFyZXMgdGhlIHNhbWUgXCJpbnN0YW50aWF0ZSBleGVjdXRvciwgcnVuLCByZXR1cm5cbiAqICAgICByZXN1bHRcIiBzZXF1ZW5jZVxuICogICAtIEFsbG93cyB0ZXN0IGNvZGUgdG8gc3dhcCB0aGUgcnVubmVyIHZpYSBmYWN0b3J5IGluamVjdGlvbiB3aXRob3V0XG4gKiAgICAgaGF2aW5nIHRvIHJlYnVpbGQgdGhlIHdob2xlIGRyaXZlclxuICogICAtIEZ1dHVyZS1wcm9vZnMgZm9yIHRoZSBjYXNlIHdoZXJlIHdlIHdhbnQgdG8gaW5qZWN0IGVudi9yZWNvcmRlcnNcbiAqICAgICBpbnRvIHRoZSBjaGlsZCAodGhlIHJ1bm5lciBpcyB0aGUgbmF0dXJhbCBwbGFjZSB0byBkbyB0aGF0KVxuICovXG5cbmltcG9ydCB0eXBlIHsgRmxvd0NoYXJ0IH0gZnJvbSAnLi4vYnVpbGRlci90eXBlcy5qcyc7XG5cbi8qKlxuICogRnVuY3Rpb24gdGhlIGRyaXZlciBjYWxscyB0byBhY3R1YWxseSBleGVjdXRlIHRoZSBjaGlsZCBmbG93Y2hhcnQuXG4gKiBSZXR1cm5zIGEgUHJvbWlzZSByZXNvbHZpbmcgdG8gdGhlIGNoYXJ0J3MgdGVybWluYWwgdmFsdWUgKHdoYXRldmVyXG4gKiBgRmxvd0NoYXJ0RXhlY3V0b3IucnVuKClgIHJlc29sdmVzIHdpdGgpLCBvciByZWplY3RzIG9uIGZhaWx1cmUuXG4gKlxuICogRHJpdmVycyB3cmFwIHRoaXMgaW4gdGhlaXIgb3duIHRyeS9jYXRjaCBzbyB0aGUgcmVqZWN0aW9uIHJvdXRlcyB0b1xuICogYGhhbmRsZS5fbWFya0ZhaWxlZCgpYCBpbnN0ZWFkIG9mIGVzY2FwaW5nIGludG8gdGhlIHBhcmVudCBjb250ZXh0XG4gKiAocGFzc2l2ZS1yZWNvcmRlciBydWxlKS5cbiAqL1xuZXhwb3J0IHR5cGUgQ2hpbGRSdW5uZXIgPSAoY2hpbGQ6IEZsb3dDaGFydCwgaW5wdXQ6IHVua25vd24pID0+IFByb21pc2U8dW5rbm93bj47XG5cbi8qKlxuICogRGVmYXVsdCBydW5uZXIg4oCUIGluc3RhbnRpYXRlcyBhIGZyZXNoIGBGbG93Q2hhcnRFeGVjdXRvcmAgZm9yIGVhY2hcbiAqIGNoaWxkIGFuZCBhd2FpdHMgaXRzIHJ1bi4gUmV0dXJucyB0aGUgZXhlY3V0b3IncyB0cmF2ZXJzYWwgcmVzdWx0LlxuICpcbiAqIExhenktaW1wb3J0cyBgRmxvd0NoYXJ0RXhlY3V0b3JgIHNvIGRyaXZlcnMgdGhhdCBjb25zdW1lcnMgY3JlYXRlIHdpdGhcbiAqIHRoZWlyIG93biBydW5uZXIgZG9uJ3QgcHVsbCB0aGUgZW5naW5lIGludG8gdGhlaXIgYnVuZGxlLlxuICpcbiAqIFVzZXMgZHluYW1pYyBpbXBvcnQg4oCUIHNlZSBodHRwczovL3Y4LmRldi9mZWF0dXJlcy9keW5hbWljLWltcG9ydC5cbiAqL1xuZXhwb3J0IGNvbnN0IGRlZmF1bHRSdW5DaGlsZDogQ2hpbGRSdW5uZXIgPSBhc3luYyAoY2hpbGQsIGlucHV0KSA9PiB7XG4gIC8vIExhenkgaW1wb3J0IGtlZXBzIHRyZWUtc2hha2VycyBob25lc3QgZm9yIGNvbnN1bWVycyB3aG8gcGFzcyBhXG4gIC8vIGN1c3RvbSBydW5uZXIgKGUuZy4sIGEgd29ya2VyLXRocmVhZCBicmlkZ2UpLlxuICBjb25zdCB7IEZsb3dDaGFydEV4ZWN1dG9yIH0gPSBhd2FpdCBpbXBvcnQoJy4uL3J1bm5lci9GbG93Q2hhcnRFeGVjdXRvci5qcycpO1xuICAvLyBUaGUgZXhlY3V0b3IgZXhwZWN0cyBhbiB1bmtub3duLXR5cGVkIEZsb3dDaGFydDsgY2FzdCBhdCB0aGUgYm91bmRhcnlcbiAgLy8gc2luY2UgdGhlIEZsb3dDaGFydCBzaGFwZSBpcyBnZW5lcmljLWVyYXNlZCBhdCB0aGUgZGV0YWNoIGxldmVsLlxuICAvLyBlc2xpbnQtZGlzYWJsZS1uZXh0LWxpbmUgQHR5cGVzY3JpcHQtZXNsaW50L25vLWV4cGxpY2l0LWFueVxuICBjb25zdCBleGVjdXRvciA9IG5ldyBGbG93Q2hhcnRFeGVjdXRvcihjaGlsZCBhcyBhbnkpO1xuICByZXR1cm4gZXhlY3V0b3IucnVuKHsgaW5wdXQgfSk7XG59O1xuIl19

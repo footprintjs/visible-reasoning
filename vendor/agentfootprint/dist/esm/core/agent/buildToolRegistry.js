@@ -1,0 +1,126 @@
+/**
+ * buildToolRegistry — pure function that composes the agent's
+ * augmented tool registry from three sources:
+ *
+ *   1. **Static registry** — tools registered via `.tool()`. Always
+ *      visible to the LLM; always executable.
+ *   2. **`read_skill`** — auto-attached when ≥1 Skill is registered.
+ *      Activation tool for LLM-guided Skills.
+ *   3. **Skill-supplied tools** (`Skill.inject.tools[]`) — visible
+ *      only when the Skill is active (filtered by tools-slot subflow);
+ *      MUST always be in the executor registry so when the LLM calls
+ *      one, the tool-calls handler can dispatch.
+ *
+ * Tool-name uniqueness is enforced across all three sources at build
+ * time. The LLM only sees `tool.schema.name` (no ids), so names ARE
+ * the runtime dispatch key — collisions break the LLM's ability to
+ * call the right tool. Throw early instead of subtly shadowing.
+ *
+ * **Block C runtime — `autoActivate: 'currentSkill'` semantics:**
+ * When a skill's `defineSkill({ autoActivate: 'currentSkill' })` is
+ * set, its tools are EXCLUDED from the static registry. They flow
+ * into the LLM's tool list ONLY through `dynamicSchemas` (the
+ * buildToolsSlot path that reads activeInjections), which means
+ * they're visible ONLY on iterations after the skill is activated by
+ * `read_skill('id')`. Without this, the LLM sees every skill's tools
+ * on every iteration and the per-skill-narrowing autoActivate
+ * promised in `defineSkill` doesn't actually narrow anything. Skills
+ * WITHOUT autoActivate keep the v2.4 behavior (tools always visible)
+ * for back-compat.
+ *
+ * **autoActivate dispatch invariant:** autoActivate skill tools live
+ * OUTSIDE the LLM-visible registry (so they don't pollute the
+ * per-iteration tool list before the skill activates), but they MUST
+ * still be findable by the dispatch handler — the LLM calls them by
+ * name once the skill is active, and dispatch looks up by name. We
+ * add them to the dispatch map (`registryByName`) so `lookupTool`
+ * resolves correctly.
+ */
+import { buildReadSkillTool } from '../../lib/injection-engine/skillTools.js';
+import { warnIfInvalidToolName } from '../tools.js';
+/**
+ * Compose the augmented tool registry from the static `.tool()`
+ * registry + the agent's injections (skills only). Throws on tool-
+ * name collisions across sources.
+ */
+export function buildToolRegistry(registry, injections) {
+    const skills = injections.filter((i) => i.flavor === 'skill');
+    // Collect skill tools, deduping by name when the SAME Tool reference
+    // is shared across skills. Different Tool implementations under the
+    // same name throws (already validated upstream by
+    // validateToolNameUniqueness) — we keep the runtime check as
+    // belt-and-suspenders.
+    const skillToolEntries = [];
+    const sharedSkillTools = new Map();
+    for (const skill of skills) {
+        const meta = skill.metadata;
+        const isAutoActivate = meta?.autoActivate === 'currentSkill';
+        const toolsFromSkill = skill.inject.tools ?? [];
+        for (const tool of toolsFromSkill) {
+            const name = tool.schema.name;
+            // Check EVERY skill tool — including autoActivate ones, which `continue`
+            // below and never reach the static registry's gate. (This is the common
+            // case: all of Neo's skills are autoActivate, so their scoped tools would
+            // otherwise skip the check entirely.) Dev-mode warn only — non-breaking.
+            warnIfInvalidToolName(name);
+            const existing = sharedSkillTools.get(name);
+            if (existing) {
+                if (existing !== tool) {
+                    throw new Error(`Agent: tool name '${name}' is declared by multiple skills with different ` +
+                        `Tool implementations. Skills MAY share the SAME Tool reference; they may ` +
+                        `NOT register different functions under the same name.`);
+                }
+                continue; // dedupe — same reference already added
+            }
+            sharedSkillTools.set(name, tool);
+            // autoActivate skills: their tools come ONLY through dynamicSchemas
+            // (buildToolsSlot.ts pulls them from activeInjections.inject.tools
+            // when the skill is active). Don't pre-load in the static registry.
+            if (isAutoActivate)
+                continue;
+            skillToolEntries.push({ name, tool });
+        }
+    }
+    // buildReadSkillTool returns undefined when skills is empty; the length
+    // check left of the ternary short-circuits so the non-null assertion is safe.
+    const readSkillEntries = skills.length > 0
+        ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            [{ name: 'read_skill', tool: buildReadSkillTool(skills) }]
+        : [];
+    const augmentedRegistry = [
+        ...registry,
+        ...readSkillEntries,
+        ...skillToolEntries,
+    ];
+    // Final cross-source name-uniqueness check: static .tool() vs
+    // read_skill vs (deduped) skill tools. Catches collisions BETWEEN
+    // sources (e.g., a static .tool('foo') colliding with a Skill's foo).
+    const seenNames = new Set();
+    for (const entry of augmentedRegistry) {
+        // Charset check at the array boundary: EVERY tool name the LLM will see — from
+        // .tool()/.tools() arrays, read_skill, and every skill's tools:[] bundle — is
+        // checked here, so a raw `{schema,execute}` literal that bypassed defineTool is
+        // caught too. A bad name 400-rejects the whole provider request (all tools
+        // vanish); dev-mode warn flags it at build, naming the offending tool.
+        warnIfInvalidToolName(entry.name);
+        if (seenNames.has(entry.name)) {
+            throw new Error(`Agent: duplicate tool name '${entry.name}'. Tool names must be unique ` +
+                `across .tool() registrations and Skills' inject.tools (after deduping ` +
+                `same-reference shares across skills). The LLM dispatches by name; ` +
+                `collisions break tool routing.`);
+        }
+        seenNames.add(entry.name);
+    }
+    const registryByName = new Map(augmentedRegistry.map((e) => [e.name, e.tool]));
+    // autoActivate skill tools live outside augmentedRegistry but MUST
+    // be findable by name at dispatch time. Add them to the dispatch
+    // map so `lookupTool` resolves correctly when the skill activates.
+    for (const [name, tool] of sharedSkillTools.entries()) {
+        if (!registryByName.has(name)) {
+            registryByName.set(name, tool);
+        }
+    }
+    const toolSchemas = augmentedRegistry.map((e) => e.tool.schema);
+    return { augmentedRegistry, registryByName, toolSchemas };
+}
+//# sourceMappingURL=buildToolRegistry.js.map

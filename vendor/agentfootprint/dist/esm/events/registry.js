@@ -1,0 +1,201 @@
+/**
+ * Event registry — every typed `agentfootprint.*` event (see ALL_EVENT_TYPES;
+ * the event/domain counts in the docs are asserted against this file by
+ * test/events/unit/registry.test.ts, so don't hardcode counts here).
+ *
+ * Pattern: Discriminated Union + Typed Factory (Gang of Four adapted for TS).
+ * Role:    The stable public event contract — the "ports" of the hexagonal
+ *          architecture (Cockburn, 2005).
+ * Emits:   N/A — this file DEFINES event types and factory helpers.
+ *
+ * Consumers subscribe via `.on(type, listener)`. Emitters construct events
+ * via typed helpers (e.g. `makeContextInjected(payload)`) rather than raw
+ * strings — compile-time safety prevents typos and payload drift.
+ *
+ * Events are additive within a major version; breaking changes require a
+ * major bump. See agentfootprint_v2_detailed_design.md for rules.
+ */
+// ─── Event type constants ─────────────────────────────────────────────
+// Single source of truth for every event name. Low cardinality,
+// all under the `agentfootprint.` namespace, three-segment dotted form.
+export const EVENT_NAMES = {
+    composition: {
+        enter: 'agentfootprint.composition.enter',
+        exit: 'agentfootprint.composition.exit',
+        forkStart: 'agentfootprint.composition.fork_start',
+        branchComplete: 'agentfootprint.composition.branch_complete',
+        mergeEnd: 'agentfootprint.composition.merge_end',
+        routeDecided: 'agentfootprint.composition.route_decided',
+        iterationStart: 'agentfootprint.composition.iteration_start',
+        iterationExit: 'agentfootprint.composition.iteration_exit',
+    },
+    agent: {
+        turnStart: 'agentfootprint.agent.turn_start',
+        turnEnd: 'agentfootprint.agent.turn_end',
+        iterationStart: 'agentfootprint.agent.iteration_start',
+        iterationEnd: 'agentfootprint.agent.iteration_end',
+        routeDecided: 'agentfootprint.agent.route_decided',
+        handoff: 'agentfootprint.agent.handoff',
+        outputSchemaValidationFailed: 'agentfootprint.agent.output_schema_validation_failed',
+        thinkingParseFailed: 'agentfootprint.agent.thinking_parse_failed',
+    },
+    stream: {
+        llmStart: 'agentfootprint.stream.llm_start',
+        llmEnd: 'agentfootprint.stream.llm_end',
+        token: 'agentfootprint.stream.token',
+        toolStart: 'agentfootprint.stream.tool_start',
+        toolEnd: 'agentfootprint.stream.tool_end',
+        thinkingDelta: 'agentfootprint.stream.thinking_delta',
+        thinkingEnd: 'agentfootprint.stream.thinking_end',
+    },
+    context: {
+        injected: 'agentfootprint.context.injected',
+        evicted: 'agentfootprint.context.evicted',
+        slotComposed: 'agentfootprint.context.slot_composed',
+        budgetPressure: 'agentfootprint.context.budget_pressure',
+        evaluated: 'agentfootprint.context.evaluated',
+    },
+    memory: {
+        strategyApplied: 'agentfootprint.memory.strategy_applied',
+        attached: 'agentfootprint.memory.attached',
+        detached: 'agentfootprint.memory.detached',
+        written: 'agentfootprint.memory.written',
+    },
+    tools: {
+        offered: 'agentfootprint.tools.offered',
+        activated: 'agentfootprint.tools.activated',
+        deactivated: 'agentfootprint.tools.deactivated',
+        discoveryStarted: 'agentfootprint.tools.discovery_started',
+        discoveryCompleted: 'agentfootprint.tools.discovery_completed',
+        discoveryFailed: 'agentfootprint.tools.discovery_failed',
+    },
+    skill: {
+        activated: 'agentfootprint.skill.activated',
+        deactivated: 'agentfootprint.skill.deactivated',
+        rejected: 'agentfootprint.skill.rejected',
+    },
+    validation: {
+        argsInvalid: 'agentfootprint.validation.args_invalid',
+    },
+    permission: {
+        check: 'agentfootprint.permission.check',
+        gateOpened: 'agentfootprint.permission.gate_opened',
+        gateClosed: 'agentfootprint.permission.gate_closed',
+        halt: 'agentfootprint.permission.halt',
+    },
+    credential: {
+        requested: 'agentfootprint.credential.requested',
+        acquired: 'agentfootprint.credential.acquired',
+        authorizationRequired: 'agentfootprint.credential.authorization_required',
+        failed: 'agentfootprint.credential.failed',
+    },
+    risk: {
+        flagged: 'agentfootprint.risk.flagged',
+    },
+    fallback: {
+        triggered: 'agentfootprint.fallback.triggered',
+    },
+    cost: {
+        tick: 'agentfootprint.cost.tick',
+        limitHit: 'agentfootprint.cost.limit_hit',
+    },
+    eval: {
+        score: 'agentfootprint.eval.score',
+        thresholdCrossed: 'agentfootprint.eval.threshold_crossed',
+    },
+    error: {
+        retried: 'agentfootprint.error.retried',
+        recovered: 'agentfootprint.error.recovered',
+        fatal: 'agentfootprint.error.fatal',
+    },
+    reliability: {
+        failFast: 'agentfootprint.reliability.fail_fast',
+        retried: 'agentfootprint.reliability.retried',
+        recovered: 'agentfootprint.reliability.recovered',
+    },
+    pause: {
+        request: 'agentfootprint.pause.request',
+        resume: 'agentfootprint.pause.resume',
+    },
+    checkin: {
+        request: 'agentfootprint.checkin.request',
+        decision: 'agentfootprint.checkin.decision',
+    },
+    embedding: {
+        generated: 'agentfootprint.embedding.generated',
+    },
+};
+/**
+ * Complete list of every registered event type, for lint / runtime validation.
+ * A new event MUST be added here or the exhaustiveness tests fail.
+ */
+export const ALL_EVENT_TYPES = [
+    'agentfootprint.composition.enter',
+    'agentfootprint.composition.exit',
+    'agentfootprint.composition.fork_start',
+    'agentfootprint.composition.branch_complete',
+    'agentfootprint.composition.merge_end',
+    'agentfootprint.composition.route_decided',
+    'agentfootprint.composition.iteration_start',
+    'agentfootprint.composition.iteration_exit',
+    'agentfootprint.agent.turn_start',
+    'agentfootprint.agent.turn_end',
+    'agentfootprint.agent.iteration_start',
+    'agentfootprint.agent.iteration_end',
+    'agentfootprint.agent.route_decided',
+    'agentfootprint.agent.handoff',
+    'agentfootprint.agent.output_schema_validation_failed',
+    'agentfootprint.agent.thinking_parse_failed',
+    'agentfootprint.stream.llm_start',
+    'agentfootprint.stream.llm_end',
+    'agentfootprint.stream.token',
+    'agentfootprint.stream.tool_start',
+    'agentfootprint.stream.tool_end',
+    'agentfootprint.stream.thinking_delta',
+    'agentfootprint.stream.thinking_end',
+    'agentfootprint.context.injected',
+    'agentfootprint.context.evicted',
+    'agentfootprint.context.slot_composed',
+    'agentfootprint.context.budget_pressure',
+    'agentfootprint.context.evaluated',
+    'agentfootprint.memory.strategy_applied',
+    'agentfootprint.memory.attached',
+    'agentfootprint.memory.detached',
+    'agentfootprint.memory.written',
+    'agentfootprint.tools.offered',
+    'agentfootprint.tools.activated',
+    'agentfootprint.tools.deactivated',
+    'agentfootprint.tools.discovery_started',
+    'agentfootprint.tools.discovery_completed',
+    'agentfootprint.tools.discovery_failed',
+    'agentfootprint.validation.args_invalid',
+    'agentfootprint.skill.activated',
+    'agentfootprint.skill.deactivated',
+    'agentfootprint.skill.rejected',
+    'agentfootprint.permission.check',
+    'agentfootprint.permission.gate_opened',
+    'agentfootprint.permission.gate_closed',
+    'agentfootprint.permission.halt',
+    'agentfootprint.credential.requested',
+    'agentfootprint.credential.acquired',
+    'agentfootprint.credential.authorization_required',
+    'agentfootprint.credential.failed',
+    'agentfootprint.risk.flagged',
+    'agentfootprint.fallback.triggered',
+    'agentfootprint.cost.tick',
+    'agentfootprint.cost.limit_hit',
+    'agentfootprint.eval.score',
+    'agentfootprint.eval.threshold_crossed',
+    'agentfootprint.error.retried',
+    'agentfootprint.error.recovered',
+    'agentfootprint.error.fatal',
+    'agentfootprint.reliability.fail_fast',
+    'agentfootprint.reliability.retried',
+    'agentfootprint.reliability.recovered',
+    'agentfootprint.pause.request',
+    'agentfootprint.pause.resume',
+    'agentfootprint.checkin.request',
+    'agentfootprint.checkin.decision',
+    'agentfootprint.embedding.generated',
+];
+//# sourceMappingURL=registry.js.map

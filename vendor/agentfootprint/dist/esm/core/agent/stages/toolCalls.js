@@ -1,0 +1,666 @@
+/**
+ * toolCalls — pausable handler for executing the LLM-requested tool
+ * calls in the agent's ReAct loop.
+ *
+ *   • `execute` iterates `scope.llmLatestToolCalls`, dispatches each
+ *     tool, appends results to scope.history, and increments
+ *     `scope.iteration`. If a tool throws `PauseRequest` (via
+ *     `pauseHere()`), commits partial state and returns the pause
+ *     payload so footprintjs captures a checkpoint.
+ *   • `resume` runs after the consumer supplies the human's answer.
+ *     Treats that answer as the paused tool's result, appends to
+ *     history, then continues the ReAct iteration loop.
+ *
+ * Dispatch resolution order:
+ *   1. Static registry built at chart-build time (registryByName).
+ *   2. External `ToolProvider.list(ctx).find(...)` if a `.toolProvider()`
+ *      was wired and the tool isn't in the static registry.
+ *
+ * Permission gate (when `permissionChecker` is configured) runs BEFORE
+ * `tool.execute`. Deny → tool not executed; result is a synthetic
+ * denial string. Allow / gate_open → execution proceeds.
+ *
+ * `read_skill` is the auto-attached activation tool — when the LLM
+ * calls it with a valid Skill id, the next InjectionEngine pass
+ * activates that Skill (lifetime: turn).
+ */
+import { typedEmit } from '../../../recorders/core/typedEmit.js';
+import { extractSequence } from '../../../security/extractSequence.js';
+import { unconfiguredCredentialProvider } from '../../../identity/types.js';
+import { isPauseRequest } from '../../pause.js';
+import { shouldCheckIn, isCheckInDecision, checkInDeclined, } from '../../checkin.js';
+import { formatToolArgIssues, validateToolArgs, } from '../toolArgsValidation.js';
+import { safeStringify } from '../validators.js';
+/**
+ * Build the pausable tool-call handler for the agent's chart.
+ */
+export function buildToolCallsHandler(deps) {
+    const { registryByName, externalToolProvider, providerToolCache, permissionChecker } = deps;
+    const toolArgValidation = deps.toolArgValidation ?? 'enforce';
+    // Fail-closed: when no provider is attached, `ctx.credentials` is a provider
+    // that THROWS on use (never undefined) — so a tool can't silently no-op.
+    const credentials = deps.credentialProvider ?? unconfiguredCredentialProvider();
+    const hasCredentials = deps.credentialProvider !== undefined;
+    // Resolve a tool by name. Hoisted to the handler closure so BOTH `execute`
+    // (the ReAct loop) and `resume` (an approved check-in re-executes here) share
+    // one resolver. The Tools slot already invoked `provider.list(ctx)` this
+    // iteration and cached the resolved Tool[] in `providerToolCache` — read from
+    // there to avoid a second discovery call (vital for async network providers).
+    const lookupTool = (toolName) => {
+        const fromRegistry = registryByName.get(toolName);
+        if (fromRegistry)
+            return fromRegistry;
+        if (!externalToolProvider)
+            return undefined;
+        const cached = providerToolCache?.current ?? [];
+        return cached.find((t) => t.schema.name === toolName);
+    };
+    // Resolve a tool's declared credential (declare-and-push) and execute it,
+    // emitting the same credential.* events as the main loop. Used by the
+    // check-in RESUME path when a human APPROVES — the tool never ran at pause
+    // time (that's the whole point: consent BEFORE credentials + execute), so it
+    // runs now. Fail-closed: a blocked/failed credential surfaces to the model
+    // and the tool does NOT run. A tool that pauses again during an approved
+    // resume can't re-pause (resume returns void), so that is surfaced as an error.
+    const resolveCredentialAndExecute = async (scope, tool, toolName, args, toolCallId, iteration, env) => {
+        if (!tool)
+            return { result: `Unknown tool: ${toolName}`, error: true };
+        const runIdentity = scope.runIdentity;
+        let resolvedCredential;
+        const need = tool.needs;
+        if (need) {
+            typedEmit(scope, 'agentfootprint.credential.requested', {
+                service: need.credential,
+                ...(need.mode && { mode: need.mode }),
+            });
+            try {
+                const cred = await credentials.getCredential({
+                    service: need.credential,
+                    ...(need.scopes && { scopes: need.scopes }),
+                    ...(need.mode && { mode: need.mode }),
+                    ...(runIdentity && {
+                        identity: {
+                            ...(runIdentity.principal && { principal: runIdentity.principal }),
+                            ...(runIdentity.tenant && { tenant: runIdentity.tenant }),
+                        },
+                    }),
+                });
+                if (cred.status === 'issued') {
+                    resolvedCredential = cred.credential;
+                    typedEmit(scope, 'agentfootprint.credential.acquired', {
+                        service: need.credential,
+                        kind: cred.credential.kind,
+                        ...(cred.expiresAt !== undefined && { expiresAt: cred.expiresAt }),
+                    });
+                }
+                else {
+                    typedEmit(scope, 'agentfootprint.credential.authorization_required', {
+                        service: need.credential,
+                        sessionId: cred.sessionId,
+                    });
+                    return {
+                        result: `authorization required for '${need.credential}': ${cred.authorizationUrl}`,
+                        error: true,
+                    };
+                }
+            }
+            catch (credErr) {
+                const reason = credErr instanceof Error ? credErr.message : String(credErr);
+                typedEmit(scope, 'agentfootprint.credential.failed', { service: need.credential, reason });
+                return { result: `credential error for '${need.credential}': ${reason}`, error: true };
+            }
+        }
+        try {
+            const result = await tool.execute(args, {
+                toolCallId,
+                iteration,
+                ...(env.signal && { signal: env.signal }),
+                credentials,
+                hasCredentials,
+                ...(resolvedCredential && { credential: resolvedCredential }),
+            });
+            return { result };
+        }
+        catch (err) {
+            if (isPauseRequest(err)) {
+                return {
+                    result: `tool '${toolName}' requested a pause while resuming an approved check-in, which is not supported`,
+                    error: true,
+                };
+            }
+            return { result: err instanceof Error ? err.message : String(err), error: true };
+        }
+    };
+    return {
+        execute: async (scope) => {
+            // Materialize ONCE — `scope.llmLatestToolCalls` is a live TypedScope
+            // deep-Proxy view; spreading yields the raw (plain, structured-clone-
+            // safe) elements. This array is embedded into the assistant history
+            // message and into typed event payloads (tool_start args,
+            // iteration_end history), which must be detached plain data
+            // (RFC-001 'clone' capture under observerDelivery: 'deferred').
+            const toolCalls = [
+                ...scope.llmLatestToolCalls,
+            ];
+            const iteration = scope.iteration;
+            const newHistory = [...scope.history];
+            // ALWAYS push the assistant turn when there are tool calls — even
+            // if the content was empty — so providers (Anthropic, OpenAI) can
+            // round-trip the tool_use blocks via `LLMMessage.toolCalls`.
+            // Without this, the next iteration's request lacks the assistant
+            // turn that initiated the tool call, and the API rejects the
+            // following tool_result with "preceding tool_use missing".
+            if (scope.llmLatestContent || toolCalls.length > 0) {
+                // v2.14 — attach thinking blocks (if any). Required for
+                // Anthropic signature round-trip: the next request MUST echo
+                // back the signed blocks BYTE-EXACT or Anthropic returns 400.
+                // Empty array (no thinking) → field omitted from message.
+                const thinkingBlocks = scope.thinkingBlocks;
+                const hasThinking = thinkingBlocks !== undefined && thinkingBlocks.length > 0;
+                newHistory.push({
+                    role: 'assistant',
+                    content: scope.llmLatestContent ?? '',
+                    ...(toolCalls.length > 0 && { toolCalls }),
+                    // Spread = materialize the proxy view (see toolCalls above).
+                    ...(hasThinking && { thinkingBlocks: [...thinkingBlocks] }),
+                });
+            }
+            // `lookupTool` is hoisted to the handler closure (shared with resume).
+            // Capture run identity from scope for the enriched permission ctx.
+            // Same value the Tools slot passes to ToolProvider.list(ctx) so the
+            // checker sees consistent identity across both gates.
+            const runIdentity = scope.runIdentity;
+            const env = scope.$getEnv();
+            for (const tc of toolCalls) {
+                const tool = lookupTool(tc.name);
+                typedEmit(scope, 'agentfootprint.stream.tool_start', {
+                    toolName: tc.name,
+                    toolCallId: tc.id,
+                    args: tc.args,
+                    ...(toolCalls.length > 1 && { parallelCount: toolCalls.length }),
+                });
+                const startMs = Date.now();
+                let result;
+                let error;
+                // Permission gate — when a checker is configured, evaluate BEFORE
+                // executing the tool. Emits `permission.check` with the decision.
+                //
+                // v2.12 — three terminal results:
+                //   • 'allow' / 'gate_open' → tool executes normally
+                //   • 'deny'                → synthetic tool_result lands; LLM continues
+                //   • 'halt'                → synthetic tool_result lands; run terminates
+                //                             via scope.$break + Agent.run throws
+                //                             PolicyHaltError at the API boundary
+                //
+                // Strict ordering on halt: synthetic tool_result → halt event →
+                // commit (newHistory written to scope) → $break. This guarantees
+                // the audit trail is complete before the run terminates, so
+                // `agent.resumeOnError(checkpoint)` sees consistent state.
+                //
+                // The checker receives the in-flight sequence (derived from
+                // scope.history), full conversation history, current iteration,
+                // identity, and abort signal — enough surface to build sequence-
+                // aware policies (forbidden chains, idempotency limits, cost
+                // guards) without maintaining parallel state.
+                let denied = false;
+                let haltContext;
+                if (permissionChecker) {
+                    try {
+                        // Sequence is derived from history at check time (not parallel
+                        // state) — single source of truth, survives resumeOnError.
+                        const sequence = extractSequence(newHistory, iteration);
+                        const decision = await permissionChecker.check({
+                            capability: 'tool_call',
+                            actor: 'agent',
+                            target: tc.name,
+                            context: tc.args,
+                            sequence,
+                            history: newHistory,
+                            iteration,
+                            ...(runIdentity && { identity: runIdentity }),
+                            ...(env.signal && { signal: env.signal }),
+                        });
+                        typedEmit(scope, 'agentfootprint.permission.check', {
+                            capability: 'tool_call',
+                            actor: 'agent',
+                            target: tc.name,
+                            result: decision.result,
+                            ...(decision.policyRuleId !== undefined && { policyRuleId: decision.policyRuleId }),
+                            ...(decision.rationale !== undefined && { rationale: decision.rationale }),
+                            ...(decision.reason !== undefined && { reason: decision.reason }),
+                        });
+                        if (decision.result === 'deny') {
+                            denied = true;
+                            // Deny default keeps the existing v2.4 shape (carries
+                            // rationale text — historically intentional, since deny
+                            // lets the LLM recover and rationale is consumer-supplied).
+                            const tellLLM = decision.tellLLM ?? `[permission denied: ${decision.rationale ?? 'policy'}]`;
+                            result = tellLLM;
+                        }
+                        else if (decision.result === 'halt') {
+                            denied = true;
+                            // Halt default is DELIBERATELY GENERIC — never falls back
+                            // to `reason` (which is telemetry, e.g. 'security:exfiltration'
+                            // — leaking that to the LLM teaches it the rule space).
+                            // Consumers who want a richer message provide `tellLLM` explicitly.
+                            const tellLLM = decision.tellLLM ?? `Tool '${tc.name}' is not available in this context.`;
+                            result = tellLLM;
+                            haltContext = {
+                                reason: decision.reason ?? decision.rationale ?? 'policy-halt',
+                                tellLLM,
+                                ...(permissionChecker.name && { checkerId: permissionChecker.name }),
+                            };
+                        }
+                    }
+                    catch (permErr) {
+                        // A checker that throws is treated as deny-by-default. The
+                        // denial message records the thrown error so consumers can
+                        // debug policy-adapter failures without losing the run.
+                        denied = true;
+                        const msg = permErr instanceof Error ? permErr.message : String(permErr);
+                        typedEmit(scope, 'agentfootprint.permission.check', {
+                            capability: 'tool_call',
+                            actor: 'agent',
+                            target: tc.name,
+                            result: 'deny',
+                            rationale: `permission-checker threw: ${msg}`,
+                        });
+                        result = `[permission denied: checker error: ${msg}]`;
+                    }
+                }
+                // Tool-args validation (#9) — AFTER the permission gate (policy must
+                // see every attempted call, valid or not) and BEFORE credential
+                // resolution (never acquire credentials for a call that won't run).
+                // On 'enforce' mismatch the tool is NOT executed; the model gets a
+                // structured retry message as the tool result and corrects its args
+                // on the next ReAct iteration. Unknown tools keep the existing
+                // "Unknown tool" path below — validation only applies to resolved
+                // tools (their inputSchema is the contract the LLM was shown).
+                let argsRejected = false;
+                if (!denied && tool && toolArgValidation !== 'off') {
+                    const verdict = validateToolArgs(tc.args, tool.schema.inputSchema);
+                    if (!verdict.ok) {
+                        typedEmit(scope, 'agentfootprint.validation.args_invalid', {
+                            toolName: tc.name,
+                            toolCallId: tc.id,
+                            iteration,
+                            issues: verdict.issues,
+                            enforced: toolArgValidation === 'enforce',
+                        });
+                        if (toolArgValidation === 'enforce') {
+                            argsRejected = true;
+                            error = true;
+                            result = formatToolArgIssues(tc.name, verdict.issues);
+                        }
+                    }
+                }
+                // ── Check-in gate (evidence-carrying human consent) ──────────────
+                // Ordered AFTER the permission gate + arg-validation (a call the policy
+                // denied or that has invalid args never asks a human) and BEFORE
+                // credential resolution + execute (never acquire credentials for a call
+                // awaiting consent — that's the whole point of "consent WITH the
+                // receipts"). Fires ONLY when the tool declared `checkIn` and it trips,
+                // so tools without the field are byte-identical (no gate, no events, no
+                // pause). Rides the EXISTING pause machinery: returning a defined value
+                // triggers the footprintjs checkpoint, exactly like `pauseHere`.
+                if (!denied && !argsRejected && tool && tool.checkIn !== undefined && deps.checkIn) {
+                    // The system prompt isn't in `scope.history` (the slots assemble it
+                    // separately) — reconstruct it from `systemPromptInjections` and
+                    // prepend a synthetic system frame so the evidence's `read` + the
+                    // `drivers` ranking can cite system RULES, not just the conversation.
+                    // Computed ONLY for a checkIn-declaring tool → zero cost otherwise.
+                    const systemPrompt = (scope.systemPromptInjections ?? [])
+                        .map((r) => r.rawContent ?? '')
+                        .filter((s) => s.length > 0)
+                        .join('\n\n');
+                    const historyForEvidence = systemPrompt
+                        ? [{ role: 'system', content: systemPrompt }, ...newHistory]
+                        : newHistory;
+                    if (!shouldCheckIn(tool.checkIn, tc.args, {
+                        iteration,
+                        toolCallId: tc.id,
+                        history: historyForEvidence,
+                    })) {
+                        // Predicate said no — fall through to the normal credential+execute
+                        // path below (this `if` block is the ONLY thing the gate adds).
+                    }
+                    else {
+                        const intent = scope.llmLatestContent ? String(scope.llmLatestContent) : undefined;
+                        const evidence = await deps.checkIn.assembler({
+                            tool: { name: tc.name, description: tool.schema.description },
+                            args: tc.args,
+                            ...(intent !== undefined && { intent }),
+                            iteration,
+                            history: historyForEvidence,
+                            scorer: deps.checkIn.scorer,
+                            ...(env.signal && { signal: env.signal }),
+                        });
+                        const request = {
+                            tool: tc.name,
+                            args: tc.args,
+                            ...(intent !== undefined && { intent }),
+                            evidence,
+                        };
+                        typedEmit(scope, 'agentfootprint.checkin.request', {
+                            toolName: tc.name,
+                            toolCallId: tc.id,
+                            iteration,
+                            request: request,
+                        });
+                        // Commit partial state so resume() finds history intact (mirror the
+                        // pauseHere path). The proposed args ride the checkpoint so an
+                        // APPROVED tool can execute on resume.
+                        scope.history = newHistory;
+                        scope.pausedToolCallId = tc.id;
+                        scope.pausedToolName = tc.name;
+                        scope.pausedToolStartMs = startMs;
+                        scope.pausedCheckIn = true;
+                        scope.pausedCheckInArgs = tc.args;
+                        // Returning a defined value triggers the footprintjs pause; the
+                        // returned object becomes the checkpoint's pauseData. detectPause
+                        // surfaces `pauseData.checkIn` as `outcome.checkIn`.
+                        return { toolCallId: tc.id, toolName: tc.name, checkIn: request };
+                    }
+                }
+                if (!denied && !argsRejected) {
+                    // Declare-and-push: resolve the tool's declared credential BEFORE
+                    // invoking, and inject it as ctx.credential. On consent-required or
+                    // failure, surface the reason to the LLM (tool result) + emit; the
+                    // tool does NOT run (fail-closed — never half-authed; a denial that
+                    // throws is surfaced, not retried).
+                    let resolvedCredential;
+                    let credentialBlocked = false;
+                    const need = tool?.needs;
+                    if (need) {
+                        typedEmit(scope, 'agentfootprint.credential.requested', {
+                            service: need.credential,
+                            ...(need.mode && { mode: need.mode }),
+                        });
+                        try {
+                            const cred = await credentials.getCredential({
+                                service: need.credential,
+                                ...(need.scopes && { scopes: need.scopes }),
+                                ...(need.mode && { mode: need.mode }),
+                                ...(runIdentity && {
+                                    identity: {
+                                        ...(runIdentity.principal && { principal: runIdentity.principal }),
+                                        ...(runIdentity.tenant && { tenant: runIdentity.tenant }),
+                                    },
+                                }),
+                            });
+                            if (cred.status === 'issued') {
+                                resolvedCredential = cred.credential;
+                                typedEmit(scope, 'agentfootprint.credential.acquired', {
+                                    service: need.credential,
+                                    kind: cred.credential.kind,
+                                    ...(cred.expiresAt !== undefined && { expiresAt: cred.expiresAt }),
+                                });
+                            }
+                            else {
+                                credentialBlocked = true;
+                                typedEmit(scope, 'agentfootprint.credential.authorization_required', {
+                                    service: need.credential,
+                                    sessionId: cred.sessionId,
+                                });
+                                result = `authorization required for '${need.credential}': ${cred.authorizationUrl}`;
+                            }
+                        }
+                        catch (credErr) {
+                            credentialBlocked = true;
+                            error = true;
+                            const reason = credErr instanceof Error ? credErr.message : String(credErr);
+                            typedEmit(scope, 'agentfootprint.credential.failed', {
+                                service: need.credential,
+                                reason,
+                            });
+                            result = `credential error for '${need.credential}': ${reason}`;
+                        }
+                    }
+                    if (!credentialBlocked) {
+                        try {
+                            if (!tool)
+                                throw new Error(`Unknown tool: ${tc.name}`);
+                            result = await tool.execute(tc.args, {
+                                toolCallId: tc.id,
+                                iteration,
+                                ...(env.signal && { signal: env.signal }),
+                                credentials,
+                                hasCredentials,
+                                ...(resolvedCredential && { credential: resolvedCredential }),
+                            });
+                        }
+                        catch (err) {
+                            if (isPauseRequest(err)) {
+                                // Commit partial state so resume() can find history intact.
+                                scope.history = newHistory;
+                                scope.pausedToolCallId = tc.id;
+                                scope.pausedToolName = tc.name;
+                                scope.pausedToolStartMs = startMs;
+                                // Returning a defined value triggers footprintjs pause —
+                                // the returned object becomes the checkpoint's pauseData.
+                                return {
+                                    toolCallId: tc.id,
+                                    toolName: tc.name,
+                                    ...(typeof err.data === 'object' && err.data !== null
+                                        ? err.data
+                                        : { data: err.data }),
+                                };
+                            }
+                            error = true;
+                            result = err instanceof Error ? err.message : String(err);
+                        }
+                    }
+                }
+                // ── Skill-graph read_skill GATE ────────────────────────
+                // Reject a read_skill jump OUTSIDE the reachable set from the current
+                // cursor: replace the result with a re-prompt naming the allowed ids (so
+                // the model re-picks) and skip the activation below — cursor + activations
+                // stay unchanged. Off when no skillGraph (deps.allowedSkillIds undefined),
+                // so plain read_skill agents are byte-for-byte unaffected.
+                let skillRejected = false;
+                if (deps.allowedSkillIds && tc.name === 'read_skill' && !error && !denied) {
+                    const reqId = tc.args.id;
+                    if (typeof reqId === 'string' && reqId.length > 0) {
+                        const currentSkillId = scope.currentSkillId;
+                        const allowed = deps.allowedSkillIds(currentSkillId);
+                        if (!allowed.includes(reqId)) {
+                            skillRejected = true;
+                            result =
+                                `read_skill("${reqId}") is not reachable from here. ` +
+                                    (allowed.length
+                                        ? `Reachable skills: ${allowed.join(', ')}. Pick one of these, or finish.`
+                                        : 'No skills are reachable from here — answer with the current skill, or finish.');
+                            typedEmit(scope, 'agentfootprint.skill.rejected', {
+                                requestedId: reqId,
+                                ...(currentSkillId !== undefined && { currentSkillId }),
+                                allowed,
+                                iteration,
+                            });
+                        }
+                    }
+                }
+                const durationMs = Date.now() - startMs;
+                typedEmit(scope, 'agentfootprint.stream.tool_end', {
+                    toolCallId: tc.id,
+                    result,
+                    durationMs,
+                    ...(error === true && { error: true }),
+                });
+                const resultStr = typeof result === 'string' ? result : safeStringify(result);
+                newHistory.push({
+                    role: 'tool',
+                    content: resultStr,
+                    toolCallId: tc.id,
+                    toolName: tc.name,
+                });
+                // ── Dynamic ReAct wiring ───────────────────────────────
+                //
+                // (1) `lastToolResult` drives `on-tool-return` Injection
+                //     triggers — the InjectionEngine's NEXT pass will see
+                //     this and activate any matching Instructions.
+                scope.lastToolResult = { toolName: tc.name, result: resultStr };
+                // (2) `read_skill` is the auto-attached activation tool.
+                //     When the LLM calls it with a valid Skill id, append
+                //     to `activatedInjectionIds` so the InjectionEngine's
+                //     NEXT pass activates that Skill (lifetime: turn — stays
+                //     active until the turn ends).
+                if (tc.name === 'read_skill' && !error && !denied && !skillRejected) {
+                    const requestedId = tc.args.id;
+                    if (typeof requestedId === 'string' && requestedId.length > 0) {
+                        const current = scope.activatedInjectionIds;
+                        if (!current.includes(requestedId)) {
+                            scope.activatedInjectionIds = [...current, requestedId];
+                        }
+                    }
+                }
+                // v2.12 — strict halt ordering (continued).
+                //
+                // The synthetic tool_result for the halt-triggering call has
+                // ALREADY been pushed to newHistory above. Now: emit the halt
+                // event, commit history to scope, set the scope flags Agent.run
+                // reads at the API boundary, and break the loop. This SKIPS any
+                // remaining parallel-call siblings (intentional — once a halt
+                // fires, no further tool dispatches should occur this turn).
+                if (haltContext) {
+                    typedEmit(scope, 'agentfootprint.permission.halt', {
+                        target: tc.name,
+                        reason: haltContext.reason,
+                        tellLLM: haltContext.tellLLM,
+                        iteration,
+                        sequenceLength: extractSequence(newHistory, iteration).length,
+                        ...(haltContext.checkerId !== undefined && { checkerId: haltContext.checkerId }),
+                    });
+                    scope.history = newHistory;
+                    scope.policyHaltReason = haltContext.reason;
+                    scope.policyHaltTellLLM = haltContext.tellLLM;
+                    scope.policyHaltTarget = tc.name;
+                    scope.policyHaltArgs = tc.args;
+                    scope.policyHaltIteration = iteration;
+                    if (haltContext.checkerId !== undefined) {
+                        scope.policyHaltCheckerId = haltContext.checkerId;
+                    }
+                    scope.$break(`policy-halt: ${haltContext.reason}`);
+                    return undefined;
+                }
+            }
+            scope.history = newHistory;
+            typedEmit(scope, 'agentfootprint.agent.iteration_end', {
+                turnIndex: 0,
+                iterIndex: iteration,
+                toolCallCount: toolCalls.length,
+                // The PLAIN local array, not `scope.history` — a TypedScope array
+                // read returns a live deep-Proxy view, which is not structured-
+                // clone-safe. Event payloads must be detached plain data so they
+                // survive RFC-001 'clone' capture (observerDelivery: 'deferred')
+                // and never hand consumers a mutable view of engine state.
+                history: newHistory,
+            });
+            scope.iteration = iteration + 1;
+            return undefined; // explicit: no pause, flow continues to loopTo
+        },
+        resume: async (scope, input) => {
+            // Consumer-supplied resume input becomes the paused tool's result.
+            // The subflow's pre-pause scope is restored automatically by
+            // footprintjs 4.17.0 via `checkpoint.subflowStates`, so
+            // `scope.history` and `scope.pausedToolCallId` read back cleanly
+            // across same-executor AND cross-executor resume.
+            const toolCallId = scope.pausedToolCallId;
+            const toolName = scope.pausedToolName;
+            const startMs = scope.pausedToolStartMs;
+            // ── Check-in decision path ───────────────────────────────────────
+            // A check-in pause is discriminated by `scope.pausedCheckIn` (restored
+            // from the checkpoint). The resume input is a `CheckInDecision`. On
+            // APPROVE the tool executes NOW (it never ran at pause time — consent
+            // comes BEFORE execute); on DECLINE a model-visible tool_result lands so
+            // the agent adapts in-loop. The typed `checkin.decision` event fires
+            // either way. Same iteration semantics as resume-after-askHuman.
+            if (scope.pausedCheckIn === true) {
+                const iteration = scope.iteration;
+                const args = (scope.pausedCheckInArgs ?? {});
+                // A check-in pause MUST be resumed with a CheckInDecision. A mis-wired
+                // resume (a bare string, say) declines by default — a consequential
+                // tool can never silently EXECUTE from a malformed resume.
+                const decision = isCheckInDecision(input)
+                    ? input
+                    : checkInDeclined({ by: 'unknown', note: 'resume input was not a CheckInDecision' });
+                typedEmit(scope, 'agentfootprint.checkin.decision', {
+                    toolName,
+                    toolCallId,
+                    iteration,
+                    approved: decision.approved,
+                    by: decision.by,
+                    ...(decision.note !== undefined && { note: decision.note }),
+                });
+                let result;
+                let error;
+                if (decision.approved) {
+                    const env = scope.$getEnv();
+                    const dispatched = await resolveCredentialAndExecute(scope, lookupTool(toolName), toolName, args, toolCallId, iteration, env);
+                    result = dispatched.result;
+                    error = dispatched.error;
+                }
+                else {
+                    result = decision.note ? `declined by human: ${decision.note}` : 'declined by human';
+                }
+                const decisionResultStr = typeof result === 'string' ? result : safeStringify(result);
+                const decisionHistory = [
+                    ...scope.history,
+                    { role: 'tool', content: decisionResultStr, toolCallId, toolName },
+                ];
+                scope.history = decisionHistory;
+                // Drives `on-tool-return` triggers, same as the execute path.
+                scope.lastToolResult = { toolName, result: decisionResultStr };
+                typedEmit(scope, 'agentfootprint.stream.tool_end', {
+                    toolCallId,
+                    result,
+                    durationMs: Date.now() - startMs,
+                    ...(error === true && { error: true }),
+                });
+                typedEmit(scope, 'agentfootprint.agent.iteration_end', {
+                    turnIndex: 0,
+                    iterIndex: iteration,
+                    toolCallCount: 1,
+                    history: decisionHistory,
+                });
+                scope.iteration = iteration + 1;
+                // Clear ALL pause checkpoint fields (shared + check-in).
+                scope.pausedToolCallId = '';
+                scope.pausedToolName = '';
+                scope.pausedToolStartMs = 0;
+                scope.pausedCheckIn = false;
+                scope.pausedCheckInArgs = undefined;
+                return;
+            }
+            const resultStr = typeof input === 'string' ? input : safeStringify(input);
+            const newHistory = [
+                ...scope.history,
+                {
+                    role: 'tool',
+                    content: resultStr,
+                    toolCallId,
+                    toolName,
+                },
+            ];
+            scope.history = newHistory;
+            typedEmit(scope, 'agentfootprint.stream.tool_end', {
+                toolCallId,
+                result: input,
+                durationMs: Date.now() - startMs,
+            });
+            const iteration = scope.iteration;
+            typedEmit(scope, 'agentfootprint.agent.iteration_end', {
+                turnIndex: 0,
+                iterIndex: iteration,
+                toolCallCount: 1,
+                // Plain local array — see the matching note on the execute path.
+                history: newHistory,
+            });
+            scope.iteration = iteration + 1;
+            // Clear pause checkpoint fields.
+            scope.pausedToolCallId = '';
+            scope.pausedToolName = '';
+            scope.pausedToolStartMs = 0;
+        },
+    };
+}
+//# sourceMappingURL=toolCalls.js.map

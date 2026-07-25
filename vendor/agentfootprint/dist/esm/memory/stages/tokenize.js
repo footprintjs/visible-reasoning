@@ -1,0 +1,45 @@
+/**
+ * tokenize — approximate token counter for budget-aware memory stages.
+ *
+ * Memory stages need to answer "how many tokens does this content cost?"
+ * to decide what fits in a budget. A real tokenizer (tiktoken, Anthropic's
+ * tokenizer, etc.) is accurate but:
+ *
+ *   - Adds a dependency (tiktoken is ~2MB, has WASM loading quirks).
+ *   - Differs per model family (Claude counts differently from GPT).
+ *   - Pulls frontend bundles from small to huge.
+ *
+ * Phase 1 uses a deterministic approximation: 1 token ≈ 4 characters of
+ * English text. The constant comes from OpenAI's own documentation and
+ * is within ~15% for typical chat content. For "how much memory can I
+ * inject into an 8K context", 15% is fine.
+ *
+ * Consumers who need exact counts pass their own `TokenCounter` through
+ * the pipeline config. When that lands (Phase 2), this default stays as
+ * the dependency-free baseline.
+ */
+/**
+ * Default approximation — 1 token per ~4 characters. Low-accuracy,
+ * zero-dependency, deterministic (same input → same count). Good enough
+ * for budget-based decisions; replace via pipeline config for accuracy.
+ *
+ * Accuracy notes:
+ *   - ASCII English: within ~15% of tiktoken.
+ *   - CJK / emoji / heavy unicode: can undercount by ~2× because
+ *     `String.length` counts UTF-16 code units, and CJK chars often
+ *     take multiple tokens each. Use a real tokenizer for these workloads.
+ *   - Code / JSON: reasonably accurate (punctuation-heavy is ~4 chars/tok).
+ */
+export const approximateTokenCounter = (text) => {
+    return Math.ceil(text.length / 4);
+};
+/**
+ * Count tokens in a single message. Handles string content and the
+ * content-block array variant (where each block has its own text field).
+ * Non-text blocks (tool calls, images) contribute a small constant to
+ * reflect their structural cost.
+ */
+export function countMessageTokens(message, counter = approximateTokenCounter) {
+    return counter(message.content ?? '');
+}
+//# sourceMappingURL=tokenize.js.map

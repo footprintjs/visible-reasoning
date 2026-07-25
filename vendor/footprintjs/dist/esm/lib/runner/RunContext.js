@@ -1,0 +1,60 @@
+/**
+ * RunContext -- d3-style chainable run configuration.
+ *
+ * Returned by chart.recorder() and chart.redact().
+ * Accumulates recorders and redaction policy, then creates
+ * a FlowChartExecutor internally when .run() is called.
+ *
+ * The chart is immutable. RunContext is ephemeral per-run config.
+ */
+import { FlowChartExecutor } from './FlowChartExecutor.js';
+export class RunContext {
+    chart;
+    recorders = [];
+    redactionPolicy;
+    constructor(chart) {
+        this.chart = chart;
+    }
+    /**
+     * Attach a recorder. Routed through the executor's combined-attach logic at
+     * run time, so scope, flow, AND emit channels are all detected uniformly — a
+     * recorder that implements only `onEmit` (or any mix) lands on the right
+     * channel(s) exactly once. Chainable.
+     */
+    recorder(r) {
+        this.recorders.push(r);
+        return this;
+    }
+    /** Set redaction policy for this run. Chainable. */
+    redact(policy) {
+        this.redactionPolicy = policy;
+        return this;
+    }
+    /** Execute the chart with accumulated config. Returns RunResult. */
+    async run(options) {
+        const executor = new FlowChartExecutor(this.chart);
+        // Attach every recorder via the combined router so scope/flow/emit channels
+        // are detected by method shape (flow recorders auto-enable narrative; emit
+        // recorders share the scope channel with dedup — no double-attach).
+        for (const r of this.recorders) {
+            executor.attachCombinedRecorder(r);
+        }
+        // Set redaction
+        if (this.redactionPolicy) {
+            executor.setRedactionPolicy(this.redactionPolicy);
+        }
+        // Run
+        await executor.run(options);
+        // Build result
+        const snapshot = executor.getSnapshot();
+        const mapper = this.chart.outputMapper;
+        const output = mapper ? mapper(snapshot.sharedState || {}) : snapshot.sharedState;
+        return {
+            state: snapshot.sharedState || {},
+            output,
+            executionTree: snapshot.executionTree,
+            commitLog: snapshot.commitLog || [],
+        };
+    }
+}
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiUnVuQ29udGV4dC5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbIi4uLy4uLy4uLy4uL3NyYy9saWIvcnVubmVyL1J1bkNvbnRleHQudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7O0dBUUc7QUFPSCxPQUFPLEVBQUUsaUJBQWlCLEVBQUUsTUFBTSx3QkFBd0IsQ0FBQztBQWMzRCxNQUFNLE9BQU8sVUFBVTtJQUNKLEtBQUssQ0FBMEI7SUFDL0IsU0FBUyxHQUF1QixFQUFFLENBQUM7SUFDNUMsZUFBZSxDQUFtQjtJQUUxQyxZQUFZLEtBQThCO1FBQ3hDLElBQUksQ0FBQyxLQUFLLEdBQUcsS0FBSyxDQUFDO0lBQ3JCLENBQUM7SUFFRDs7Ozs7T0FLRztJQUNILFFBQVEsQ0FBQyxDQUFrRDtRQUN6RCxJQUFJLENBQUMsU0FBUyxDQUFDLElBQUksQ0FBQyxDQUFxQixDQUFDLENBQUM7UUFDM0MsT0FBTyxJQUFJLENBQUM7SUFDZCxDQUFDO0lBRUQsb0RBQW9EO0lBQ3BELE1BQU0sQ0FBQyxNQUF1QjtRQUM1QixJQUFJLENBQUMsZUFBZSxHQUFHLE1BQU0sQ0FBQztRQUM5QixPQUFPLElBQUksQ0FBQztJQUNkLENBQUM7SUFFRCxvRUFBb0U7SUFDcEUsS0FBSyxDQUFDLEdBQUcsQ0FBQyxPQUFvQjtRQUM1QixNQUFNLFFBQVEsR0FBRyxJQUFJLGlCQUFpQixDQUFDLElBQUksQ0FBQyxLQUFLLENBQUMsQ0FBQztRQUVuRCw0RUFBNEU7UUFDNUUsMkVBQTJFO1FBQzNFLG9FQUFvRTtRQUNwRSxLQUFLLE1BQU0sQ0FBQyxJQUFJLElBQUksQ0FBQyxTQUFTLEVBQUUsQ0FBQztZQUMvQixRQUFRLENBQUMsc0JBQXNCLENBQUMsQ0FBQyxDQUFDLENBQUM7UUFDckMsQ0FBQztRQUVELGdCQUFnQjtRQUNoQixJQUFJLElBQUksQ0FBQyxlQUFlLEVBQUUsQ0FBQztZQUN6QixRQUFRLENBQUMsa0JBQWtCLENBQUMsSUFBSSxDQUFDLGVBQWUsQ0FBQyxDQUFDO1FBQ3BELENBQUM7UUFFRCxNQUFNO1FBQ04sTUFBTSxRQUFRLENBQUMsR0FBRyxDQUFDLE9BQU8sQ0FBQyxDQUFDO1FBRTVCLGVBQWU7UUFDZixNQUFNLFFBQVEsR0FBRyxRQUFRLENBQUMsV0FBVyxFQUFFLENBQUM7UUFDeEMsTUFBTSxNQUFNLEdBQUksSUFBSSxDQUFDLEtBQWEsQ0FBQyxZQUFxRSxDQUFDO1FBQ3pHLE1BQU0sTUFBTSxHQUFHLE1BQU0sQ0FBQyxDQUFDLENBQUMsTUFBTSxDQUFDLFFBQVEsQ0FBQyxXQUFXLElBQUksRUFBRSxDQUFDLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxXQUFXLENBQUM7UUFFbEYsT0FBTztZQUNMLEtBQUssRUFBRSxRQUFRLENBQUMsV0FBVyxJQUFJLEVBQUU7WUFDakMsTUFBTTtZQUNOLGFBQWEsRUFBRSxRQUFRLENBQUMsYUFBYTtZQUNyQyxTQUFTLEVBQUUsUUFBUSxDQUFDLFNBQVMsSUFBSSxFQUFFO1NBQ3BDLENBQUM7SUFDSixDQUFDO0NBQ0YiLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFJ1bkNvbnRleHQgLS0gZDMtc3R5bGUgY2hhaW5hYmxlIHJ1biBjb25maWd1cmF0aW9uLlxuICpcbiAqIFJldHVybmVkIGJ5IGNoYXJ0LnJlY29yZGVyKCkgYW5kIGNoYXJ0LnJlZGFjdCgpLlxuICogQWNjdW11bGF0ZXMgcmVjb3JkZXJzIGFuZCByZWRhY3Rpb24gcG9saWN5LCB0aGVuIGNyZWF0ZXNcbiAqIGEgRmxvd0NoYXJ0RXhlY3V0b3IgaW50ZXJuYWxseSB3aGVuIC5ydW4oKSBpcyBjYWxsZWQuXG4gKlxuICogVGhlIGNoYXJ0IGlzIGltbXV0YWJsZS4gUnVuQ29udGV4dCBpcyBlcGhlbWVyYWwgcGVyLXJ1biBjb25maWcuXG4gKi9cblxuaW1wb3J0IHR5cGUgeyBGbG93Q2hhcnQgfSBmcm9tICcuLi9idWlsZGVyL3R5cGVzLmpzJztcbmltcG9ydCB0eXBlIHsgRmxvd1JlY29yZGVyIH0gZnJvbSAnLi4vZW5naW5lL25hcnJhdGl2ZS90eXBlcy5qcyc7XG5pbXBvcnQgdHlwZSB7IFJ1bk9wdGlvbnMgfSBmcm9tICcuLi9lbmdpbmUvdHlwZXMuanMnO1xuaW1wb3J0IHR5cGUgeyBDb21iaW5lZFJlY29yZGVyIH0gZnJvbSAnLi4vcmVjb3JkZXIvQ29tYmluZWRSZWNvcmRlci5qcyc7XG5pbXBvcnQgdHlwZSB7IFJlZGFjdGlvblBvbGljeSwgU2NvcGVSZWNvcmRlciB9IGZyb20gJy4uL3Njb3BlL3R5cGVzLmpzJztcbmltcG9ydCB7IEZsb3dDaGFydEV4ZWN1dG9yIH0gZnJvbSAnLi9GbG93Q2hhcnRFeGVjdXRvci5qcyc7XG5cbi8qKiBSZXN1bHQgZnJvbSBSdW5Db250ZXh0LnJ1bigpIOKAlCBvd25zIHN0YXRlIGFuZCBvdXRwdXQuICovXG5leHBvcnQgaW50ZXJmYWNlIFJ1blJlc3VsdCB7XG4gIC8qKiBSYXcgc2NvcGUgc3RhdGUgYWZ0ZXIgZXhlY3V0aW9uLiAqL1xuICBzdGF0ZTogUmVjb3JkPHN0cmluZywgdW5rbm93bj47XG4gIC8qKiBNYXBwZWQgb3V0cHV0IHZpYSBjb250cmFjdCBtYXBwZXIgKGlmIGRlY2xhcmVkKS4gKi9cbiAgb3V0cHV0OiB1bmtub3duO1xuICAvKiogRnVsbCBleGVjdXRpb24gdHJlZSBmb3IgZGVidWdnaW5nLiAqL1xuICBleGVjdXRpb25UcmVlOiB1bmtub3duO1xuICAvKiogQ29tbWl0IGxvZyBmb3IgdGltZS10cmF2ZWwuICovXG4gIGNvbW1pdExvZzogdW5rbm93bltdO1xufVxuXG5leHBvcnQgY2xhc3MgUnVuQ29udGV4dDxUT3V0ID0gYW55LCBUU2NvcGUgPSBhbnk+IHtcbiAgcHJpdmF0ZSByZWFkb25seSBjaGFydDogRmxvd0NoYXJ0PFRPdXQsIFRTY29wZT47XG4gIHByaXZhdGUgcmVhZG9ubHkgcmVjb3JkZXJzOiBDb21iaW5lZFJlY29yZGVyW10gPSBbXTtcbiAgcHJpdmF0ZSByZWRhY3Rpb25Qb2xpY3k/OiBSZWRhY3Rpb25Qb2xpY3k7XG5cbiAgY29uc3RydWN0b3IoY2hhcnQ6IEZsb3dDaGFydDxUT3V0LCBUU2NvcGU+KSB7XG4gICAgdGhpcy5jaGFydCA9IGNoYXJ0O1xuICB9XG5cbiAgLyoqXG4gICAqIEF0dGFjaCBhIHJlY29yZGVyLiBSb3V0ZWQgdGhyb3VnaCB0aGUgZXhlY3V0b3IncyBjb21iaW5lZC1hdHRhY2ggbG9naWMgYXRcbiAgICogcnVuIHRpbWUsIHNvIHNjb3BlLCBmbG93LCBBTkQgZW1pdCBjaGFubmVscyBhcmUgYWxsIGRldGVjdGVkIHVuaWZvcm1seSDigJQgYVxuICAgKiByZWNvcmRlciB0aGF0IGltcGxlbWVudHMgb25seSBgb25FbWl0YCAob3IgYW55IG1peCkgbGFuZHMgb24gdGhlIHJpZ2h0XG4gICAqIGNoYW5uZWwocykgZXhhY3RseSBvbmNlLiBDaGFpbmFibGUuXG4gICAqL1xuICByZWNvcmRlcihyOiBTY29wZVJlY29yZGVyIHwgRmxvd1JlY29yZGVyIHwgQ29tYmluZWRSZWNvcmRlcik6IFJ1bkNvbnRleHQ8VE91dCwgVFNjb3BlPiB7XG4gICAgdGhpcy5yZWNvcmRlcnMucHVzaChyIGFzIENvbWJpbmVkUmVjb3JkZXIpO1xuICAgIHJldHVybiB0aGlzO1xuICB9XG5cbiAgLyoqIFNldCByZWRhY3Rpb24gcG9saWN5IGZvciB0aGlzIHJ1bi4gQ2hhaW5hYmxlLiAqL1xuICByZWRhY3QocG9saWN5OiBSZWRhY3Rpb25Qb2xpY3kpOiBSdW5Db250ZXh0PFRPdXQsIFRTY29wZT4ge1xuICAgIHRoaXMucmVkYWN0aW9uUG9saWN5ID0gcG9saWN5O1xuICAgIHJldHVybiB0aGlzO1xuICB9XG5cbiAgLyoqIEV4ZWN1dGUgdGhlIGNoYXJ0IHdpdGggYWNjdW11bGF0ZWQgY29uZmlnLiBSZXR1cm5zIFJ1blJlc3VsdC4gKi9cbiAgYXN5bmMgcnVuKG9wdGlvbnM/OiBSdW5PcHRpb25zKTogUHJvbWlzZTxSdW5SZXN1bHQ+IHtcbiAgICBjb25zdCBleGVjdXRvciA9IG5ldyBGbG93Q2hhcnRFeGVjdXRvcih0aGlzLmNoYXJ0KTtcblxuICAgIC8vIEF0dGFjaCBldmVyeSByZWNvcmRlciB2aWEgdGhlIGNvbWJpbmVkIHJvdXRlciBzbyBzY29wZS9mbG93L2VtaXQgY2hhbm5lbHNcbiAgICAvLyBhcmUgZGV0ZWN0ZWQgYnkgbWV0aG9kIHNoYXBlIChmbG93IHJlY29yZGVycyBhdXRvLWVuYWJsZSBuYXJyYXRpdmU7IGVtaXRcbiAgICAvLyByZWNvcmRlcnMgc2hhcmUgdGhlIHNjb3BlIGNoYW5uZWwgd2l0aCBkZWR1cCDigJQgbm8gZG91YmxlLWF0dGFjaCkuXG4gICAgZm9yIChjb25zdCByIG9mIHRoaXMucmVjb3JkZXJzKSB7XG4gICAgICBleGVjdXRvci5hdHRhY2hDb21iaW5lZFJlY29yZGVyKHIpO1xuICAgIH1cblxuICAgIC8vIFNldCByZWRhY3Rpb25cbiAgICBpZiAodGhpcy5yZWRhY3Rpb25Qb2xpY3kpIHtcbiAgICAgIGV4ZWN1dG9yLnNldFJlZGFjdGlvblBvbGljeSh0aGlzLnJlZGFjdGlvblBvbGljeSk7XG4gICAgfVxuXG4gICAgLy8gUnVuXG4gICAgYXdhaXQgZXhlY3V0b3IucnVuKG9wdGlvbnMpO1xuXG4gICAgLy8gQnVpbGQgcmVzdWx0XG4gICAgY29uc3Qgc25hcHNob3QgPSBleGVjdXRvci5nZXRTbmFwc2hvdCgpO1xuICAgIGNvbnN0IG1hcHBlciA9ICh0aGlzLmNoYXJ0IGFzIGFueSkub3V0cHV0TWFwcGVyIGFzICgoczogUmVjb3JkPHN0cmluZywgdW5rbm93bj4pID0+IHVua25vd24pIHwgdW5kZWZpbmVkO1xuICAgIGNvbnN0IG91dHB1dCA9IG1hcHBlciA/IG1hcHBlcihzbmFwc2hvdC5zaGFyZWRTdGF0ZSB8fCB7fSkgOiBzbmFwc2hvdC5zaGFyZWRTdGF0ZTtcblxuICAgIHJldHVybiB7XG4gICAgICBzdGF0ZTogc25hcHNob3Quc2hhcmVkU3RhdGUgfHwge30sXG4gICAgICBvdXRwdXQsXG4gICAgICBleGVjdXRpb25UcmVlOiBzbmFwc2hvdC5leGVjdXRpb25UcmVlLFxuICAgICAgY29tbWl0TG9nOiBzbmFwc2hvdC5jb21taXRMb2cgfHwgW10sXG4gICAgfTtcbiAgfVxufVxuIl19

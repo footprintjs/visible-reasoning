@@ -1,0 +1,29 @@
+/**
+ * policies.ts — The retention policy family shared by every snapshot-tracking
+ * dial (#14 `readTracking`, #13c-A `writeTracking`).
+ *
+ * RETENTION answers "what does the engine KEEP in its own snapshot state
+ * (`StageSnapshot.stageReads` / `stageWrites`, and therefore the commit
+ * observer's mutations payload) after the moment of the operation?" It is
+ * distinct from DELIVERY — what an observer receives at event time
+ * (`ScopeRecorder.onRead`/`onWrite` always deliver the live value, in every
+ * retention mode).
+ *
+ * ── RFC-001 (deferred observer delivery) mapping ──────────────────────────
+ * RFC-001's capture tier uses the vocabulary `'clone' | 'summary' | 'ref'`.
+ * When its Block 1 lands it builds on THIS module:
+ *
+ *   - RFC capture `'clone'`   ≈ retention `'full'` (alias at the module
+ *     boundary — same semantics: structuredClone at capture time).
+ *   - RFC capture `'summary'` ≈ retention `'summary'` (same marker shapes —
+ *     see `summarize.ts`).
+ *   - RFC capture `'ref'` is DELIVERY-tier only and is NOT implemented here
+ *     — reserved. Retention must never hold live references into engine
+ *     state: retained entries outlive the stage (the execution tree keeps
+ *     them for the whole run), while a `'ref'` is only safe within the
+ *     immutability window of the captured value. Holding one in retention
+ *     would either pin state generations (the #18 leak) or expose
+ *     later-mutated values as if they were point-in-time captures.
+ */
+export {};
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicG9saWNpZXMuanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi8uLi8uLi8uLi9zcmMvbGliL2NhcHR1cmUvcG9saWNpZXMudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUE7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBMEJHIiwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBwb2xpY2llcy50cyDigJQgVGhlIHJldGVudGlvbiBwb2xpY3kgZmFtaWx5IHNoYXJlZCBieSBldmVyeSBzbmFwc2hvdC10cmFja2luZ1xuICogZGlhbCAoIzE0IGByZWFkVHJhY2tpbmdgLCAjMTNjLUEgYHdyaXRlVHJhY2tpbmdgKS5cbiAqXG4gKiBSRVRFTlRJT04gYW5zd2VycyBcIndoYXQgZG9lcyB0aGUgZW5naW5lIEtFRVAgaW4gaXRzIG93biBzbmFwc2hvdCBzdGF0ZVxuICogKGBTdGFnZVNuYXBzaG90LnN0YWdlUmVhZHNgIC8gYHN0YWdlV3JpdGVzYCwgYW5kIHRoZXJlZm9yZSB0aGUgY29tbWl0XG4gKiBvYnNlcnZlcidzIG11dGF0aW9ucyBwYXlsb2FkKSBhZnRlciB0aGUgbW9tZW50IG9mIHRoZSBvcGVyYXRpb24/XCIgSXQgaXNcbiAqIGRpc3RpbmN0IGZyb20gREVMSVZFUlkg4oCUIHdoYXQgYW4gb2JzZXJ2ZXIgcmVjZWl2ZXMgYXQgZXZlbnQgdGltZVxuICogKGBTY29wZVJlY29yZGVyLm9uUmVhZGAvYG9uV3JpdGVgIGFsd2F5cyBkZWxpdmVyIHRoZSBsaXZlIHZhbHVlLCBpbiBldmVyeVxuICogcmV0ZW50aW9uIG1vZGUpLlxuICpcbiAqIOKUgOKUgCBSRkMtMDAxIChkZWZlcnJlZCBvYnNlcnZlciBkZWxpdmVyeSkgbWFwcGluZyDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIBcbiAqIFJGQy0wMDEncyBjYXB0dXJlIHRpZXIgdXNlcyB0aGUgdm9jYWJ1bGFyeSBgJ2Nsb25lJyB8ICdzdW1tYXJ5JyB8ICdyZWYnYC5cbiAqIFdoZW4gaXRzIEJsb2NrIDEgbGFuZHMgaXQgYnVpbGRzIG9uIFRISVMgbW9kdWxlOlxuICpcbiAqICAgLSBSRkMgY2FwdHVyZSBgJ2Nsb25lJ2AgICDiiYggcmV0ZW50aW9uIGAnZnVsbCdgIChhbGlhcyBhdCB0aGUgbW9kdWxlXG4gKiAgICAgYm91bmRhcnkg4oCUIHNhbWUgc2VtYW50aWNzOiBzdHJ1Y3R1cmVkQ2xvbmUgYXQgY2FwdHVyZSB0aW1lKS5cbiAqICAgLSBSRkMgY2FwdHVyZSBgJ3N1bW1hcnknYCDiiYggcmV0ZW50aW9uIGAnc3VtbWFyeSdgIChzYW1lIG1hcmtlciBzaGFwZXMg4oCUXG4gKiAgICAgc2VlIGBzdW1tYXJpemUudHNgKS5cbiAqICAgLSBSRkMgY2FwdHVyZSBgJ3JlZidgIGlzIERFTElWRVJZLXRpZXIgb25seSBhbmQgaXMgTk9UIGltcGxlbWVudGVkIGhlcmVcbiAqICAgICDigJQgcmVzZXJ2ZWQuIFJldGVudGlvbiBtdXN0IG5ldmVyIGhvbGQgbGl2ZSByZWZlcmVuY2VzIGludG8gZW5naW5lXG4gKiAgICAgc3RhdGU6IHJldGFpbmVkIGVudHJpZXMgb3V0bGl2ZSB0aGUgc3RhZ2UgKHRoZSBleGVjdXRpb24gdHJlZSBrZWVwc1xuICogICAgIHRoZW0gZm9yIHRoZSB3aG9sZSBydW4pLCB3aGlsZSBhIGAncmVmJ2AgaXMgb25seSBzYWZlIHdpdGhpbiB0aGVcbiAqICAgICBpbW11dGFiaWxpdHkgd2luZG93IG9mIHRoZSBjYXB0dXJlZCB2YWx1ZS4gSG9sZGluZyBvbmUgaW4gcmV0ZW50aW9uXG4gKiAgICAgd291bGQgZWl0aGVyIHBpbiBzdGF0ZSBnZW5lcmF0aW9ucyAodGhlICMxOCBsZWFrKSBvciBleHBvc2VcbiAqICAgICBsYXRlci1tdXRhdGVkIHZhbHVlcyBhcyBpZiB0aGV5IHdlcmUgcG9pbnQtaW4tdGltZSBjYXB0dXJlcy5cbiAqL1xuXG4vKipcbiAqIEhvdyBhIHRyYWNrZWQgb3BlcmF0aW9uJ3MgdmFsdWUgaXMgcmV0YWluZWQgaW4gdGhlIHBlci1zdGFnZSBzbmFwc2hvdCB2aWV3LlxuICpcbiAqIC0gYCdmdWxsJ2Ag4oCUIGBzdHJ1Y3R1cmVkQ2xvbmVgIHRoZSB2YWx1ZSBhdCB0aGUgbW9tZW50IG9mIHRoZSBvcGVyYXRpb25cbiAqICAgKHRoZSBoaXN0b3JpY2FsIGRlZmF1bHQgZm9yIGJvdGggZGlhbHM7IHBvaW50LWluLXRpbWUsIGRldGFjaGVkIGNvcHkpLlxuICogLSBgJ3N1bW1hcnknYCDigJQgcmV0YWluIGEgY2hlYXAgbWFya2VyICh0eXBlICsgc2l6ZSBwcm94eSArIHNob3J0IHByZXZpZXcpXG4gKiAgIGluc3RlYWQgb2YgdGhlIHZhbHVlLiBPKDEpLWlzaCBwZXIgb3BlcmF0aW9uOyBubyB2YWx1ZSBjbG9uZS5cbiAqIC0gYCdvZmYnYCDigJQgcmV0YWluIG5vdGhpbmcuIFRoZSBvcGVyYXRpb24gaXRzZWxmIGlzIHVuYWZmZWN0ZWQgKHJlYWRzXG4gKiAgIHN0aWxsIHJldHVybiB2YWx1ZXMsIHdyaXRlcyBzdGlsbCBjb21taXQpOyBvbmx5IHRoZSBzbmFwc2hvdCBib29ra2VlcGluZ1xuICogICBpcyBza2lwcGVkLlxuICpcbiAqIGBSZWFkVHJhY2tpbmdNb2RlYCAoIzE0KSBhbmQgYFdyaXRlVHJhY2tpbmdNb2RlYCAoIzEzYy1BKSBhcmUgcHVibGljXG4gKiBhbGlhc2VzIG9mIHRoaXMgdHlwZSDigJQgc2VlIGBtZW1vcnkvdHlwZXMudHNgLlxuICovXG5leHBvcnQgdHlwZSBSZXRlbnRpb25Qb2xpY3kgPSAnZnVsbCcgfCAnc3VtbWFyeScgfCAnb2ZmJztcbiJdfQ==

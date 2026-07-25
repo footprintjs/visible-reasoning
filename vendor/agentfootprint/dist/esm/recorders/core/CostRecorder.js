@@ -1,0 +1,19 @@
+/**
+ * CostRecorder — forwards `agentfootprint.cost.*` emits to the dispatcher.
+ *
+ * Pattern: Factory (GoF) returning an EmitBridge instance.
+ * Role:    Bridges `cost.tick` + `cost.limit_hit` emits from LLMCall / Agent
+ *          stages (via `emitCostTick`) to the EventDispatcher so typed
+ *          consumer listeners fire.
+ * Emits:   agentfootprint.cost.tick / cost.limit_hit
+ */
+import { EmitBridge } from './EmitBridge.js';
+export function costRecorder(options) {
+    return new EmitBridge({
+        id: options.id ?? 'agentfootprint.cost-recorder',
+        prefix: 'agentfootprint.cost.',
+        dispatcher: options.dispatcher,
+        getRunContext: options.getRunContext,
+    });
+}
+//# sourceMappingURL=CostRecorder.js.map

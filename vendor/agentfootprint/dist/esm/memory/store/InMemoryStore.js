@@ -1,0 +1,196 @@
+import { identityNamespace } from '../identity/index.js';
+import { cosineSimilarity } from '../embedding/cosine.js';
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 1000;
+export class InMemoryStore {
+    /**
+     * Top-level namespace → slot. Using `Map` rather than a plain object
+     * avoids prototype-pollution surface AND preserves insertion order
+     * (needed for deterministic list pagination).
+     */
+    namespaces = new Map();
+    slot(identity) {
+        const ns = identityNamespace(identity);
+        let s = this.namespaces.get(ns);
+        if (!s) {
+            s = {
+                entries: new Map(),
+                seenSignatures: new Set(),
+                feedbackStats: new Map(),
+            };
+            this.namespaces.set(ns, s);
+        }
+        return s;
+    }
+    /** True if the entry's TTL has elapsed. Centralized so both `get` and `list` agree. */
+    isExpired(entry) {
+        return typeof entry.ttl === 'number' && entry.ttl <= Date.now();
+    }
+    async get(identity, id) {
+        const slot = this.slot(identity);
+        const entry = slot.entries.get(id);
+        if (!entry)
+            return null;
+        if (this.isExpired(entry)) {
+            // TTL expired — evict lazily so the memory footprint follows usage.
+            slot.entries.delete(id);
+            return null;
+        }
+        // Bump decay signals — every read counts as an access. This is a write
+        // via copy (MemoryEntry is immutable in spirit); we reassign the map.
+        const bumped = {
+            ...entry,
+            accessCount: entry.accessCount + 1,
+            lastAccessedAt: Date.now(),
+        };
+        slot.entries.set(id, bumped);
+        return bumped;
+    }
+    async put(identity, entry) {
+        const slot = this.slot(identity);
+        slot.entries.set(entry.id, entry);
+    }
+    /**
+     * Batched write — resolves the slot once and writes each entry into the
+     * same Map. Saves N-1 slot lookups vs. calling `put()` in a loop, and
+     * gives network-backed adapters a place to pipeline round-trips.
+     */
+    async putMany(identity, entries) {
+        if (entries.length === 0)
+            return;
+        const slot = this.slot(identity);
+        for (const entry of entries) {
+            slot.entries.set(entry.id, entry);
+        }
+    }
+    async putIfVersion(identity, entry, expectedVersion) {
+        const slot = this.slot(identity);
+        const existing = slot.entries.get(entry.id);
+        // First-write path: expectedVersion === 0 means "I expect no prior entry".
+        if (!existing || this.isExpired(existing)) {
+            if (expectedVersion === 0) {
+                slot.entries.set(entry.id, entry);
+                return { applied: true };
+            }
+            return { applied: false };
+        }
+        if (existing.version !== expectedVersion) {
+            return { applied: false, currentVersion: existing.version };
+        }
+        slot.entries.set(entry.id, entry);
+        return { applied: true };
+    }
+    async list(identity, options) {
+        const slot = this.slot(identity);
+        const limit = Math.min(options?.limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+        const tierFilter = options?.tiers ? new Set(options.tiers) : undefined;
+        // Collect non-expired matching entries, sorted by updatedAt desc
+        // (most-recently-updated first — matches typical UX expectations).
+        const all = [];
+        for (const entry of slot.entries.values()) {
+            if (this.isExpired(entry))
+                continue;
+            if (tierFilter && (!entry.tier || !tierFilter.has(entry.tier)))
+                continue;
+            all.push(entry);
+        }
+        all.sort((a, b) => b.updatedAt - a.updatedAt);
+        // Cursor is the integer offset into the sorted array. Not terribly
+        // efficient for huge namespaces, but this is the reference store —
+        // real backends (DynamoDB, Postgres) use their native cursors.
+        const offset = options?.cursor ? parseInt(options.cursor, 10) : 0;
+        const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
+        const page = all.slice(safeOffset, safeOffset + limit);
+        const next = safeOffset + page.length;
+        return {
+            entries: page,
+            cursor: next < all.length ? String(next) : undefined,
+        };
+    }
+    async delete(identity, id) {
+        const slot = this.slot(identity);
+        slot.entries.delete(id);
+        slot.feedbackStats.delete(id);
+        // Note: we do NOT purge from `seenSignatures` — the identity still
+        // recognizes the content even if the full entry has been deleted.
+    }
+    async seen(identity, signature) {
+        return this.slot(identity).seenSignatures.has(signature);
+    }
+    async recordSignature(identity, signature) {
+        this.slot(identity).seenSignatures.add(signature);
+    }
+    async feedback(identity, id, usefulness) {
+        // Reject non-finite values — a NaN / Infinity in the aggregate
+        // permanently poisons every future read from that slot.
+        if (!Number.isFinite(usefulness))
+            return;
+        const slot = this.slot(identity);
+        // Clamp to the documented range so a rogue caller can't skew the mean.
+        const clamped = Math.max(-1, Math.min(1, usefulness));
+        const existing = slot.feedbackStats.get(id);
+        if (existing) {
+            slot.feedbackStats.set(id, {
+                sum: existing.sum + clamped,
+                count: existing.count + 1,
+            });
+        }
+        else {
+            slot.feedbackStats.set(id, { sum: clamped, count: 1 });
+        }
+    }
+    async getFeedback(identity, id) {
+        const stats = this.slot(identity).feedbackStats.get(id);
+        if (!stats || stats.count === 0)
+            return null;
+        return { average: stats.sum / stats.count, count: stats.count };
+    }
+    async forget(identity) {
+        this.namespaces.delete(identityNamespace(identity));
+    }
+    /**
+     * O(n) linear scan over identity-scoped entries. Fine for dev / tests
+     * — for production, plug in a real vector backend (pgvector, Pinecone,
+     * Qdrant) that implements the same interface.
+     *
+     * Semantics per the `MemoryStore.search?` contract:
+     *   - Entries without `embedding` are skipped (ignored, not errored).
+     *   - Entries with `embedding.length` mismatching the query are
+     *     skipped (cosine would throw — silent-skip avoids poisoning top-k).
+     *   - TTL-expired entries are omitted.
+     *   - Optional `tiers` / `minScore` / `embedderId` filters applied.
+     *   - Returns descending by score; ties broken by id for determinism.
+     */
+    async search(identity, query, options) {
+        const slot = this.slot(identity);
+        const k = options?.k ?? 10;
+        const tierFilter = options?.tiers ? new Set(options.tiers) : undefined;
+        const minScore = options?.minScore;
+        const embedderId = options?.embedderId;
+        const scored = [];
+        for (const entry of slot.entries.values()) {
+            if (this.isExpired(entry))
+                continue;
+            if (tierFilter && (!entry.tier || !tierFilter.has(entry.tier)))
+                continue;
+            const emb = entry.embedding;
+            if (!emb || !Array.isArray(emb) || emb.length === 0)
+                continue;
+            if (emb.length !== query.length)
+                continue;
+            if (embedderId && entry.embeddingModel && entry.embeddingModel !== embedderId)
+                continue;
+            const score = cosineSimilarity(emb, query);
+            if (minScore !== undefined && score < minScore)
+                continue;
+            scored.push({ entry: entry, score });
+        }
+        scored.sort((a, b) => {
+            if (b.score !== a.score)
+                return b.score - a.score;
+            return a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0;
+        });
+        return scored.slice(0, k);
+    }
+}
+//# sourceMappingURL=InMemoryStore.js.map
