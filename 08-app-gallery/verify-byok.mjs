@@ -5,15 +5,22 @@
 // runs on every change: it re-generates out/byok/ from scratch and then checks
 // the properties that make the custody claim true as a matter of construction —
 // the import map resolves, nothing key-shaped was written into the artifact, the
-// page has no own-origin data path and no query-string configuration, and the
+// pages have no own-origin data path and no query-string configuration, and the
 // model badge says the same honest thing in every mode.
+//
+// The artifact is a BUNDLE, not a page: index.html is a gallery home (cards, the
+// custody contract, the vocabulary — and no key input at all), and each desk is
+// its own page. Every custody assertion below therefore runs over EVERY page
+// that can hold a key, and the home gets its own set: relative links only, no
+// script, no key field, and the honest disabled card for the desk a browser
+// cannot run.
 //
 //   node 08-app-gallery/verify-byok.mjs
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generate, serve } from './byok.js';
-import { buildAppPage, buildGalleryPage } from './lib/page.js';
+import { PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
 import { trip } from './apps/trip.js';
 import { APPS } from './apps/index.js';
 
@@ -36,10 +43,29 @@ function* walk(dir) {
 }
 
 // ═══ generate fresh ═════════════════════════════════════════════════════════
-const { imports } = generate({ quiet: true });
-const html = readFileSync(join(outDir, 'index.html'), 'utf8');
-const boot = html.slice(html.lastIndexOf('<script type="module">'));
+const { imports, pages } = generate({ quiet: true });
+const landing = readFileSync(join(outDir, 'index.html'), 'utf8');
+// The desk pages, by the file names the home links at. Read back from DISK (not
+// from the generator's return) so what is asserted is what a visitor would be
+// served — a page the generator built but never wrote would fail here.
+const DESKS = ['trip', 'movies'];
+const deskPages = DESKS.map((id) => ({ id, file: `${id}.html`, html: readFileSync(join(outDir, `${id}.html`), 'utf8') }));
+const bootOf = (h) => h.slice(h.lastIndexOf('<script type="module">'));
+// The desk that carries every page-script property; the checks that are about
+// the SCRIPT (one shared generator) run once over it and are proven identical
+// across desks by the byte-shape check right below.
+const boot = bootOf(deskPages[0].html);
 console.log('=== BYOK VERIFY ===');
+
+ok(Object.keys(pages).sort().join(' ') === 'index.html movies.html trip.html',
+  'the bundle is a home plus one page per desk', Object.keys(pages).join(', '));
+for (const d of deskPages) {
+  ok(pages[d.file] === d.html, `[${d.id}] the returned page is byte-identical to the file on disk`);
+}
+// Same generator, same guarantees: everything the boot script promises is
+// promised on BOTH desks, so a desk-specific regression cannot hide.
+ok(DESKS.every((id) => bootOf(deskPages.find((d) => d.id === id).html).includes('__BYOK_TEST__')),
+  'every desk page carries the same generated boot script');
 
 // ═══ (a) the import map resolves ════════════════════════════════════════════
 const unresolved = Object.entries(imports)
@@ -78,18 +104,21 @@ if (existsSync(envPath)) {
   console.log('SKIP  owner-key check — no .env present');
 }
 
-ok(!boot.includes('process.env'), 'the page script never reads an environment variable');
-ok(!/fetch\(\s*['"`]\//.test(boot) && !boot.includes("'/app/"),
-  'the page has no own-origin data path (no fetch to our server, no /app/ API prefix)');
-ok(!/location\.search|URLSearchParams|hash\b/.test(boot),
-  'no query-string / fragment configuration exists (a crafted link cannot redirect a key-bearing call)');
-ok(boot.includes('__BYOK_TEST__') && boot.includes('apiUrlOverride'),
-  'the only API-base override is the in-page test hook, read lazily at provider construction');
-// The page is React-rendered from an empty <div id="root">, so the only way a
-// form could exist is createElement('form') — assert it never happens.
-ok(!boot.includes("e('form'") && !boot.includes("createElement('form'")
-  && !/<body>[\s\S]*?<div id="root"><\/div>\s*<form/.test(html),
-  'the key field is not inside a <form> — no submit default that could put it in a URL');
+for (const d of deskPages) {
+  const b = bootOf(d.html);
+  ok(!b.includes('process.env'), `[${d.id}] the page script never reads an environment variable`);
+  ok(!/fetch\(\s*['"`]\//.test(b) && !b.includes("'/app/"),
+    `[${d.id}] the page has no own-origin data path (no fetch to our server, no /app/ API prefix)`);
+  ok(!/location\.search|URLSearchParams|hash\b/.test(b),
+    `[${d.id}] no query-string / fragment configuration exists (a crafted link cannot redirect a key-bearing call)`);
+  ok(b.includes('__BYOK_TEST__') && b.includes('apiUrlOverride'),
+    `[${d.id}] the only API-base override is the in-page test hook, read lazily at provider construction`);
+  // The page is React-rendered from an empty <div id="root">, so the only way a
+  // form could exist is createElement('form') — assert it never happens.
+  ok(!b.includes("e('form'") && !b.includes("createElement('form'")
+    && !/<body>[\s\S]*?<div id="root"><\/div>\s*<form/.test(d.html),
+    `[${d.id}] the key field is not inside a <form> — no submit default that could put it in a URL`);
+}
 
 // ═══ (c) the right provider actually shipped ════════════════════════════════
 const providerPath = join(outDir, 'vendor/agentfootprint/dist/esm/adapters/llm/BrowserAnthropicProvider.js');
@@ -110,6 +139,11 @@ ok(boot.includes("keyTail = k.slice(-4)") || boot.includes('slice(-4)'),
   'only the last four characters are ever shown');
 
 // ═══ (d) the custody copy + the three-state badge ═══════════════════════════
+// The contract itself — every sentence that makes the custody claim. It is
+// asserted on EVERY page of the bundle: the home (where a visitor decides
+// whether to bring a key at all) and each desk (where they actually paste it).
+// A page that can hold a key without carrying the contract is the failure this
+// list exists to catch.
 const mustSay = [
   'Your key stays in this tab.',
   'This is a live public demo — it runs entirely in your browser.',
@@ -118,17 +152,119 @@ const mustSay = [
   'our demo server never sees your key',
   'there is no server code that',
   'the only requests that carry your key go to',
-  'Remember my key in this tab (survives reload; forgotten when the tab closes)',
-  'Forget my key',
-  'the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo',
 ];
-for (const phrase of mustSay) ok(html.includes(phrase), `custody copy present: “${phrase.slice(0, 52)}…”`);
+for (const page of [{ id: 'home', html: landing }, ...deskPages]) {
+  for (const phrase of mustSay) {
+    ok(page.html.includes(phrase), `[${page.id}] custody copy present: “${phrase.slice(0, 46)}…”`);
+  }
+}
+// Where the key is actually armed — the checkbox and the forget button live on
+// the desks, and the checkbox now also answers "does it survive the trip back
+// to the gallery?", because on this bundle that trip is one click away.
+const CHECKBOX = 'Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)';
+for (const d of deskPages) {
+  ok(d.html.includes(CHECKBOX), `[${d.id}] the remember checkbox says exactly what it does across a same-tab trip`);
+  ok(d.html.includes('Forget my key'), `[${d.id}] “Forget my key” is on the desk that holds it`);
+  ok(d.html.includes('going back to the gallery clears it'),
+    `[${d.id}] an unremembered key is honestly labeled as page-scoped`);
+}
+// The scope fact — why two desks and not three — lives where the third card is.
+ok(landing.includes('the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo'),
+  '[home] the honest scope line is on the gallery, beside the disabled card');
 
-ok(html.includes("'data-testid': 'model-badge'"), 'the BYOK page renders a model badge');
-ok(html.includes('— direct from your browser · '), 'the badge says the call goes direct from the browser');
-ok(html.includes("'no key yet'"), 'the badge has an honest no-key state');
-ok(html.includes(MODEL), `the badge names the real model id (${MODEL})`);
-ok(!html.includes('scripted mock'), 'the BYOK page never claims a mock — it is live-only by definition');
+for (const d of deskPages) {
+  ok(d.html.includes("'data-testid': 'model-badge'"), `[${d.id}] the desk renders a model badge`);
+  ok(d.html.includes('— direct from your browser · '), `[${d.id}] the badge says the call goes direct from the browser`);
+  ok(d.html.includes("'no key yet'"), `[${d.id}] the badge has an honest no-key state`);
+  ok(d.html.includes(MODEL), `[${d.id}] the badge names the real model id (${MODEL})`);
+  ok(!d.html.includes('scripted mock'), `[${d.id}] never claims a mock — the desk is live-only by definition`);
+}
+
+// ═══ (e) THE GALLERY HOME ═══════════════════════════════════════════════════
+// index.html is a landing, not a desk: it teaches and it routes. Two properties
+// make that safe — it takes no key (nothing to mishandle) and it hardcodes no
+// origin (so the same folder is correct at /visible-reasoning/, at a root, and
+// off file://).
+ok(landing.includes('<h1>Bring your own key · the app gallery</h1>'), '[home] the header names the page');
+ok(!/<script/i.test(landing), '[home] carries no script at all — a landing that cannot misbehave');
+ok(!landing.includes('type="password"') && !landing.includes('byok-key') && !landing.includes('byok-arm'),
+  '[home] has NO key input — arming happens on the desk the visitor picked');
+ok(!/sessionStorage|localStorage/.test(landing), '[home] touches no storage');
+ok(landing.includes('data-testid="landing-custody"'), '[home] the custody explainer card is on the home');
+
+// The cards, and where they go.
+for (const id of DESKS) {
+  const app = APPS.find((a) => a.id === id);
+  ok(landing.includes(`href="./${id}.html"`), `[home] the ${id} card links at ./${id}.html (relative)`);
+  ok(landing.includes(`<h2 class="ag-title">${app.title}</h2>`), `[home] the ${id} card names the desk`);
+  for (const s of app.starters) {
+    ok(landing.includes(s.replace(/"/g, '&quot;')), `[home] the ${id} card shows the real starter “${s.slice(0, 34)}…”`);
+  }
+}
+ok((landing.match(/Open the desk →/g) || []).length === DESKS.length,
+  '[home] every runnable desk has a call to action', String((landing.match(/Open the desk →/g) || []).length));
+for (const line of [
+  `model: ${MODEL} — on your key, streamed token by token`,
+  'browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between',
+  'statuses and reply arrive as they happen',
+  'every reply: visible reason → re-run without a source → fork',
+]) ok(landing.includes(line), `[home] capability line: “${line.slice(0, 44)}…”`);
+
+// The desk that cannot run in a browser: present, disabled, and it says why.
+ok(landing.includes('class="ag-card off"'), '[home] the stock desk gets a card, disabled — not a deletion');
+ok(!landing.includes('href="./stocks.html"') && !existsSync(join(outDir, 'stocks.html')),
+  '[home] nothing links at a stock page, and none was generated');
+ok(landing.includes('The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Run it yourself with npm run gallery:live.'),
+  '[home] the disabled card says why, and where the desk does run');
+ok(landing.includes('Server-only — run it locally'), '[home] the disabled card’s CTA is honest about its state');
+
+// The vocabulary, single-sourced from lib/page.js's table — and filtered to what
+// THIS bundle can produce: nothing here is scripted, so that word never appears.
+const guide = landing.slice(landing.indexOf('id="guide"'), landing.indexOf('</section>', landing.indexOf('id="guide"')));
+ok(guide.includes('How to read the demo'), '[home] the guide section is on the home');
+for (const state of ['live', 'fallback', 'synthetic', 'not consulted']) {
+  const h = PROVENANCE_HELP.find((x) => x.state === state);
+  ok(guide.includes(h.label) && guide.includes(h.what),
+    `[home] #guide carries the “${h.label}” definition byte-equal from PROVENANCE_HELP`);
+}
+for (const cls of ['cd-dot live', 'cd-dot fallback', 'cd-dot synthetic', 'cd-dot notconsulted']) {
+  ok(guide.includes(`class="${cls}"`), `[home] #guide paints a real “${cls}” dot (same classes as a desk)`);
+}
+// The body, not the stylesheet: the shared skin defines a paint for every
+// verdict (it is one file), but nothing on this page may CLAIM one it cannot
+// produce. Rendered content is where a claim lives.
+const landingBody = landing.slice(landing.indexOf('<body>'));
+ok(!landingBody.includes('scripted'),
+  '[home] nothing rendered says “scripted” — no source in this bundle is');
+ok(landing.includes('github.com/footprintjs/visible-reasoning'), '[home] the source link is on the page');
+
+// ═══ (f) same-tab navigation, without losing anything silently ══════════════
+const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';
+for (const d of deskPages) {
+  const b = bootOf(d.html);
+  ok(b.includes("href: './index.html'"), `[${d.id}] “← gallery” points at the bundle’s own home, relatively`);
+  ok(b.includes("'data-testid': 'back-to-gallery'") && b.includes("'← gallery'"),
+    `[${d.id}] the back link is labeled for what it is`);
+  ok(!/href: '\.\/index\.html', onClick: onLeave,\s*\n?\s*'data-testid': 'back-to-gallery' \}[^)]*target/.test(b)
+    && !b.includes("href: './index.html', target"),
+    `[${d.id}] the gallery opens in the SAME tab`);
+  ok(b.includes('onClick: onLeave'), `[${d.id}] leaving runs the guard`);
+  ok(b.includes(LEAVE_CONFIRM), `[${d.id}] the guard's sentence names both costs — the conversation and the key`);
+  ok(/function hasConversation\(\)/.test(b) && /if \(!hasConversation\(\)\) return;/.test(b),
+    `[${d.id}] the guard fires only when there is a conversation to lose`);
+  ok(b.includes('survives reload and the trip back to the gallery'),
+    `[${d.id}] the key-travel promise is stated where the choice is made`);
+}
+
+// ═══ (g) no absolute paths anywhere — the subpath guarantee ═════════════════
+// One escaped path is invisible at a domain root and a 404 under
+// /visible-reasoning/, which is exactly where this bundle is published.
+const ABSOLUTE = /(?:href|src)="\/(?!\/)/;
+for (const page of [{ id: 'home', html: landing }, ...deskPages]) {
+  ok(!ABSOLUTE.test(page.html), `[${page.id}] no absolute-path href/src — the page is subpath- and file://-safe`);
+}
+ok(Object.values(imports).every((t) => t.startsWith('./')),
+  'every import-map target is relative', `${Object.keys(imports).length} specifiers`);
 
 // ═══ the desk pages' badge, both modes (no live run needed) ═════════════════
 const deskData = (model) => ({

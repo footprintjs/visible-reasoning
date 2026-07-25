@@ -310,9 +310,11 @@ GALLERY_FORCE_FALLBACK=1 npm run gallery:live   # offline drill: every source fa
 **→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
 
 A live public demo of the two desks — trip advisor and movie desk — running on
-real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own Anthropic API
-key, ask a question, and see the visible reason, the verified what-if re-run and
-the fork, exactly as the paper describes them.
+real keyless data (Open-Meteo, Wikipedia, iTunes). The home is a gallery: read
+where your key goes, pick a desk from the cards, paste your key there, and see
+the visible reason, the verified what-if re-run and the fork, exactly as the
+paper describes them. (The stock desk gets a card too, disabled — the SEC's
+servers don't allow browser calls, and the card says so rather than pretending.)
 
 **It runs entirely in your browser. Your key goes only to Anthropic; the site's
 host (GitHub Pages) never receives it.** GitHub Pages hands out static files and
@@ -326,9 +328,12 @@ machine on `http://localhost:4176` — same files, same behaviour, no host at al
 
 ### How it works
 
-The app gallery has a bring-your-own-key page: paste your Anthropic API key and
-chat with the trip advisor and the movie desk — visible reasons, verified
+The app gallery has a bring-your-own-key bundle: a gallery home (`index.html`)
+whose cards open one page per desk (`trip.html`, `movies.html`). Paste your
+Anthropic API key on the desk you picked and chat — visible reasons, verified
 what-if re-runs and forks included — with everything running in your browser.
+Every link is relative, so the same folder is correct at
+`/visible-reasoning/`, at a domain root, or off a local file server.
 
 **Your key stays in your tab.** Every Claude call goes straight from your
 browser to `api.anthropic.com` (agentfootprint's browser provider); the tools
@@ -352,9 +357,16 @@ python3 -m http.server 4176 -d 08-app-gallery/out/byok
 platform rule; use any dumb file server, including GitHub Pages.)
 
 Your key is kept in a page variable only. Tick "remember my key in this tab"
-and it is kept in `sessionStorage` until the tab closes; "Forget my key"
-erases it instantly. It is never sent to us, never logged, never in a URL.
-`npm run verify:byok` re-generates the page and asserts all of that.
+and it is kept in `sessionStorage` until the tab closes — which is also what
+carries it across the trip back to the gallery and into the other desk; leave it
+unticked and the key lives in that one page only. "Forget my key" erases it
+instantly. It is never sent to us, never logged, never in a URL.
+`npm run verify:byok` re-generates the bundle and asserts all of that, on every
+page that can hold a key.
+
+Leaving a desk for the gallery is a real page load, so the conversation ends
+with it — the "← gallery" link asks first, but only once there is something to
+lose.
 
 Honest scope: two desks, not three. The SEC's servers don't allow browser
 calls, so the stock desk runs only in the server demo (`npm run gallery:live`).

@@ -84,8 +84,10 @@ export const PROVENANCE_EXAMPLE =
  * THE server-side twin of the browser's provDotClass(). The landing's guide is
  * rendered at BUILD time, so it needs the same table the page script gets —
  * this is the one function that gives it, and it reads the same object.
+ * Exported because the BYOK landing (lib/byok-page.js) paints its cards and its
+ * guide at build time too, and must not invent a second mapping.
  */
-const provDotClass = (state) => `cd-dot ${PROVENANCE_DOT_CLASS[state] || 'unknown'}`;
+export const provDotClass = (state) => `cd-dot ${PROVENANCE_DOT_CLASS[state] || 'unknown'}`;
 
 /**
  * The legend + its explanation dialog, as CSS. Imported by BOTH page shells so
@@ -362,10 +364,13 @@ const SKIN = `
 const svg = (body) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" `
   + `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
-const ICON = {
+export const ICON = {
   // ✦ model — a chip
   model: svg('<rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4'
     + 'M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/>'),
+  // → browser-direct — a window with an arrow leaving it (the BYOK key path)
+  direct: svg('<path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/>'
+    + '<path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/>'),
   // ⌁ tools — a plug
   tools: svg('<path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2v4.3"/>'),
   // ≋ streaming — three offset waves
@@ -406,72 +411,12 @@ export const BUTTON_HELP = [
     what: 'forks a new session from the what-if reply; the ignored source stays ignored for every later turn' },
 ];
 
-// ─── THE CARDS LANDING PAGE ────────────────────────────────────────────────
-/**
- * @param apps  the app packs, in gallery order
- * @param opts.live  true only when the real MCP client is serving the tools
- *   (stdio subprocess → mcp-server.js). Under the default `npm run gallery` the
- *   tools come from agentfootprint's in-memory mockMcpClient — no subprocess and
- *   no protocol frames — so the card must NOT claim MCP. Same honesty rule as
- *   every tool sentence: the label names what actually happened.
- * @param opts.model  the model id live turns actually send. Shown only when
- *   `live` — a mock desk calls no model, and the card says exactly that rather
- *   than borrowing a real model's name.
- */
-export function buildGalleryPage(apps, { live = false, model = null } = {}) {
-  // The capability strip, per card. Every line is build-honest: a mock build
-  // names no model and claims no MCP, because neither one happened.
-  const capLines = [
-    { icon: ICON.model, text: live && model ? `model: ${model} — streamed token by token` : 'scripted mock — no model, no network' },
-    { icon: ICON.tools, text: live ? 'tools served over MCP (real protocol frames)' : 'scripted mock tools — no MCP server' },
-    { icon: ICON.stream, text: live ? 'statuses and reply arrive as they happen' : 'real event order, paced for reading' },
-    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
-  ];
-  const caps = capLines.map((c) => `
-        <span class="ag-cap">${c.icon}<span>${esc(c.text)}</span></span>`).join('');
-
-  const cards = apps.map((app) => {
-    // The card dot IS the guide dot: same table, same class function, and it
-    // reports what THIS build can actually do — live tools on a live build,
-    // scripted on a mock one, synthetic where the data is invented by design.
-    const tools = app.tools.map((t) => {
-      const state = t.alwaysSynthetic ? 'synthetic' : (live ? 'live' : 'scripted');
-      return `
-        <span class="ag-tool" title="${esc(t.description)}">
-          <span class="${provDotClass(state)}"></span>${esc(t.legendLabel)}
-        </span>`;
-    }).join('');
-    const chips = app.starters.map((s) => `<span class="ag-chip">${esc(s)}</span>`).join('');
-    return `
-    <a class="ag-card" data-app="${esc(app.id)}" href="./${esc(app.id)}.html" style="--accent: ${esc(app.accent)}; --accent-dk: ${esc(app.accentDark)}">
-      <span class="ag-rule"></span>
-      <h2 class="ag-title">${esc(app.title)}</h2>
-      <p class="ag-tag">${esc(app.tagline)}</p>
-      <div class="ag-tools">${tools}</div>
-      <div class="ag-caps">${caps}</div>
-      <div class="ag-chips">${chips}</div>
-      <span class="ag-cta">Open the desk →</span>
-    </a>`;
-  }).join('');
-
-  // The vocabulary section — rendered from the SAME table the desks' dots and
-  // the BYOK dialog read. A definition here and a dot on a desk cannot drift.
-  const defs = PROVENANCE_HELP.map((h) => `
-      <div class="cd-help-item">
-        <span class="${provDotClass(h.state)}"></span>
-        <span><b>${esc(h.label)}</b> — ${esc(h.what)}</span>
-      </div>`).join('');
-
-  const buttons = BUTTON_HELP.map((b) => `
-      <div class="ag-btn-item">
-        <span class="ag-btn-head">${b.icon}<span class="ag-fakebtn${b.solid ? ' solid' : ''}">${esc(b.name)}</span></span>
-        <span class="ag-btn-what">${esc(b.what)}</span>
-      </div>`).join('');
-
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The app gallery — one visible-reason machine, three apps</title>
-<style>${SKIN}
+// ─── THE LANDING'S DESIGN LANGUAGE, SHARED ─────────────────────────────────
+// Two landings exist — the local gallery (below) and the BYOK gallery
+// (lib/byok-page.js). They are the same page shape with different truths, so
+// the CSS, the card and the guide section live HERE and are imported there.
+// Forking them would let a card on one landing drift from a card on the other.
+export const GALLERY_CSS = `
   .ag-wrap { max-width: 1040px; margin: 0 auto; padding: 46px 22px 60px; }
   .ag-head { text-align: center; margin: 0 0 34px; }
   .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
@@ -481,7 +426,7 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
   .ag-card { display: flex; flex-direction: column; text-decoration: none; color: inherit;
     border: 1px solid var(--line); border-radius: 14px; padding: 0 18px 18px; background: var(--bg);
     overflow: hidden; transition: box-shadow .18s ease, transform .18s ease; }
-  .ag-card:hover { box-shadow: 0 8px 26px rgba(40,30,20,.10); transform: translateY(-2px); }
+  a.ag-card:hover { box-shadow: 0 8px 26px rgba(40,30,20,.10); transform: translateY(-2px); }
   .ag-rule { display: block; height: 4px; margin: 0 -18px 16px; background: var(--accent); }
   .ag-title { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
   .ag-tag { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
@@ -497,7 +442,7 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
     border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
   .ag-cta { margin-top: auto; align-self: flex-start; font-size: 13px; font-weight: 700;
     color: #fff; background: var(--accent); border-radius: 999px; padding: 8px 16px; }
-  .ag-card:hover .ag-cta { background: var(--accent-dk); }
+  a.ag-card:hover .ag-cta { background: var(--accent-dk); }
 
   /* the program notes: how to read the demo, what the buttons do, take-it-home */
   .ag-sec { margin: 34px auto 0; max-width: 760px; }
@@ -525,7 +470,118 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
 
   .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
   .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-${PROVENANCE_CSS}
+`;
+
+/**
+ * ONE gallery card. Both landings render THIS — the local gallery's live/mock
+ * desks and the BYOK gallery's browser desks, including the one that honestly
+ * cannot run in a browser at all.
+ *
+ * @param o.app    a page-safe app slice (id/title/tagline/accent/tools/starters)
+ * @param o.caps   the capability strip, already icon+text — each landing owns
+ *                 its own truths here (an MCP subprocess is not a browser fetch)
+ * @param o.dotState  tool → provenance state this build can honestly claim
+ * @param o.href   where the card goes; null makes it a non-link (a dead card
+ *                 would be worse than a card that says why it is dead)
+ * @param o.note   the honest reason a card is not a link
+ */
+export function galleryCard({ app, caps, dotState = () => 'scripted', href = null, dataApp = false, cta = 'Open the desk →', note = null }) {
+  // Empty rows are omitted, not rendered hollow: a card with no tool dots and no
+  // starters (the desk that cannot run here) must not carry the gaps where they
+  // would have been.
+  const tools = (app.tools ?? []).map((t) => `
+        <span class="ag-tool" title="${esc(t.description)}">
+          <span class="${provDotClass(dotState(t))}"></span>${esc(t.legendLabel)}
+        </span>`).join('');
+  const chips = (app.starters ?? []).map((s) => `<span class="ag-chip">${esc(s)}</span>`).join('');
+  const capStrip = caps.map((c) => `
+        <span class="ag-cap">${c.icon}<span>${esc(c.text)}</span></span>`).join('');
+  const row = (cls, body) => (body ? `
+      <div class="${cls}">${body}</div>` : '');
+  const tag = href ? 'a' : 'div';
+  const attrs = [
+    `class="ag-card${href ? '' : ' off'}"`,
+    dataApp ? `data-app="${esc(app.id)}"` : '',
+    href ? `href="${esc(href)}"` : '',
+    `style="--accent: ${esc(app.accent)}; --accent-dk: ${esc(app.accentDark)}"`,
+  ].filter(Boolean).join(' ');
+  return `
+    <${tag} ${attrs}>
+      <span class="ag-rule"></span>
+      <h2 class="ag-title">${esc(app.title)}</h2>
+      <p class="ag-tag">${esc(app.tagline)}</p>${note ? `
+      <p class="ag-cardnote">${esc(note)}</p>` : ''}${row('ag-tools', tools)}${row('ag-caps', capStrip)}${row('ag-chips', chips)}
+      <span class="ag-cta">${esc(cta)}</span>
+    </${tag}>`;
+}
+
+/**
+ * "How to read the demo" — the vocabulary section, rendered from the SAME table
+ * the desks' dots and the BYOK dialog read. A definition here and a dot on a
+ * desk cannot drift apart.
+ *
+ * @param states  the verdicts THIS build can honestly produce. The local
+ *   gallery shows all five; the BYOK gallery has no scripted source anywhere,
+ *   so it must not teach a word its desks can never say.
+ */
+export function guideSection(states = PROVENANCE_HELP.map((h) => h.state)) {
+  const defs = PROVENANCE_HELP.filter((h) => states.includes(h.state)).map((h) => `
+      <div class="cd-help-item">
+        <span class="${provDotClass(h.state)}"></span>
+        <span><b>${esc(h.label)}</b> — ${esc(h.what)}</span>
+      </div>`).join('');
+  return `
+  <section class="ag-sec" id="guide">
+    <h2>How to read the demo</h2>
+    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
+    that tool's data actually came from on the latest reply:</p>
+    <div class="ag-defs">${defs}
+    </div>
+    <p class="ag-note">${esc(PROVENANCE_CLOSING)}</p>
+    <p class="ag-note">${esc(PROVENANCE_PHILOSOPHY)}</p>
+    <p class="ag-note">${esc(PROVENANCE_EXAMPLE)}</p>
+  </section>`;
+}
+
+// ─── THE CARDS LANDING PAGE ────────────────────────────────────────────────
+/**
+ * @param apps  the app packs, in gallery order
+ * @param opts.live  true only when the real MCP client is serving the tools
+ *   (stdio subprocess → mcp-server.js). Under the default `npm run gallery` the
+ *   tools come from agentfootprint's in-memory mockMcpClient — no subprocess and
+ *   no protocol frames — so the card must NOT claim MCP. Same honesty rule as
+ *   every tool sentence: the label names what actually happened.
+ * @param opts.model  the model id live turns actually send. Shown only when
+ *   `live` — a mock desk calls no model, and the card says exactly that rather
+ *   than borrowing a real model's name.
+ */
+export function buildGalleryPage(apps, { live = false, model = null } = {}) {
+  // The capability strip, per card. Every line is build-honest: a mock build
+  // names no model and claims no MCP, because neither one happened.
+  const capLines = [
+    { icon: ICON.model, text: live && model ? `model: ${model} — streamed token by token` : 'scripted mock — no model, no network' },
+    { icon: ICON.tools, text: live ? 'tools served over MCP (real protocol frames)' : 'scripted mock tools — no MCP server' },
+    { icon: ICON.stream, text: live ? 'statuses and reply arrive as they happen' : 'real event order, paced for reading' },
+    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
+  ];
+  // The card dot IS the guide dot: same table, same class function, and it
+  // reports what THIS build can actually do — live tools on a live build,
+  // scripted on a mock one, synthetic where the data is invented by design.
+  const dotState = (t) => (t.alwaysSynthetic ? 'synthetic' : (live ? 'live' : 'scripted'));
+  const cards = apps.map((app) => galleryCard({
+    app, caps: capLines, dotState, href: `./${app.id}.html`, dataApp: true,
+  })).join('');
+
+  const buttons = BUTTON_HELP.map((b) => `
+      <div class="ag-btn-item">
+        <span class="ag-btn-head">${b.icon}<span class="ag-fakebtn${b.solid ? ' solid' : ''}">${esc(b.name)}</span></span>
+        <span class="ag-btn-what">${esc(b.what)}</span>
+      </div>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The app gallery — one visible-reason machine, three apps</title>
+<style>${SKIN}${GALLERY_CSS}${PROVENANCE_CSS}
 </style></head>
 <body>
 <div class="ag-wrap">
@@ -537,17 +593,7 @@ ${PROVENANCE_CSS}
     <p class="ag-cost" data-testid="gallery-cost">${esc(LIVE_COST_LINE)}</p>` : ''}
   </header>
   <div class="ag-grid">${cards}</div>
-
-  <section class="ag-sec" id="guide">
-    <h2>How to read the demo</h2>
-    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
-    that tool's data actually came from on the latest reply:</p>
-    <div class="ag-defs">${defs}
-    </div>
-    <p class="ag-note">${esc(PROVENANCE_CLOSING)}</p>
-    <p class="ag-note">${esc(PROVENANCE_PHILOSOPHY)}</p>
-    <p class="ag-note">${esc(PROVENANCE_EXAMPLE)}</p>
-  </section>
+${guideSection()}
 
   <section class="ag-sec" id="buttons">
     <h2>What the buttons do</h2>

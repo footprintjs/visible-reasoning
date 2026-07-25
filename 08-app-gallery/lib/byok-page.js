@@ -1,11 +1,20 @@
-// The bring-your-own-key page — out/byok/index.html.
+// The bring-your-own-key bundle — out/byok/{index,trip,movies}.html.
 //
-// One fully static page where a conference visitor pastes THEIR OWN Anthropic
-// key and gets the same desk experience as the gallery (chat → visible reason →
+//   buildByokLanding({ apps, stock, model })     → index.html, the gallery home
+//   buildByokPage({ importMap, app, model })     → one desk per app page
+//
+// Fully static pages where a conference visitor pastes THEIR OWN Anthropic key
+// and gets the same desk experience as the gallery (chat → visible reason →
 // verified what-if re-run → fork), with every byte of agent machinery running in
 // the tab: agentfootprint's browserAnthropic calls api.anthropic.com directly,
 // the tools are client-side fetchers against keyless public APIs, and the
 // influence graph is the same recordedChat wiring lib/chat-core.js already uses.
+//
+// The home is a GALLERY, not a desk: cards → click → the app. It teaches (the
+// custody contract, the provenance vocabulary) and takes no key input at all —
+// arming happens on the desk the visitor picked. Every link on it is relative,
+// so the same folder works at /visible-reasoning/, at a domain root, or off a
+// local file server.
 //
 // THE ARCHITECTURAL GUARANTEE the page exists to make true: the key is
 // UNRECORDABLE BY US. There is no server in the key path — not "we promise not
@@ -23,8 +32,13 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 // The provenance legend is NOT copied: the vocabulary, the state→dot paint, the
 // CSS and the legend component itself all live in lib/page.js, and both pages
-// render the SAME DOM from it. Drift is impossible by construction.
-import { PROVENANCE_CSS, provenanceHelpScript } from './page.js';
+// render the SAME DOM from it. Drift is impossible by construction. The landing
+// borrows the same way — the gallery skin, the card and the guide section are
+// imported, never re-authored, so a card here and a card in the local gallery
+// are the same element with different truths in it.
+import {
+  GALLERY_CSS, PROVENANCE_CSS, ICON, galleryCard, guideSection, provenanceHelpScript,
+} from './page.js';
 
 const require = createRequire(import.meta.url);
 const pkgRoot = (name) => dirname(require.resolve(name));
@@ -66,18 +80,41 @@ const CUSTODY_COPY = [
   ],
 ];
 
-const FOOTER_COPY = [
-  [
-    t('Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the '),
-    b('frozen'), t(' tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.'),
-  ],
-  [
-    t('Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.'),
-  ],
+// What a reply spends. True on both surfaces, so both carry it: the landing
+// (before you pick a desk) and the desk itself (while you spend it).
+const COST_COPY = [
+  t('Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the '),
+  b('frozen'), t(' tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.'),
 ];
 
-const CHECKBOX_LABEL = 'Remember my key in this tab (survives reload; forgotten when the tab closes)';
+// Why the gallery has two cards and a disabled third — a fact about the GALLERY,
+// so it lives on the gallery home beside the card it explains.
+const SCOPE_COPY = [
+  t('Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.'),
+];
+
+// The home links into the desks in the SAME TAB, which makes "does my key come
+// with me?" a real question with two different answers. Both are stated, because
+// the custody card's promise ("this tab, until you close it") is only kept if the
+// visitor knows which of the two they chose.
+const KEY_TRAVEL_COPY = [
+  t('You’ll paste your key on the desk you open — this page never asks for one. Tick '),
+  b('remember'),
+  t(' there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.'),
+];
+
+const CHECKBOX_LABEL = 'Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)';
 const STOCK_NOTE = 'The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo.';
+
+// Leaving a desk for the gallery is a page load: this page's memory — every turn,
+// every fork — goes with it. Asked, once there is something to lose. The key is
+// named in the same breath because it is the visitor's other live question.
+const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';
+
+// The provenance verdicts a desk in THIS bundle can honestly produce. Every tool
+// here is a real browser fetcher, so `scripted` is absent — from the guide on
+// the home and from the dialog on a desk, which read this same list.
+const BYOK_STATES = ['live', 'fallback', 'synthetic', 'not consulted'];
 
 // A key, drawn in the page's accent — inline so it costs no request.
 const FAVICON = 'data:image/svg+xml,'
@@ -110,22 +147,140 @@ const SKIN = `
   .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
 `;
 
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 /**
- * @param opts.importMap  the generated, resolution-verified import map (JSON string)
- * @param opts.apps       page-safe slices of the packs the page carries, in order
- * @param opts.model      the model id every request from this page will send
+ * The BUILD-TIME twin of the page script's richLine(): one rich-text line of
+ * copy → one <p>. The landing has no script, so its copy is rendered here from
+ * the SAME segment arrays the desks render in React — the sentences cannot
+ * drift between the two surfaces because there is only one of each.
  */
-export function buildByokPage({ importMap, apps, model }) {
-  const DATA = JSON.stringify({
-    apps, model,
-    custody: CUSTODY_COPY, footer: FOOTER_COPY,
-    checkboxLabel: CHECKBOX_LABEL, stockNote: STOCK_NOTE,
+const richLineHtml = (segs) => `<p>${segs.map((s) => {
+  if (s.b !== undefined) return `<strong>${esc(s.b)}</strong>`;
+  if (s.code !== undefined) return `<code>${esc(s.code)}</code>`;
+  if (s.em !== undefined) return `<em>${esc(s.em)}</em>`;
+  return esc(s.t);
+}).join('')}</p>`;
+
+// The landing's own chrome — everything else is lib/page.js's gallery skin.
+const LANDING_CSS = `
+  .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
+    background: var(--soft); padding: 15px 17px; }
+  .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .by-copy p { font-size: 13px; line-height: 1.62; color: var(--ink); margin: 0 0 8px; }
+  .by-copy p:last-child { margin-bottom: 0; }
+  .by-copy code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
+  .by-travel { margin: 12px 0 0; padding-top: 11px; border-top: 1px solid var(--line); }
+  /* a desk this build honestly cannot run: readable, not a link, and it says why */
+  .ag-card.off { opacity: .72; background: var(--soft); }
+  .ag-card.off .ag-cta { background: none; color: var(--muted); border: 1px dashed var(--line); }
+  .ag-cardnote { font-size: 12.5px; line-height: 1.55; color: #8A4A22; margin: 0 0 14px; }
+  .by-src { margin-top: 26px; }
+  .by-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .by-src a:hover { text-decoration: underline; }
+`;
+
+/**
+ * THE GALLERY HOME — out/byok/index.html.
+ *
+ * Cards first, key entry never: a visitor arriving cold reads what this is and
+ * where their key would go, then picks a desk and arms it there. Zero script,
+ * zero absolute paths — it is honest under a subpath, at a root, and off file://.
+ *
+ * @param opts.apps   page-safe slices of the packs the bundle carries, in order
+ * @param opts.stock  the page-safe slice of the desk that CANNOT run here; it
+ *   gets a card anyway, disabled, saying why — the alternative is pretending the
+ *   third desk never existed
+ * @param opts.model  the model id every desk in this bundle will send
+ */
+export function buildByokLanding({ apps, stock, model }) {
+  // Four capability lines, all true of THIS bundle: a real model on the
+  // visitor's key, a key path with no server of ours in it, real arrival
+  // streaming, and the re-run/fork machinery every reply carries.
+  const caps = [
+    { icon: ICON.model, text: `model: ${model} — on your key, streamed token by token` },
+    { icon: ICON.direct, text: 'browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between' },
+    { icon: ICON.stream, text: 'statuses and reply arrive as they happen' },
+    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
+  ];
+  // Nothing on these desks is scripted: every tool is a real browser fetcher, so
+  // a card dot may claim live — except the source that is synthetic by design.
+  const dotState = (tool) => (tool.alwaysSynthetic ? 'synthetic' : 'live');
+
+  const cards = apps.map((app) => galleryCard({
+    app, caps, dotState, href: `./${app.id}.html`,
+  })).join('');
+
+  // The disabled card carries no tool dots and no starter prompts: dots would
+  // claim a source state nothing here can produce, and a starter you cannot send
+  // is an invitation to a dead end.
+  const stockCard = galleryCard({
+    app: { ...stock, tools: [], starters: [] },
+    caps: [{ icon: ICON.tools, text: 'runs in the server demo only — SEC EDGAR + Reddit over MCP' }],
+    href: null,
+    cta: 'Server-only — run it locally',
+    note: `${STOCK_NOTE} Run it yourself with npm run gallery:live.`,
   });
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bring your own key — the app gallery</title>
-<meta name="description" content="Chat with two small advisors on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
+<meta name="description" content="Two small advisors you can chat with on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
+<link rel="icon" href="${FAVICON}">
+<style>${SKIN}${GALLERY_CSS}${PROVENANCE_CSS}${LANDING_CSS}
+</style></head>
+<body>
+<div class="ag-wrap">
+  <header class="ag-head">
+    <h1>Bring your own key · the app gallery</h1>
+    <p>Two real chat desks share one machine: every context source is a tool the agent calls, and
+    every reply can be re-run without a source to see what that source really changed. They run
+    entirely in your browser, on your own Anthropic key — pick a desk to start.</p>
+  </header>
+
+  <section class="ag-sec" id="custody">
+    <div class="by-custody" data-testid="landing-custody">
+      <h2>Where your key goes</h2>
+      <div class="by-copy">${CUSTODY_COPY.map(richLineHtml).join('\n      ')}
+        <div class="by-travel" data-testid="landing-key-travel">${richLineHtml(KEY_TRAVEL_COPY)}</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="ag-grid" data-testid="landing-cards">${cards}${stockCard}</div>
+${guideSection(BYOK_STATES)}
+
+  <section class="ag-sec" id="notes">
+    <h2>What a reply costs</h2>
+    <div class="by-copy">${[COST_COPY, SCOPE_COPY].map(richLineHtml).join('\n      ')}
+    </div>
+  </section>
+
+  <p class="ag-foot by-src">Every file here — this page, the desks, the vendored library bytes — is
+  generated from the repo and served as-is.
+  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener noreferrer">github.com/footprintjs/visible-reasoning</a></p>
+</div>
+</body></html>`;
+}
+
+/**
+ * ONE DESK — out/byok/<app>.html.
+ *
+ * @param opts.importMap  the generated, resolution-verified import map (JSON string)
+ * @param opts.app        the page-safe slice of the ONE pack this page carries
+ * @param opts.model      the model id every request from this page will send
+ */
+export function buildByokPage({ importMap, app, model }) {
+  const DATA = JSON.stringify({
+    app, model,
+    custody: CUSTODY_COPY, footer: [COST_COPY],
+    checkboxLabel: CHECKBOX_LABEL, leaveConfirm: LEAVE_CONFIRM,
+  });
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(app.title)} — bring your own key</title>
+<meta name="description" content="${esc(app.tagline)} — on your own Anthropic key, with visible reasons and verified what-if re-runs, all in your browser.">
 ${/* An inline data: icon, not a file. The custody copy tells visitors to open
      DevTools → Network and read every request; the browser's automatic
      /favicon.ico probe would put a 404 in that list and make them wonder. This
@@ -136,8 +291,8 @@ ${importMap}
 </script>
 <style>${read('agentthinkingui/styles.css')}</style>
 <style>${SKIN}
-  /* ── The desk skin, copied from lib/page.js. The accent is set per active
-     desk on .cd-app (inline), so switching desks recolors the whole page. ── */
+  /* ── The desk skin, copied from lib/page.js. The accent is this desk's own,
+     set on .cd-app (inline), so the page wears the card's colour. ── */
   #root { height: 100%; }
   .cd-app { position: fixed; inset: 0; background: var(--bg); }
   .cd-main { height: 100%; display: flex; flex-direction: column; transition: margin-right .28s ease; }
@@ -228,7 +383,7 @@ ${PROVENANCE_CSS}
   .cd-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); opacity: 0; pointer-events: none;
     transition: opacity .28s ease; z-index: 45; }
 
-  /* ── BYOK-only chrome: the custody panel, the desk picker, the small print ── */
+  /* ── BYOK-only chrome: the custody panel, the armed strip, the small print ── */
   .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
     background: var(--soft); padding: 15px 17px; margin: 0 0 16px; }
   .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
@@ -248,11 +403,6 @@ ${PROVENANCE_CSS}
   .by-armed button { font-size: 12px; font-weight: 700; padding: 5px 13px; border-radius: 999px; cursor: pointer;
     border: 1px solid #C6E0C0; background: #fff; color: #2C6B22; }
   .by-armed .by-armed-note { font-weight: 500; color: #4B6B46; }
-  .by-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; align-items: center; }
-  .by-desk { font-size: 12.5px; font-weight: 700; padding: 6px 15px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
-  .by-desk.on { color: #fff; }
-  .by-desk.off { cursor: not-allowed; opacity: .55; text-decoration: line-through; }
   .by-foot { margin: 18px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
   .by-foot p { margin: 0 0 7px; }
 
@@ -288,36 +438,43 @@ window.ReactDOMClient = __require('react-dom/client');
 </script>
 <script>${read('agentthinkingui/umd')}</script>
 <script type="module">
-${bootScript(DATA)}
+${bootScript(DATA, app)}
 </script>
 </body></html>`;
 }
 
 // ─── The page's own module: key custody + the desk over local-api.js ────────
-function bootScript(DATA) {
+/**
+ * @param DATA  the page-safe payload, already JSON
+ * @param app   the ONE pack this page carries. Its `id` names both the copied
+ *   module (app/apps/<id>.js) and that module's export — a build-time fact
+ *   byok.js asserts against the files it just wrote, so a rename cannot ship a
+ *   page whose only import is broken.
+ */
+function bootScript(DATA, app) {
   return `
 import { browserAnthropic } from 'agentfootprint/llm-providers';
 import { createChatCore } from './app/lib/chat-core.js';
 import { metrics } from './app/lib/mcp.js';
-import { trip } from './app/apps/trip.js';
-import { movies } from './app/apps/movies.js';
+import { ${app.id} as PACK } from './app/apps/${app.id}.js';
 import { makeBrowserCtx } from './app/byok/browser-ctx.js';
 import { browserToolsFor } from './app/byok/tools.js';
 import { createLocalApi } from './app/byok/local-api.js';
 
 var DATA = ${DATA};
 var MODEL = DATA.model;
-var PACKS = [trip, movies];
+var APP = DATA.app;
+// One desk per page: the visitor picked it on the gallery home, so there is no
+// cross-desk state here at all — only this pack, and its own fork tabs.
+var PACKS = [PACK];
 ${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
       the states it can honestly show are live / fallback / synthetic / not
       consulted — the same four its key line has always listed.
 
-      defs: true — and it must stay true. A visitor reaches this page from a
-      shared public URL with no gallery behind them, so the vocabulary has to be
-      readable without leaving the tab; linking out to the (unpublished) gallery
-      would 404, and linking to the repo would break the custody card's promise
-      that everything you need is right here. */
-  provenanceHelpScript(['live', 'fallback', 'synthetic', 'not consulted'], { defs: true })}
+      defs: true — and it must stay true. The home DOES carry the same guide
+      now, but reaching it costs this page's conversation (a page load ends it),
+      so the vocabulary still has to be readable without leaving the desk. */
+  provenanceHelpScript(BYOK_STATES, { defs: true })}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
@@ -367,16 +524,12 @@ var core = createChatCore({ live: true, model: MODEL, makeProvider: makeProvider
 var built = browserToolsFor(PACKS, ctx, core.getPending);
 var api = createLocalApi({ core: core, packs: PACKS, perApp: built.perApp });
 
-var INITIAL = {};
-PACKS.forEach(function (pack) {
-  var s = api.startSession(pack);
-  INITIAL[pack.id] = { order: [s.id], active: s.id, sessions: {}, reason: {}, reruns: {}, panelKey: null };
-  INITIAL[pack.id].sessions[s.id] = core.sessionToData(s);
-});
+// The desk's whole state: the first session, plus whatever forks it grows.
+var FIRST = api.startSession(PACK);
+var INITIAL = { order: [FIRST.id], active: FIRST.id, sessions: {}, reason: {}, reruns: {}, panelKey: null };
+INITIAL.sessions[FIRST.id] = core.sessionToData(FIRST);
 
 var e = React.createElement;
-var appById = {};
-DATA.apps.forEach(function (a) { appById[a.id] = a; });
 
 function parseSeed(lines, assistantLabel) {
   var uP = 'User: ', aP = assistantLabel + ': ';
@@ -415,9 +568,7 @@ document.documentElement.setAttribute('data-stream-motion', REDUCED ? 'reduced' 
 var STATUS_HOLD_MS = REDUCED ? 0 : 300;
 
 var TOOL_LABEL = {};
-DATA.apps.forEach(function (a) {
-  a.tools.forEach(function (t) { TOOL_LABEL[t.name] = t.legendLabel || t.name.replace(/_/g, ' '); });
-});
+APP.tools.forEach(function (t) { TOOL_LABEL[t.name] = t.legendLabel || t.name.replace(/_/g, ' '); });
 function plainTool(name) { return TOOL_LABEL[name] || String(name).replace(/_/g, ' '); }
 
 var LIVE = null;
@@ -529,8 +680,7 @@ function safeStringify(value) {
 }
 
 function Byok() {
-  var d0 = React.useState(INITIAL); var desks = d0[0], setDesks = d0[1];
-  var k0 = React.useState(PACKS[0].id); var deskId = k0[0], setDeskId = k0[1];
+  var d0 = React.useState(INITIAL); var desk = d0[0], setDesk = d0[1];
   var a0 = React.useState(!!storedKey()); var armed = a0[0], setArmed = a0[1];
   var t0 = React.useState(''); var tail = t0[0], setTail = t0[1];
   var r0 = React.useState(false); var remember = r0[0], setRemember = r0[1];
@@ -552,24 +702,39 @@ function Byok() {
     if (k) { apiKey = k; keyTail = k.slice(-4); setArmed(true); setTail(keyTail); setRemember(true); }
   }, []);
 
-  var app = appById[deskId];
-  var desk = desks[deskId];
   var sess = desk.sessions[desk.active];
 
-  function patch(id, fn) {
-    setDesks(function (all) {
-      var next = Object.assign({}, all);
-      next[id] = fn(Object.assign({}, all[id]));
-      return next;
+  function patch(fn) {
+    setDesk(function (d) { return fn(Object.assign({}, d)); });
+  }
+
+  // ═══ leaving for the gallery ════════════════════════════════════════════
+  // The "← gallery" link is a real same-tab navigation, and this page's memory
+  // is the conversation: every turn and every fork lives in the tab, nowhere
+  // else. So the trip is never blocked and never silent — once there is
+  // something to lose, the visitor is asked, and the same sentence names what
+  // happens to their key (sessionStorage if they ticked "remember", gone if
+  // they didn't). Before the first message there is nothing to lose and the
+  // link just goes.
+  function hasConversation() {
+    if (LIVE) return true;
+    return desk.order.some(function (id) {
+      var s = desk.sessions[id];
+      return !!(s && ((s.turns && s.turns.length) || (s.seed && s.seed.length)));
     });
   }
+  function onLeave(ev) {
+    if (!hasConversation()) return;
+    if (!window.confirm(DATA.leaveConfirm)) ev.preventDefault();
+  }
+
   // Failures are shown, never swallowed — and never posted anywhere: there is no
   // telemetry on this page. Anthropic's own error bodies do not echo keys, and
   // the raw line is kept after the plain-words lead so a visitor can still see
   // exactly what the API said.
   function closePanel() {
     panelRef.current = null;
-    patch(deskId, function (d) { d.panelKey = null; return d; });
+    patch(function (d) { d.panelKey = null; return d; });
   }
   var fail = function (err) {
     var raw = String((err && err.message) || err);
@@ -619,15 +784,14 @@ function Byok() {
     if (!msg || !apiKey) return;
     if (LIVE) return;                    // one in-flight turn per page
     setInput('');
-    var id = deskId;
     LIVE = { userMessage: msg, status: null, text: '' };
     LAST_STREAM = { statuses: [], tokenCount: 0, finalReceived: false };
     paint(); scrollDown();
     var done = function () { PACER.clear(); LIVE = null; paint(); };
-    return api.chat({ appId: id, sessionId: desk.active, message: msg, onEvent: makeLiveSink() }).then(function (j) {
+    return api.chat({ appId: APP.id, sessionId: desk.active, message: msg, onEvent: makeLiveSink() }).then(function (j) {
       LAST_STREAM.finalReceived = true;
       done();
-      patch(id, function (d) {
+      patch(function (d) {
         var sessions = Object.assign({}, d.sessions);
         var s = Object.assign({}, sessions[j.sessionId]);
         s.turns = s.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply,
@@ -644,10 +808,10 @@ function Byok() {
   }
 
   function openReason(sid, ti) {
-    var id = deskId, key = sid + ':' + ti;
-    return api.reason({ appId: id, sessionId: sid, turnIndex: ti }).then(function (j) {
-      panelRef.current = { deskId: id, key: key };
-      patch(id, function (d) {
+    var key = sid + ':' + ti;
+    return api.reason({ appId: APP.id, sessionId: sid, turnIndex: ti }).then(function (j) {
+      panelRef.current = key;
+      patch(function (d) {
         d.reason = Object.assign({}, d.reason);
         d.reason[key] = { map: j.map, strategies: j.strategies };
         d.panelKey = key;
@@ -658,15 +822,13 @@ function Byok() {
   }
 
   function doRerun(ids) {
-    var id = deskId;
-    var open = panelRef.current;
-    var key = desk.panelKey || (open && open.deskId === id ? open.key : null);
+    var key = desk.panelKey || panelRef.current;
     if (!key) return;
     var parts = key.split(':'), sid = parts[0], ti = Number(parts[1]);
     var before = metrics.toolDispatches;
-    return api.rerunTurn({ appId: id, sessionId: sid, turnIndex: ti, ignore: ids }).then(function (j) {
+    return api.rerunTurn({ appId: APP.id, sessionId: sid, turnIndex: ti, ignore: ids }).then(function (j) {
       var dispatched = metrics.toolDispatches - before;
-      patch(id, function (d) {
+      patch(function (d) {
         d.reruns = Object.assign({}, d.reruns);
         d.reruns[key] = { rerunId: j.rerunId, ignoredIds: ids, ignoredLabels: j.ignoredLabels,
           result: j.result, dispatched: dispatched };
@@ -677,10 +839,9 @@ function Byok() {
   }
 
   function doFork(sid, ti, rerunId) {
-    var id = deskId;
-    return api.fork({ appId: id, sessionId: sid, turnIndex: ti, rerunId: rerunId }).then(function (j) {
+    return api.fork({ appId: APP.id, sessionId: sid, turnIndex: ti, rerunId: rerunId }).then(function (j) {
       panelRef.current = null;
-      patch(id, function (d) {
+      patch(function (d) {
         d.sessions = Object.assign({}, d.sessions);
         d.sessions[j.sessionId] = { id: j.sessionId, label: j.label, forkOf: j.forkOf || null,
           ignoredSourceIds: j.ignoredSourceIds, seed: j.transcript, entity: j.entity || null, turns: [] };
@@ -696,14 +857,16 @@ function Byok() {
   // A real test seam (not theater): the exact handlers, callable headless.
   // It exposes the key's LAST FOUR characters at most — never the key.
   window.__byok = {
-    deskId: deskId,
-    setDesk: function (id) { setDeskId(id); },
+    appId: APP.id,
     arm: arm, forget: forget,
     isArmed: function () { return armed; },
     keyTail: function () { return tail; },
     send: function (m) { setInput(m); return send(m); },
     reason: openReason, rerun: doRerun, fork: doFork,
-    getState: function () { return { deskId: deskId, desks: desks, armed: armed, tail: tail }; },
+    // The guard's own inputs, so a drive can prove WHEN it fires, not just that
+    // a dialog appeared: false before the first message, true after it lands.
+    hasConversation: hasConversation,
+    getState: function () { return { appId: APP.id, desk: desk, armed: armed, tail: tail }; },
     // What the last send really saw on the in-tab event channel.
     get lastStream() { return LAST_STREAM; },
     // Everything the page holds, deep-serialized — the assertion that the key
@@ -714,14 +877,14 @@ function Byok() {
         sessions.push({ id: s.id, appId: s.appId, meta: s.meta, data: core.sessionToData(s),
           turns: s.chat.turns, reruns: Array.from(s.reruns.entries()) });
       });
-      return safeStringify({ ui: { deskId: deskId, desks: desks, tail: tail }, sessions: sessions });
+      return safeStringify({ ui: { appId: APP.id, desk: desk, tail: tail }, sessions: sessions });
     },
   };
 
   // ═══ the thread ═════════════════════════════════════════════════════════
   var thread = [];
   if (sess) {
-    parseSeed(sess.seed || [], app.assistantLabel).forEach(function (m, i) {
+    parseSeed(sess.seed || [], APP.assistantLabel).forEach(function (m, i) {
       var cls = (m.role === 'user' ? 'msg-user' : 'msg-advisor') + ' seed';
       thread.push(m.role === 'user'
         ? e('div', { key: 'seed' + i, className: cls }, m.text)
@@ -765,9 +928,12 @@ function Byok() {
     }
   }
 
+  // Session tabs — the original conversation and every fork of it. There are no
+  // cross-desk tabs: the other desk is its own page, one click back through the
+  // gallery.
   var tabs = desk.order.map(function (id) {
     return e('button', { key: id, className: 'cd-tab' + (id === desk.active ? ' on' : ''), 'data-testid': 'tab-' + id,
-      onClick: function () { panelRef.current = null; patch(deskId, function (d) { d.active = id; d.panelKey = null; return d; }); } },
+      onClick: function () { panelRef.current = null; patch(function (d) { d.active = id; d.panelKey = null; return d; }); } },
       desk.sessions[id] ? desk.sessions[id].label : id);
   });
 
@@ -782,9 +948,9 @@ function Byok() {
   var tks = (sess && sess.turns) || [];
   for (var li = tks.length - 1; li >= 0; li -= 1) { if (tks[li].provenance) { lastProv = tks[li].provenance; break; } }
   var legend = e(ProvLegend, {
-    entityLabel: app.entityLabel,
-    entityValue: (sess && sess.entity) || app.entityDefault,
-    tools: app.tools,
+    entityLabel: APP.entityLabel,
+    entityValue: (sess && sess.entity) || APP.entityDefault,
+    tools: APP.tools,
     provenance: lastProv,
   });
 
@@ -792,8 +958,12 @@ function Byok() {
   var custody = armed
     ? e('div', { className: 'by-armed', 'data-testid': 'byok-armed' },
         e('span', null, 'key …' + tail + ' — in this tab'),
+        // The armed strip answers the same question the checkbox asked, now that
+        // the answer matters: this desk is one link away from the gallery.
         e('span', { className: 'by-armed-note' },
-          remember ? 'remembered until you close this tab' : 'kept in this page only'),
+          remember
+            ? 'remembered until you close this tab — the gallery and the other desk keep it'
+            : 'kept in this page only — going back to the gallery clears it'),
         e('button', { 'data-testid': 'byok-forget', onClick: forget }, 'Forget my key'))
     : e('div', { className: 'by-custody', 'data-testid': 'byok-custody' },
         e('h2', null, 'Bring your own key'),
@@ -810,16 +980,6 @@ function Byok() {
               onChange: function (ev) { setRemember(ev.target.checked); } }),
             DATA.checkboxLabel)));
 
-  var picker = e('div', { className: 'by-picker', 'data-testid': 'desk-picker' },
-    DATA.apps.map(function (a) {
-      return e('button', { key: a.id, 'data-testid': 'desk-' + a.id,
-        className: 'by-desk' + (a.id === deskId ? ' on' : ''),
-        style: a.id === deskId ? { background: a.accent, borderColor: a.accent } : null,
-        onClick: function () { panelRef.current = null; setDeskId(a.id); } }, a.title);
-    }),
-    e('button', { className: 'by-desk off', 'data-testid': 'desk-stocks-off', disabled: true,
-      title: DATA.stockNote }, 'Stock desk — server-only'));
-
   var badgeText = MODEL + ' — direct from your browser · ' + (armed ? 'key …' + tail + ' in this tab' : 'no key yet');
   var badge = e('span', { className: 'cd-model' + (armed ? ' live' : ''), 'data-testid': 'model-badge',
     title: 'Every request from this page goes straight to api.anthropic.com with this model id' },
@@ -827,10 +987,10 @@ function Byok() {
 
   var panelOpen = !!(desk.panelKey && desk.reason[desk.panelKey]);
   var panelInner = panelOpen
-    ? e(InfluenceMap, { key: deskId + '|' + desk.panelKey, map: desk.reason[desk.panelKey].map,
+    ? e(InfluenceMap, { key: desk.panelKey, map: desk.reason[desk.panelKey].map,
         strategies: desk.reason[desk.panelKey].strategies,
         activeStrategy: desk.reason[desk.panelKey].map.rankedBy, onRerun: doRerun,
-        view: 'bars', strategyControl: 'dropdown', brand: app.title })
+        view: 'bars', strategyControl: 'dropdown', brand: APP.title })
     : null;
 
   var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
@@ -841,23 +1001,24 @@ function Byok() {
         : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.');
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : ''),
-      style: { '--accent': app.accent, '--accent-dk': app.accentDark } },
+      style: { '--accent': APP.accent, '--accent-dk': APP.accentDark } },
     e('div', { className: 'cd-main' },
       e('div', { className: 'cd-bar' },
-        // NOT './gallery.html': out/byok/ is a standalone folder — the gallery
-        // pages live one level up in the local demo and are not published at
-        // all, so a relative link there 404s wherever this page is served.
-        // The repo is the honest destination and works from any host.
-        e('a', { className: 'cd-back', href: 'https://github.com/footprintjs/visible-reasoning',
-          target: '_blank', rel: 'noopener noreferrer', 'data-testid': 'back-to-gallery' }, '← source'),
-        e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', app.title),
-        e('span', { className: 'cd-tagline' }, app.tagline),
+        // './index.html' — the bundle's own gallery home, one folder level, no
+        // origin and no base path, so it resolves under /visible-reasoning/, at
+        // a domain root and off file:// alike. SAME TAB on purpose: the gallery
+        // is where the visitor came from and where the other desk is. The cost
+        // of that (this page's memory is the conversation) is not hidden — see
+        // onLeave: once there is something to lose, it asks first.
+        e('a', { className: 'cd-back', href: './index.html', onClick: onLeave,
+          'data-testid': 'back-to-gallery' }, '← gallery'),
+        e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', APP.title),
+        e('span', { className: 'cd-tagline' }, APP.tagline),
         badge,
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
           custody,
-          picker,
           legend,
           prov,
           conversation,
@@ -867,7 +1028,7 @@ function Byok() {
         e('div', { className: 'cd-composer-col' },
           e('div', { className: 'cd-inputrow' },
             e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed || !!liveTurn,
-              placeholder: armed ? app.starters[0] : 'Paste your Anthropic key above to start',
+              placeholder: armed ? APP.starters[0] : 'Paste your Anthropic key above to start',
               onChange: function (ev) { setInput(ev.target.value); },
               onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
             e('button', { 'data-testid': 'chat-send', disabled: !armed || !!liveTurn, onClick: send }, 'Send'))))),
@@ -897,4 +1058,7 @@ export function packToPageData(app) {
   };
 }
 
-export const BYOK_COPY = { CUSTODY_COPY, FOOTER_COPY, CHECKBOX_LABEL, STOCK_NOTE };
+export const BYOK_COPY = {
+  CUSTODY_COPY, COST_COPY, SCOPE_COPY, KEY_TRAVEL_COPY,
+  CHECKBOX_LABEL, STOCK_NOTE, LEAVE_CONFIRM, BYOK_STATES,
+};

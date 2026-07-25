@@ -135,19 +135,25 @@ for (const app of APPS) {
 // Built into a SCRATCH directory, never out/: a gate reads, it does not write
 // the tree it is judging. (out/byok is a build product of `npm run byok:build`
 // and of verify-byok, which owns that artifact; this run must not race them or
-// leave a diff behind.) The page comes back as a string — no round trip to disk.
+// leave a diff behind.) The pages come back as strings — no round trip to disk.
+//
+// `byok` is a BYOK DESK page, not the bundle's home: the home is a landing (its
+// own gallery, with its own #guide) and the desk is the stage this section
+// judges. verify-byok.mjs owns the home's assertions.
 const scratch = mkdtempSync(join(tmpdir(), 'vr-ia-byok-'));
 let byok;
 try {
-  byok = generate({ quiet: true, outDir: join(scratch, 'byok') }).html;
+  byok = generate({ quiet: true, outDir: join(scratch, 'byok') }).pages['trip.html'];
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
-ok(byok.includes('legend-help-sources'), 'BYOK dialog keeps the runtime sources section');
-ok(byok.includes('legend-help-defs'), 'BYOK dialog keeps the definitions (no landing exists at the public URL)');
-ok(!byok.includes('legend-help-guide-link'), 'BYOK does not link at a gallery that is not published');
+ok(byok.includes('legend-help-sources'), 'BYOK desk dialog keeps the runtime sources section');
+ok(byok.includes('legend-help-defs'),
+  'BYOK desk dialog keeps the definitions — its home carries them too, but reaching it costs the conversation');
+ok(!byok.includes('legend-help-guide-link'),
+  'BYOK does not send a live conversation away to read a definition');
 ok(byok.includes(PROVENANCE_CLOSING), 'BYOK keeps the closing line');
-ok(byok.includes("e('span', { className: 'cd-tagline' }"), 'BYOK keeps its tagline — a cold arrival has no card behind it');
+ok(byok.includes("e('span', { className: 'cd-tagline' }"), 'BYOK keeps its tagline — one desk, named in its own bar');
 
 // ═══ C. noise metrics — the counts, not the direction ═══════════════════════
 // "desk static element" = chrome whose content reads the same before the first

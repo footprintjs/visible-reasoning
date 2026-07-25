@@ -42,11 +42,13 @@ export const PAGES_URL = 'https://footprintjs.github.io/visible-reasoning/';
 // `./` is relative on purpose — the page must not hardcode /visible-reasoning/,
 // or it would break the moment the folder is served anywhere else. The honest
 // limit of that choice: from /visible-reasoning/typo it resolves to
-// /visible-reasoning/ (right), but from /visible-reasoning/a/b/typo it resolves
-// to /visible-reasoning/a/b/ (still 404). This is a one-page site, so the deep
-// case only arises from a hand-mangled URL; a correct absolute redirect would
-// have to know the base path, which is exactly the knowledge we refuse to bake
-// in. The visible link keeps even that case navigable.
+// /visible-reasoning/ (right — the gallery home), but from
+// /visible-reasoning/a/b/typo it resolves to /visible-reasoning/a/b/ (still
+// 404). Every real page of this site is FLAT (index.html plus one file per
+// desk), so the deep case only arises from a hand-mangled URL; a correct
+// absolute redirect would have to know the base path, which is exactly the
+// knowledge we refuse to bake in. The visible link keeps even that case
+// navigable.
 const NOT_FOUND_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Not found — bring your own key</title>

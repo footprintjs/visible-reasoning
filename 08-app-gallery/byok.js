@@ -6,7 +6,10 @@
 //   node 08-app-gallery/byok.js --serve   → generate, then serve it on :4176
 //
 // What it emits:
-//   out/byok/index.html   the page (skin + React/atui shim + import map + boot)
+//   out/byok/index.html   the gallery home — cards → a desk. Static HTML, no
+//                         script, no key input; every link relative.
+//   out/byok/<app>.html   one desk per app (skin + React/atui shim + import map
+//                         + boot), each carrying its own pack and nothing else
 //   out/byok/app/         lib/ + apps/ + byok/ copied VERBATIM from this example
 //   out/byok/vendor/      the installed agentfootprint / footprintjs / zod ESM
 //                         dist trees, .js only — the published bytes, unmodified
@@ -25,7 +28,8 @@ import { dirname, extname, join, relative, resolve as resolvePath, sep } from 'n
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { trip } from './apps/trip.js';
 import { movies } from './apps/movies.js';
-import { buildByokPage, packToPageData } from './lib/byok-page.js';
+import { stocks } from './apps/stocks.js';
+import { buildByokLanding, buildByokPage, packToPageData } from './lib/byok-page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolvePath(here, '..');
@@ -41,11 +45,12 @@ const PORT = 4176;
 // live mode sends, and what the page's badge names.
 const MODEL = 'claude-haiku-4-5-20251001';
 
-// The desks the page carries. Stocks is excluded on evidence, not taste: the
-// SEC's servers refuse browser calls (CORS), so 1 of its 3 sources could run
-// client-side. The page says so in plain words rather than shipping a desk that
-// pretends. See lib/byok-page.js's STOCK_NOTE.
+// The desks the bundle carries, one page each. Stocks is excluded on evidence,
+// not taste: the SEC's servers refuse browser calls (CORS), so 1 of its 3
+// sources could run client-side. It still gets a card on the home — disabled,
+// saying why — rather than vanishing. See lib/byok-page.js's STOCK_NOTE.
 const PACKS = [trip, movies];
+const OFF_PACK = stocks;
 
 // Whole ESM dist trees, .js only — .d.ts and .map are dead weight in a tab.
 const VENDOR = [
@@ -253,17 +258,42 @@ export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
   const importMap = JSON.stringify({ imports: sorted }, null, 2);
   log(`import map: ${Object.keys(imports).length} specifiers over ${moduleCount} traced modules — all resolved`);
 
-  // 4. the page
-  const html = buildByokPage({
-    importMap,
+  // 4. the pages — one gallery home, one desk per pack
+  //
+  // A desk page's ONLY app import is `./app/apps/<id>.js`, named by the pack id
+  // (buildByokPage's bootScript). That is an assumption about files we just
+  // wrote, so it is checked against them here: a renamed pack file would
+  // otherwise ship a page whose single import 404s in the browser, with the
+  // import map — which never sees relative specifiers — still perfectly green.
+  const pages = {};
+  const writePage = (name, body) => {
+    writeFileSync(join(outDir, name), body);
+    pages[name] = body;
+  };
+
+  const html = buildByokLanding({
     apps: PACKS.map(packToPageData),
+    stock: packToPageData(OFF_PACK),
     model: MODEL,
   });
   const file = join(outDir, 'index.html');
-  writeFileSync(file, html);
-  log(`generated ${file}`);
-  // `html` rides the return so a reader (a gate) never has to go back to disk.
-  return { outDir, file, imports, html };
+  writePage('index.html', html);
+
+  for (const pack of PACKS) {
+    const packModule = join(outDir, 'app', 'apps', `${pack.id}.js`);
+    if (!existsSync(packModule)) {
+      throw new Error(`the '${pack.id}' desk page imports ./app/apps/${pack.id}.js, which was not generated`);
+    }
+    writePage(`${pack.id}.html`, buildByokPage({
+      importMap,
+      app: packToPageData(pack),
+      model: MODEL,
+    }));
+  }
+  log(`generated ${Object.keys(pages).join(', ')} → ${outDir}`);
+  // The page bodies ride the return so a reader (a gate) never has to go back to
+  // disk. `html` stays the home, which is what `file` points at.
+  return { outDir, file, imports, html, pages };
 }
 
 // ─── the deliberately empty static server ───────────────────────────────────
