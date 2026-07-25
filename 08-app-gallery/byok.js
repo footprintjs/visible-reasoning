@@ -30,7 +30,11 @@ import { buildByokPage, packToPageData } from './lib/byok-page.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolvePath(here, '..');
 const nodeModules = join(repoRoot, 'node_modules');
-const outDir = join(here, 'out', 'byok');
+// Where a real build lands. `generate({ outDir })` can point elsewhere — a gate
+// that only wants to READ the generated page (verify-ia) builds into a scratch
+// directory so `out/` stays a pure build product and two runs can never race
+// over the same bytes.
+const DEFAULT_OUT_DIR = join(here, 'out', 'byok');
 const PORT = 4176;
 
 // The model every request from the page will carry — the same id the gallery's
@@ -188,7 +192,7 @@ function traceImportMap(appSeedFiles) {
 }
 
 /** Every mapped target must exist in the generated output — checked, not hoped. */
-function verifyImportMap(imports) {
+function verifyImportMap(imports, outDir) {
   const missing = [];
   for (const [spec, target] of Object.entries(imports)) {
     const rel = target.replace(/^\.\//, '');
@@ -200,7 +204,7 @@ function verifyImportMap(imports) {
 }
 
 // ─── generate ───────────────────────────────────────────────────────────────
-export function generate({ quiet = false } = {}) {
+export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
   const log = (...a) => { if (!quiet) console.log(...a); };
 
   rmSync(outDir, { recursive: true, force: true });
@@ -243,7 +247,7 @@ export function generate({ quiet = false } = {}) {
     .filter(([from]) => from.startsWith('lib/') || from.startsWith('byok/'))
     .map(([from]) => join(here, from));
   const { imports, moduleCount } = traceImportMap(seeds);
-  verifyImportMap(imports);
+  verifyImportMap(imports, outDir);
   const sorted = {};
   for (const spec of Object.keys(imports).sort()) sorted[spec] = imports[spec];
   const importMap = JSON.stringify({ imports: sorted }, null, 2);
@@ -258,7 +262,8 @@ export function generate({ quiet = false } = {}) {
   const file = join(outDir, 'index.html');
   writeFileSync(file, html);
   log(`generated ${file}`);
-  return { outDir, file, imports };
+  // `html` rides the return so a reader (a gate) never has to go back to disk.
+  return { outDir, file, imports, html };
 }
 
 // ─── the deliberately empty static server ───────────────────────────────────
@@ -275,7 +280,7 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 };
 
-export function serve(port = PORT) {
+export function serve(port = PORT, outDir = DEFAULT_OUT_DIR) {
   const server = createServer((req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(404, { 'content-type': 'text/plain' });

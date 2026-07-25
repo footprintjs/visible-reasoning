@@ -310,8 +310,14 @@ var MODEL = DATA.model;
 var PACKS = [trip, movies];
 ${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
       the states it can honestly show are live / fallback / synthetic / not
-      consulted — the same four its key line has always listed. */
-  provenanceHelpScript(['live', 'fallback', 'synthetic', 'not consulted'])}
+      consulted — the same four its key line has always listed.
+
+      defs: true — and it must stay true. A visitor reaches this page from a
+      shared public URL with no gallery behind them, so the vocabulary has to be
+      readable without leaving the tab; linking out to the (unpublished) gallery
+      would 404, and linking to the repo would break the custody card's promise
+      that everything you need is right here. */
+  provenanceHelpScript(['live', 'fallback', 'synthetic', 'not consulted'], { defs: true })}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's

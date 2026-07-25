@@ -71,6 +71,22 @@ for (const h of PROVENANCE_HELP) {
 export const PROVENANCE_CLOSING =
   'Every tool sentence carries its own [source: …] label — the map never hides where data came from.';
 
+/** The honesty rule the whole demo is built on. Landing-only (static philosophy). */
+export const PROVENANCE_PHILOSOPHY =
+  'The rule everywhere: the label names what actually happened. A desk that can\'t reach a source '
+  + 'says so, and data that was invented is never passed off as real.';
+
+/** A worked example of the `synthetic` dot — it belongs beside the definition. */
+export const PROVENANCE_EXAMPLE =
+  'The trip advisor\'s crowd estimate is always synthetic — modeled, never measured — and always says so.';
+
+/**
+ * THE server-side twin of the browser's provDotClass(). The landing's guide is
+ * rendered at BUILD time, so it needs the same table the page script gets —
+ * this is the one function that gives it, and it reads the same object.
+ */
+const provDotClass = (state) => `cd-dot ${PROVENANCE_DOT_CLASS[state] || 'unknown'}`;
+
 /**
  * The legend + its explanation dialog, as CSS. Imported by BOTH page shells so
  * the two desks cannot drift apart on paint either.
@@ -118,6 +134,10 @@ export const PROVENANCE_CSS = `
   .cd-help-item b { color: var(--ink); }
   .cd-help-none { margin: 0; font-style: italic; }
   .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
+  /* desk mode: the vocabulary is not in the dialog — this is the way to it */
+  a.cd-help-guide { display: block; color: var(--muted); font-weight: 600; text-decoration: none; }
+  a.cd-help-guide:hover { color: var(--accent); }
+  a.cd-help-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
   /* narrow screens: the dialog becomes a bottom sheet, full width, no overflow */
   @media (max-width: 520px) {
@@ -130,15 +150,52 @@ export const PROVENANCE_CSS = `
  * The browser-side twin of the vocabulary above, plus the ONE legend component
  * both pages render. Emitted into the page script; nothing here is forked.
  *
- * @param states  the provenance verdicts this page can honestly show
+ * ONE component, two modes — the split is information architecture, not code:
+ *   defs: true  (BYOK) — a visitor arrives cold at a public URL with no landing
+ *     behind them, so the vocabulary must be reachable without leaving the tab.
+ *   defs: false (desks) — the desk is the stage: the dialog carries only what is
+ *     true right now (this reply's sources) and links out to the landing's
+ *     `#guide`, which is rendered from THIS SAME table.
+ *
+ * @param states     the provenance verdicts this page can honestly show
+ * @param opts.defs  render the "what each dot means" section + closing line
+ * @param opts.guideHref  a JS EXPRESSION (evaluated in the page) for the guide
+ *   link's href. Required when defs is false — a desk that hides the vocabulary
+ *   without pointing at it is a build error, not a quiet omission.
  */
-export const provenanceHelpScript = (states) => `
+export const provenanceHelpScript = (states, { defs = true, guideHref = null } = {}) => {
+  if (!defs && !guideHref) {
+    throw new Error('provenanceHelpScript({ defs: false }) needs a guideHref — the vocabulary must stay reachable');
+  }
+  const helpFoot = defs
+    ? `React.createElement('section', { className: 'cd-modal-sec', 'data-testid': 'legend-help-defs' },
+          React.createElement('h3', null, 'What each dot means'),
+          PROV_HELP.map(function (h) {
+            return React.createElement('div', { key: h.state, className: 'cd-help-item' },
+              provDot(h.state),
+              React.createElement('span', null,
+                React.createElement('b', null, h.label), ' — ', h.what));
+          }),
+          React.createElement('p', { className: 'cd-help-foot' }, PROV_CLOSING))`
+    : `React.createElement('a', { className: 'cd-help-foot cd-help-guide',
+          'data-testid': 'legend-help-guide-link', href: ${guideHref},
+          // A NEW TAB, deliberately. The desk's HTML is built once at boot with
+          // its sessions baked in, so a same-tab trip to the guide and back
+          // re-serves the boot snapshot and silently truncates the conversation
+          // on screen while the server session keeps every turn. Reading the
+          // program notes must never cost the visitor the show.
+          target: '_blank', rel: 'noopener',
+          title: 'Opens the gallery guide in a new tab — this conversation stays open here' },
+          'How to read these dots → the gallery guide')`;
+  return `
 // ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
 // The legend's plain-words vocabulary, its state→dot paint, and the legend
 // component itself all come from here, so the desk pages and the BYOK page
 // render the SAME DOM with the SAME classes.
+// PROV_HELP stays in both modes — the legend's own tooltips are built from the
+// same explanations, and a tooltip is runtime (it names THIS reply's verdict).
 var PROV_HELP = ${JSON.stringify(PROVENANCE_HELP.filter((h) => states.includes(h.state)))};
-var PROV_CLOSING = ${JSON.stringify(PROVENANCE_CLOSING)};
+${defs ? `var PROV_CLOSING = ${JSON.stringify(PROVENANCE_CLOSING)};` : '// the closing line is static philosophy — it lives on the gallery guide'}
 var PROV_DOT_CLASS = ${JSON.stringify(PROVENANCE_DOT_CLASS)};
 var PROV_WORDS = {};
 PROV_HELP.forEach(function (h) { PROV_WORDS[h.state] = h.what; });
@@ -172,9 +229,11 @@ function provTitle(tool, p) {
 var PROV_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
- * The explanation dialog. Two sections: what THIS reply actually used, then
- * what each state means. Both paint their dots with provDotClass(), so a
- * definition dot is literally the same element as the row dot.
+ * The explanation dialog. The first section is always what THIS reply actually
+ * used; what follows depends on the mode this script was generated in — the
+ * definitions themselves (BYOK) or a link to the landing's guide (desks). Both
+ * paint their dots with provDotClass(), so a definition dot is literally the
+ * same element as the row dot.
  *
  * Accessibility: role=dialog + aria-modal, focus moves in on open, Tab is
  * trapped, Escape / backdrop / × all close, and the caller returns focus to
@@ -236,15 +295,7 @@ function ProvHelpModal(props) {
         React.createElement('section', { className: 'cd-modal-sec', 'data-testid': 'legend-help-sources' },
           React.createElement('h3', null, 'This reply’s sources'),
           sources),
-        React.createElement('section', { className: 'cd-modal-sec', 'data-testid': 'legend-help-defs' },
-          React.createElement('h3', null, 'What each dot means'),
-          PROV_HELP.map(function (h) {
-            return React.createElement('div', { key: h.state, className: 'cd-help-item' },
-              provDot(h.state),
-              React.createElement('span', null,
-                React.createElement('b', null, h.label), ' — ', h.what));
-          }),
-          React.createElement('p', { className: 'cd-help-foot' }, PROV_CLOSING)))));
+        ${helpFoot})));
 }
 
 /**
@@ -283,6 +334,7 @@ function ProvLegend(props) {
     open ? React.createElement(ProvHelpModal, { tools: tools, provenance: prov, onClose: close }) : null);
 }
 `;
+};
 
 // ─── The shared skin (07's tokens, verbatim) ────────────────────────────────
 const SKIN = `
@@ -305,6 +357,55 @@ const SKIN = `
   .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
 `;
 
+// ─── THE LANDING'S OWN VOCABULARY (static — nothing here changes at runtime) ─
+// Tiny inline icons: decorative (aria-hidden), currentColor, zero requests.
+const svg = (body) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" `
+  + `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+
+const ICON = {
+  // ✦ model — a chip
+  model: svg('<rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4'
+    + 'M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/>'),
+  // ⌁ tools — a plug
+  tools: svg('<path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2v4.3"/>'),
+  // ≋ streaming — three offset waves
+  stream: svg('<path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/>'
+    + '<path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/>'
+    + '<path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/>'),
+  // ⑂ re-run + fork — a branch
+  branch: svg('<circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/>'
+    + '<path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/>'),
+  // the ranked bar list the "visible reason" button opens
+  bars: svg('<path d="M4 6h15M4 12h10M4 18h6"/>'),
+  // leaving a source out
+  ignore: svg('<path d="M3 3l18 18"/><path d="M10.6 5.3A9.3 9.3 0 0 1 12 5.2c5.2 0 9 4.5 9 6.8 0 .9-.7 2.3-1.9 3.6"/>'
+    + '<path d="M6.4 7.1C4 8.7 3 10.9 3 12c0 2.3 3.8 6.8 9 6.8 1.5 0 2.8-.4 4-.9"/>'
+    + '<path d="M9.6 9.9a3 3 0 0 0 4.3 4.2"/>'),
+  // running the same question again
+  rerun: svg('<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 4v5h-5"/>'),
+};
+
+/** The live-build cost fact — a capability of the build, not of any one turn. */
+export const LIVE_COST_LINE =
+  'Live run — each reply spends real API tokens on the model named on its card, and the what-if '
+  + 're-runs replay frozen tool results, so they cost model calls but zero new fetches.';
+
+/**
+ * What each control on a desk does. This is teaching, so it lives on the
+ * landing: it reads exactly the same before the first message and after the
+ * hundredth, which is the test for "not runtime".
+ */
+export const BUTTON_HELP = [
+  { name: 'visible reason', icon: ICON.bars,
+    what: 'opens a ranked list of exactly which sources shaped that reply' },
+  { name: 'ignore a source', icon: ICON.ignore,
+    what: 'inside that panel, pick a source to leave out' },
+  { name: 're-run', icon: ICON.rerun,
+    what: 'answers the same question again without it — over the frozen tool results of the original turn, zero new fetches' },
+  { name: 'Continue from this version', icon: ICON.branch, solid: true,
+    what: 'forks a new session from the what-if reply; the ignored source stays ignored for every later turn' },
+];
+
 // ─── THE CARDS LANDING PAGE ────────────────────────────────────────────────
 /**
  * @param apps  the app packs, in gallery order
@@ -318,13 +419,28 @@ const SKIN = `
  *   than borrowing a real model's name.
  */
 export function buildGalleryPage(apps, { live = false, model = null } = {}) {
-  const toolSourceLine = live ? 'tools served over MCP' : 'scripted mock tools — no MCP server';
-  const modelLine = live && model ? `model: ${model}` : 'scripted mock — no model';
+  // The capability strip, per card. Every line is build-honest: a mock build
+  // names no model and claims no MCP, because neither one happened.
+  const capLines = [
+    { icon: ICON.model, text: live && model ? `model: ${model} — streamed token by token` : 'scripted mock — no model, no network' },
+    { icon: ICON.tools, text: live ? 'tools served over MCP (real protocol frames)' : 'scripted mock tools — no MCP server' },
+    { icon: ICON.stream, text: live ? 'statuses and reply arrive as they happen' : 'real event order, paced for reading' },
+    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
+  ];
+  const caps = capLines.map((c) => `
+        <span class="ag-cap">${c.icon}<span>${esc(c.text)}</span></span>`).join('');
+
   const cards = apps.map((app) => {
-    const tools = app.tools.map((t) => `
+    // The card dot IS the guide dot: same table, same class function, and it
+    // reports what THIS build can actually do — live tools on a live build,
+    // scripted on a mock one, synthetic where the data is invented by design.
+    const tools = app.tools.map((t) => {
+      const state = t.alwaysSynthetic ? 'synthetic' : (live ? 'live' : 'scripted');
+      return `
         <span class="ag-tool" title="${esc(t.description)}">
-          <span class="cd-dot ${t.alwaysSynthetic ? 'synthetic' : 'scripted'}"></span>${esc(t.legendLabel)}
-        </span>`).join('');
+          <span class="${provDotClass(state)}"></span>${esc(t.legendLabel)}
+        </span>`;
+    }).join('');
     const chips = app.starters.map((s) => `<span class="ag-chip">${esc(s)}</span>`).join('');
     return `
     <a class="ag-card" data-app="${esc(app.id)}" href="./${esc(app.id)}.html" style="--accent: ${esc(app.accent)}; --accent-dk: ${esc(app.accentDark)}">
@@ -332,12 +448,25 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
       <h2 class="ag-title">${esc(app.title)}</h2>
       <p class="ag-tag">${esc(app.tagline)}</p>
       <div class="ag-tools">${tools}</div>
-      <p class="ag-mcp">${esc(toolSourceLine)}</p>
-      <p class="ag-model">${esc(modelLine)}</p>
+      <div class="ag-caps">${caps}</div>
       <div class="ag-chips">${chips}</div>
       <span class="ag-cta">Open the desk →</span>
     </a>`;
   }).join('');
+
+  // The vocabulary section — rendered from the SAME table the desks' dots and
+  // the BYOK dialog read. A definition here and a dot on a desk cannot drift.
+  const defs = PROVENANCE_HELP.map((h) => `
+      <div class="cd-help-item">
+        <span class="${provDotClass(h.state)}"></span>
+        <span><b>${esc(h.label)}</b> — ${esc(h.what)}</span>
+      </div>`).join('');
+
+  const buttons = BUTTON_HELP.map((b) => `
+      <div class="ag-btn-item">
+        <span class="ag-btn-head">${b.icon}<span class="ag-fakebtn${b.solid ? ' solid' : ''}">${esc(b.name)}</span></span>
+        <span class="ag-btn-what">${esc(b.what)}</span>
+      </div>`).join('');
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -347,6 +476,7 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
   .ag-head { text-align: center; margin: 0 0 34px; }
   .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
   .ag-head p { font-size: 15px; line-height: 1.65; color: var(--muted); margin: 0 auto; max-width: 640px; }
+  .ag-cost { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 12px auto 0; max-width: 640px; }
   .ag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
   .ag-card { display: flex; flex-direction: column; text-decoration: none; color: inherit;
     border: 1px solid var(--line); border-radius: 14px; padding: 0 18px 18px; background: var(--bg);
@@ -355,31 +485,86 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
   .ag-rule { display: block; height: 4px; margin: 0 -18px 16px; background: var(--accent); }
   .ag-title { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
   .ag-tag { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
-  .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 7px; }
+  .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 12px; }
   .ag-tool { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
-  .ag-mcp { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--accent);
-    font-weight: 700; margin: 0 0 4px; }
-  .ag-model { font-size: 11px; color: var(--muted); margin: 0 0 14px; }
+  /* the capability strip — one icon+line per thing this build can actually do */
+  .ag-caps { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px;
+    padding: 10px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+  .ag-cap { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+  .ag-cap svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
   .ag-chips { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
   .ag-chip { font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line);
     border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
   .ag-cta { margin-top: auto; align-self: flex-start; font-size: 13px; font-weight: 700;
     color: #fff; background: var(--accent); border-radius: 999px; padding: 8px 16px; }
   .ag-card:hover .ag-cta { background: var(--accent-dk); }
+
+  /* the program notes: how to read the demo, what the buttons do, take-it-home */
+  .ag-sec { margin: 34px auto 0; max-width: 760px; }
+  #guide, #buttons, #byok { scroll-margin-top: 18px; }
+  .ag-sec h2 { font-size: 16px; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .ag-sec p { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 10px; }
+  .ag-defs { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .ag-defs .cd-help-item { margin-bottom: 8px; }
+  .ag-note { font-size: 12.5px; line-height: 1.65; color: var(--muted); margin: 0 0 8px; }
+  .ag-btn-strip { display: flex; flex-wrap: wrap; gap: 10px; }
+  .ag-btn-item { flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px;
+    padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+  .ag-btn-head { display: flex; align-items: center; gap: 8px; }
+  .ag-btn-head svg { flex: 0 0 auto; color: var(--accent); }
+  .ag-btn-what { font-size: 12px; line-height: 1.55; color: var(--muted); }
+  .ag-fakebtn { font-size: 11.5px; font-weight: 600; color: var(--muted); background: none;
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+  .ag-fakebtn.solid { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
+  .ag-byok { padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--whatif, #C9932B);
+    border-radius: 11px; background: var(--soft); }
+  .ag-byok p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
+  .ag-byok strong { color: var(--ink); }
+  .ag-byok a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .ag-byok a:hover { text-decoration: underline; }
+
   .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
   .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+${PROVENANCE_CSS}
 </style></head>
 <body>
 <div class="ag-wrap">
   <header class="ag-head">
     <h1>The app gallery — one visible-reason machine, three apps</h1>
-    <p>Three real chat desks share one machine: every context source is an <strong>MCP tool the agent
-    calls</strong>, every tool sentence carries its own provenance label, and every reply can be
-    re-run without a source over the <strong>frozen</strong> tool results of the original turn.</p>
+    <p>Three real chat desks share one machine: every context source is a tool the agent calls, and
+    every reply can be re-run without a source to see what that source really changed. Everything
+    below is the program — open a desk to watch it live.</p>${live ? `
+    <p class="ag-cost" data-testid="gallery-cost">${esc(LIVE_COST_LINE)}</p>` : ''}
   </header>
   <div class="ag-grid">${cards}</div>
-  <p class="ag-foot" id="ag-foot">Open a desk to chat. The trip advisor's crowd estimate is
-    <strong>always synthetic</strong> — modeled, never measured — and always says so.</p>
+
+  <section class="ag-sec" id="guide">
+    <h2>How to read the demo</h2>
+    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
+    that tool's data actually came from on the latest reply:</p>
+    <div class="ag-defs">${defs}
+    </div>
+    <p class="ag-note">${esc(PROVENANCE_CLOSING)}</p>
+    <p class="ag-note">${esc(PROVENANCE_PHILOSOPHY)}</p>
+    <p class="ag-note">${esc(PROVENANCE_EXAMPLE)}</p>
+  </section>
+
+  <section class="ag-sec" id="buttons">
+    <h2>What the buttons do</h2>
+    <div class="ag-btn-strip">${buttons}
+    </div>
+  </section>
+
+  <section class="ag-sec" id="byok">
+    <div class="ag-byok">
+      <p><strong>Take it with you — bring your own key.</strong> Two of these desks run as a public
+      page entirely in your browser, on your own Anthropic key. The key goes only to
+      api.anthropic.com; the page's host never receives it.
+      <a href="https://footprintjs.github.io/visible-reasoning" target="_blank" rel="noopener noreferrer">→ footprintjs.github.io/visible-reasoning</a></p>
+    </div>
+  </section>
+
+  <p class="ag-foot" id="ag-foot"></p>
 </div>
 <script>
 // Served by the local server → route through it; opened as a file → keep the
@@ -387,8 +572,8 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
 if (location.protocol === 'http:' || location.protocol === 'https:') {
   document.querySelectorAll('.ag-card').forEach(function (a) { a.setAttribute('href', '/app/' + a.dataset.app); });
 } else {
-  document.getElementById('ag-foot').innerHTML +=
-    '<br>Static preview — chatting needs the local server: run <code>npm run gallery</code> and open http://localhost:4175';
+  document.getElementById('ag-foot').innerHTML =
+    'Static preview — chatting needs the local server: run <code>npm run gallery</code> and open http://localhost:4175';
 }
 </script>
 </body></html>`;
@@ -413,13 +598,15 @@ export function buildAppPage(app, data) {
   .cd-app { position: fixed; inset: 0; background: var(--bg); }
   .cd-main { height: 100%; display: flex; flex-direction: column; transition: margin-right .28s ease; }
 
-  /* top bar — minimal chrome: gallery link, brand, tagline, session/fork tabs */
+  /* top bar — runtime chrome only: gallery link, brand, model badge, session
+     tabs. The tagline lives on the gallery card: it is the same words before
+     the first message and after the hundredth, so it is program notes, not
+     stage. */
   .cd-bar { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); }
   .cd-back { font-size: 12.5px; font-weight: 600; color: var(--muted); text-decoration: none; white-space: nowrap; }
   .cd-back:hover { color: var(--accent); }
   .cd-brand { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
   .cd-brand .cd-mark { color: var(--accent); font-weight: 700; }
-  .cd-tagline { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* model badge — names what actually answers, in the same dot language as the
      tool legend: green dot + the real model id when a model is called, gray dot
      + "scripted mock — no model" when nothing is. */
@@ -476,10 +663,6 @@ export function buildAppPage(app, data) {
   .cd-prov { font-size: 12px; color: var(--muted); margin: 0 0 12px; padding: 8px 13px;
     background: var(--soft); border-radius: 9px; border: 1px solid var(--line); line-height: 1.5; }
 
-  /* live cost banner */
-  .cd-banner { margin: 0 0 12px; padding: 9px 13px; border-radius: 9px; font-size: 12px; line-height: 1.5;
-    background: #FBF3E6; border: 1px solid #E6D3B4; color: #7A5B2E; }
-
 ${PROVENANCE_CSS}
 
   /* the "visible reason" panel — slides in from the right */
@@ -519,10 +702,10 @@ ${PROVENANCE_CSS}
   @media (max-width: 720px) {
     .cd-panel { width: 100%; box-shadow: none; }
     .cd-backdrop.show { opacity: 1; pointer-events: auto; }
-    /* Narrow top bar: drop the tagline and keep every tab to a single ellipsized
-       line so a long "fork of turn 1 (without …)" chip can't wrap into a
-       4-line pill. Desktop (>=721px) is untouched. */
-    .cd-tagline, .cd-model { display: none; }
+    /* Narrow top bar: drop the model badge and keep every tab to a single
+       ellipsized line so a long "fork of turn 1 (without …)" chip can't wrap
+       into a 4-line pill. Desktop (>=721px) is untouched. */
+    .cd-model { display: none; }
     .cd-tab { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 </style></head>
@@ -552,7 +735,11 @@ var HAS_SERVER = location.protocol === 'http:' || location.protocol === 'https:'
 var API = '/app/' + DATA.app.id;
 var GALLERY_HREF = HAS_SERVER ? '/' : './gallery.html';
 var NEED_SERVER = 'Chatting needs the local server — run  npm run gallery  and open http://localhost:4175';
-${provenanceHelpScript(['live', 'scripted', 'fallback', 'synthetic', 'not consulted'])}
+${/* A desk's dialog is runtime-only: this reply's sources, then the way to the
+      gallery's guide. The vocabulary itself is rendered on the landing from the
+      same PROVENANCE_HELP table, so the two cannot drift. */
+  provenanceHelpScript(['live', 'scripted', 'fallback', 'synthetic', 'not consulted'],
+    { defs: false, guideHref: "GALLERY_HREF + '#guide'" })}
 function parseSeed(lines) {
   var uP = 'User: ', aP = DATA.app.assistantLabel + ': ';
   return lines.map(function (l) {
@@ -1031,26 +1218,31 @@ function AppDesk() {
     : null;
 
   var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
+  // What the buttons do is taught on the gallery (#buttons). The desk says only
+  // what is true right now: nothing has been asked yet.
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
-    : e('div', { className: 'cd-empty-hint' }, 'Ask a question to begin. Every reply carries a '
-        + '“visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.');
+    : e('div', { className: 'cd-empty-hint' },
+        'Ask a question to begin — or send the starter already in the box.');
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : '') },
     e('div', { className: 'cd-main' },
       e('div', { className: 'cd-bar' },
         e('a', { className: 'cd-back', href: GALLERY_HREF, 'data-testid': 'back-to-gallery' }, '← gallery'),
         e('span', { className: 'cd-brand' }, DATA.app.title, ' ', e('span', { className: 'cd-mark' }, '·'), ' ', DATA.app.assistantLabel),
-        e('span', { className: 'cd-tagline' }, DATA.app.tagline),
+        // The live cost fact is a capability of the build, not of this turn, so
+        // it lives on the gallery. It stays one hover away here — on the badge
+        // that names the model doing the spending — at zero visible chrome.
         e('span', { className: 'cd-model' + (DATA.model ? ' live' : ''), 'data-testid': 'model-badge',
-          title: DATA.model ? 'The model id sent on every request from this desk'
-                            : 'Replies are scripted by the demo — no LLM is called' },
+          title: DATA.model
+            ? 'The model id sent on every request from this desk'
+              + (DATA.costNote ? ' · ' + DATA.costNote : '')
+            : 'Replies are scripted by the demo — no LLM is called' },
           e('span', { className: 'cd-dot ' + (DATA.model ? 'live' : 'scripted') }),
           DATA.model ? DATA.model : 'scripted mock — no model'),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
-          DATA.live ? e('p', { className: 'cd-banner' }, (DATA.costNote || '') + (HAS_SERVER ? '' : ' (static preview)')) : null,
           legend,
           prov,
           conversation)),
