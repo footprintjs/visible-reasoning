@@ -112,6 +112,8 @@ ok(boot.includes("keyTail = k.slice(-4)") || boot.includes('slice(-4)'),
 // ═══ (d) the custody copy + the three-state badge ═══════════════════════════
 const mustSay = [
   'Your key stays in this tab.',
+  'This is a live public demo — it runs entirely in your browser.',
+  'this site’s host (GitHub Pages) never receives it',
   'Every Claude call goes straight from your browser to',
   'our demo server never sees your key',
   'there is no server code that',

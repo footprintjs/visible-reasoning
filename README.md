@@ -305,6 +305,27 @@ GALLERY_FORCE_FALLBACK=1 npm run gallery:live   # offline drill: every source fa
 
 ## Try it with your own key (BYOK)
 
+### Try it online
+
+**→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
+
+A live public demo of the two desks — trip advisor and movie desk — running on
+real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own Anthropic API
+key, ask a question, and see the visible reason, the verified what-if re-run and
+the fork, exactly as the paper describes them.
+
+**It runs entirely in your browser. Your key goes only to Anthropic; the site's
+host (GitHub Pages) never receives it.** GitHub Pages hands out static files and
+nothing else — there is no backend to send a key to, so no server of ours or
+theirs is in the key path. Open DevTools → Network and check: the only requests
+carrying your key go to `api.anthropic.com`.
+
+Prefer to run it yourself? `npm run byok` serves the identical page from your own
+machine on `http://localhost:4176` — same files, same behaviour, no host at all.
+(`npm run byok:publish` is what stages the hosted copy.)
+
+### How it works
+
 The app gallery has a bring-your-own-key page: paste your Anthropic API key and
 chat with the trip advisor and the movie desk — visible reasons, verified
 what-if re-runs and forks included — with everything running in your browser.
@@ -339,6 +360,22 @@ Honest scope: two desks, not three. The SEC's servers don't allow browser
 calls, so the stock desk runs only in the server demo (`npm run gallery:live`).
 Each reply spends a handful of small Haiku calls on your key; re-runs replay
 the original turn's frozen tool results — zero new fetches.
+
+### Publishing the hosted copy
+
+```sh
+npm run byok:publish   # regenerate + stage into .gh-pages-staging/ (gitignored)
+```
+
+It writes the generated folder plus `.nojekyll` (GitHub Pages otherwise runs
+Jekyll, which silently drops every path starting with `_` — a hazard in a
+vendored dist tree we don't control) and a `404.html` that redirects to `./`.
+Then it prints the `git worktree` commands that push the staged folder to an
+orphan `gh-pages` branch, which keeps the 6.6 MB artifact out of `main`.
+
+Nothing in the page assumes an origin or a base path: every asset reference and
+every import-map entry is relative, so the same folder works at
+`/visible-reasoning/`, at a domain root, or off `python3 -m http.server`.
 
 ## Citing
 

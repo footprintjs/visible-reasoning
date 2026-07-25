@@ -43,6 +43,13 @@ const em = (s) => ({ em: s });
 
 const CUSTODY_COPY = [
   [b('Your key stays in this tab.')],
+  // The hosted line. This page is published to GitHub Pages, so a visitor's
+  // first question is "who is hosting this, and what do they get?" — answered
+  // before the mechanics. Pages serves the files and sees those file requests;
+  // it never sees the key, because no request carrying the key goes to it.
+  [
+    t('This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.'),
+  ],
   [
     t('Every Claude call goes straight from your browser to '), code('api.anthropic.com'),
     t(' — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. '),
@@ -70,6 +77,16 @@ const FOOTER_COPY = [
 
 const CHECKBOX_LABEL = 'Remember my key in this tab (survives reload; forgotten when the tab closes)';
 const STOCK_NOTE = 'The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo.';
+
+// A key, drawn in the page's accent — inline so it costs no request.
+const FAVICON = 'data:image/svg+xml,'
+  + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    + '<rect width="32" height="32" rx="7" fill="#C0531F"/>'
+    + '<circle cx="12.5" cy="12.5" r="5" fill="none" stroke="#fff" stroke-width="3"/>'
+    + '<path d="M16.2 16.2 L24 24 M20.5 20.5 l3.2 -3.2" fill="none" stroke="#fff"'
+    + ' stroke-width="3" stroke-linecap="round"/></svg>',
+  );
 
 // ─── The shared skin (page.js's tokens, verbatim) ───────────────────────────
 const SKIN = `
@@ -104,9 +121,15 @@ export function buildByokPage({ importMap, apps, model }) {
     checkboxLabel: CHECKBOX_LABEL, stockNote: STOCK_NOTE,
   });
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bring your own key — the app gallery</title>
+<meta name="description" content="Chat with two small advisors on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
+${/* An inline data: icon, not a file. The custody copy tells visitors to open
+     DevTools → Network and read every request; the browser's automatic
+     /favicon.ico probe would put a 404 in that list and make them wonder. This
+     costs zero requests and keeps the tab honest-looking. */''}
+<link rel="icon" href="${FAVICON}">
 <script type="importmap">
 ${importMap}
 </script>
@@ -880,7 +903,12 @@ function Byok() {
       style: { '--accent': app.accent, '--accent-dk': app.accentDark } },
     e('div', { className: 'cd-main' },
       e('div', { className: 'cd-bar' },
-        e('a', { className: 'cd-back', href: './gallery.html', 'data-testid': 'back-to-gallery' }, '← gallery'),
+        // NOT './gallery.html': out/byok/ is a standalone folder — the gallery
+        // pages live one level up in the local demo and are not published at
+        // all, so a relative link there 404s wherever this page is served.
+        // The repo is the honest destination and works from any host.
+        e('a', { className: 'cd-back', href: 'https://github.com/footprintjs/visible-reasoning',
+          target: '_blank', rel: 'noopener noreferrer', 'data-testid': 'back-to-gallery' }, '← source'),
         e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', app.title),
         e('span', { className: 'cd-tagline' }, app.tagline),
         badge,

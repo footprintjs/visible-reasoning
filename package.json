@@ -22,6 +22,7 @@
     "byok": "node 08-app-gallery/byok.js --serve",
     "byok:build": "node 08-app-gallery/byok.js",
     "verify:byok": "node 08-app-gallery/verify-byok.mjs",
+    "byok:publish": "node 08-app-gallery/publish-byok.mjs",
     "live": "node --env-file=.env live/run.js",
     "verify": "node verify.js",
     "all": "node verify.js"
