@@ -37,7 +37,8 @@ import { dirname, join } from 'node:path';
 // imported, never re-authored, so a card here and a card in the local gallery
 // are the same element with different truths in it.
 import {
-  GALLERY_CSS, PROVENANCE_CSS, ICON, galleryCard, guideSection, provenanceHelpScript,
+  GALLERY_CSS, PROVENANCE_CSS, ICON, aboutSection, galleryCard, guideSection, headerRail,
+  provenanceHelpScript,
 } from './page.js';
 
 const require = createRequire(import.meta.url);
@@ -151,9 +152,10 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 
 /**
  * The BUILD-TIME twin of the page script's richLine(): one rich-text line of
- * copy → one <p>. The landing has no script, so its copy is rendered here from
- * the SAME segment arrays the desks render in React — the sentences cannot
- * drift between the two surfaces because there is only one of each.
+ * copy → one <p>. The landing renders no React (its one script only turns the
+ * about cards over), so its copy is rendered here from the SAME segment arrays
+ * the desks render in React — the sentences cannot drift between the two
+ * surfaces because there is only one of each.
  */
 const richLineHtml = (segs) => `<p>${segs.map((s) => {
   if (s.b !== undefined) return `<strong>${esc(s.b)}</strong>`;
@@ -175,17 +177,21 @@ const LANDING_CSS = `
   .ag-card.off { opacity: .72; background: var(--soft); }
   .ag-card.off .ag-cta { background: none; color: var(--muted); border: 1px dashed var(--line); }
   .ag-cardnote { font-size: 12.5px; line-height: 1.55; color: #8A4A22; margin: 0 0 14px; }
-  .by-src { margin-top: 26px; }
-  .by-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
-  .by-src a:hover { text-decoration: underline; }
 `;
 
 /**
  * THE GALLERY HOME — out/byok/index.html.
  *
  * Cards first, key entry never: a visitor arriving cold reads what this is and
- * where their key would go, then picks a desk and arms it there. Zero script,
- * zero absolute paths — it is honest under a subpath, at a root, and off file://.
+ * where their key would go, then picks a desk and arms it there. Zero absolute
+ * paths — it is honest under a subpath, at a root, and off file://.
+ *
+ * ONE script rides along, and only one: the about deck's flip (lib/page.js's
+ * ABOUT_FLIP_SCRIPT), which turns a card over on click or Enter/Space. It makes
+ * no request, touches no storage and knows nothing about keys — the custody
+ * guarantees are unchanged and verify-byok.mjs asserts each of those properties
+ * about the script itself, not just about the page. Scripting off leaves the
+ * deck flat and fully readable.
  *
  * @param opts.apps   page-safe slices of the packs the bundle carries, in order
  * @param opts.stock  the page-safe slice of the desk that CANNOT run here; it
@@ -231,6 +237,7 @@ export function buildByokLanding({ apps, stock, model }) {
 </style></head>
 <body>
 <div class="ag-wrap">
+${headerRail()}
   <header class="ag-head">
     <h1>Bring your own key · the app gallery</h1>
     <p>Two real chat desks share one machine: every context source is a tool the agent calls, and
@@ -248,6 +255,15 @@ export function buildByokLanding({ apps, stock, model }) {
   </section>
 
   <div class="ag-grid" data-testid="landing-cards">${cards}${stockCard}</div>
+${aboutSection({
+    // Both facts as this bundle really is: two desks in the tab and a third that
+    // says why it isn't, and tools that are real browser fetches — nothing here
+    // is a rehearsal, and the SEC line is the same honest limit the card states.
+    desks: 'Two desks run in your browser — a trip advisor and a movie desk — over one machine; '
+      + 'the third gets a card that says why it can’t run here.',
+    sources: 'Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from '
+      + 'iTunes — keyless public APIs, called straight from your tab.',
+  })}
 ${guideSection(BYOK_STATES)}
 
   <section class="ag-sec" id="notes">
@@ -256,7 +272,7 @@ ${guideSection(BYOK_STATES)}
     </div>
   </section>
 
-  <p class="ag-foot by-src">Every file here — this page, the desks, the vendored library bytes — is
+  <p class="ag-foot ag-src">Every file here — this page, the desks, the vendored library bytes — is
   generated from the repo and served as-is.
   <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener noreferrer">github.com/footprintjs/visible-reasoning</a></p>
 </div>

@@ -418,6 +418,16 @@ export const BUTTON_HELP = [
 // Forking them would let a card on one landing drift from a card on the other.
 export const GALLERY_CSS = `
   .ag-wrap { max-width: 1040px; margin: 0 auto; padding: 46px 22px 60px; }
+
+  /* the header rail — quiet text links out of the demo, not buttons and not
+     chips: the apps are the page, these are just the ways off it */
+  .ag-rail { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 18px;
+    margin: -16px 0 24px; font-size: 12.5px; line-height: 1.6; }
+  .ag-rail a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
+  .ag-rail a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  .ag-rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+  @media (max-width: 560px) { .ag-rail { justify-content: flex-start; gap: 4px 14px; } }
+
   .ag-head { text-align: center; margin: 0 0 34px; }
   .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
   .ag-head p { font-size: 15px; line-height: 1.65; color: var(--muted); margin: 0 auto; max-width: 640px; }
@@ -446,7 +456,7 @@ export const GALLERY_CSS = `
 
   /* the program notes: how to read the demo, what the buttons do, take-it-home */
   .ag-sec { margin: 34px auto 0; max-width: 760px; }
-  #guide, #buttons, #byok { scroll-margin-top: 18px; }
+  #guide, #about, #buttons, #byok { scroll-margin-top: 18px; }
   .ag-sec h2 { font-size: 16px; margin: 0 0 8px; letter-spacing: -0.01em; }
   .ag-sec p { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 10px; }
   .ag-defs { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
@@ -470,6 +480,69 @@ export const GALLERY_CSS = `
 
   .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
   .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  /* the body's own way to the source — both landings carry one, styled once */
+  .ag-src { margin-top: 26px; }
+  .ag-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  .ag-src a:hover { text-decoration: underline; }
+
+  /* ── the about deck: index cards you turn over ─────────────────────────────
+     Deliberately quieter than an app card — hairline border, one accent hairline
+     on the front edge, no fill, no resting shadow. The apps are the stars; this
+     is the program note you pick up on the way past. */
+  .ab-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 14px; }
+  .ab-head h2 { margin: 0; }
+  .ab-hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+  /* Two up, in the program-notes column — narrower than the app grid on purpose,
+     and wide enough that a card's back is a few lines rather than a column of
+     text taller than its own front. The last card takes the full row. */
+  .ab-deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .ab-card:last-child { grid-column: 1 / -1; }
+  .ab-card { border-radius: 12px; }
+  .ab-flip { display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+    background: none; border: 0; padding: 0; border-radius: 12px; }
+  .ab-inner { display: grid; gap: 10px; border-radius: 12px; }
+  .ab-face { display: flex; flex-direction: column; gap: 7px; padding: 14px 15px 12px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+  .ab-front { border-left: 2px solid var(--ab-accent, var(--accent)); }
+  .ab-title { font-size: 14.5px; font-weight: 700; letter-spacing: -0.005em; margin: 0; line-height: 1.4; }
+  .ab-teaser { font-size: 12.5px; line-height: 1.55; color: var(--muted); margin: 0; }
+  .ab-body { font-size: 12.5px; line-height: 1.62; color: var(--muted); margin: 0; }
+  .ab-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+  .ab-body a:hover { border-bottom-color: var(--accent); }
+  .ab-body a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  .ab-turn { margin-top: auto; padding-top: 4px; font-size: 11.5px; color: var(--muted); }
+
+  /* Script on: the two faces stack in one grid cell and the card turns.
+     Script off: they stay in flow, one above the other — the note still reads. */
+  .ab-deck[data-flip="on"] .ab-flip { cursor: pointer; }
+  .ab-deck[data-flip="on"] .ab-flip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .ab-deck[data-flip="on"] .ab-flip:hover .ab-turn { color: var(--accent); }
+  .ab-deck[data-flip="on"] .ab-inner { gap: 0; transform-style: preserve-3d;
+    transition: transform 450ms cubic-bezier(.22,.61,.36,1); }
+  .ab-deck[data-flip="on"] .ab-face { grid-area: 1 / 1; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+  .ab-deck[data-flip="on"] .ab-back { transform: rotateY(180deg); }
+  .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: rotateY(180deg); }
+  /* the paper-card lift: the shadow rises at the halfway point and settles back.
+     It lives on the un-rotated shell, so it stays under the card, not on it. */
+  .ab-deck[data-flip="on"] .ab-card { perspective: 1200px; }
+  .ab-deck[data-flip="on"] .ab-card.is-turning { animation: ab-lift 450ms ease-out; }
+  @keyframes ab-lift {
+    0%   { box-shadow: 0 0 0 rgba(40,30,20,0); }
+    45%  { box-shadow: 0 9px 20px rgba(40,30,20,.13); }
+    100% { box-shadow: 0 0 0 rgba(40,30,20,0); }
+  }
+
+  /* Reduced motion: nothing rotates and nothing lifts — the back simply takes
+     the front's place. Same control, same content, no movement. */
+  @media (prefers-reduced-motion: reduce) {
+    .ab-deck[data-flip="on"] .ab-inner { transition: none; transform: none; }
+    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: none; }
+    .ab-deck[data-flip="on"] .ab-face { backface-visibility: visible; -webkit-backface-visibility: visible; }
+    .ab-deck[data-flip="on"] .ab-back { transform: none; }
+    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="false"] .ab-back { display: none; }
+    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-front { display: none; }
+    .ab-deck[data-flip="on"] .ab-card.is-turning { animation: none; }
+  }
 `;
 
 /**
@@ -543,6 +616,209 @@ export function guideSection(states = PROVENANCE_HELP.map((h) => h.state)) {
   </section>`;
 }
 
+// ─── THE HEADER RAIL — the quiet ways off this page ────────────────────────
+/**
+ * Three text links, in the order a visitor needs them: the code behind the page,
+ * the library the desks actually run on, then the rest of the family. Text, not
+ * buttons: the apps are the page's call to action and nothing here competes with
+ * them. Both landings render THIS — same links, same labels, one list.
+ *
+ * `↗` is decorative (aria-hidden) and target=_blank keeps a running desk or a
+ * half-read landing where the visitor left it.
+ */
+export const HEADER_LINKS = [
+  { href: 'https://github.com/footprintjs/visible-reasoning', label: 'source',
+    title: 'The repository these pages are generated from' },
+  { href: 'https://footprintjs.github.io/agentfootprint/', label: 'agentfootprint',
+    title: 'The library these demos run on' },
+  { href: 'https://footprintjs.github.io/', label: 'footprintjs',
+    title: 'The rest of the ecosystem' },
+];
+
+export function headerRail() {
+  const links = HEADER_LINKS.map((l) => `
+      <a href="${esc(l.href)}" target="_blank" rel="noopener" title="${esc(l.title)}"
+        >${esc(l.label)} <span aria-hidden="true">↗</span></a>`).join('');
+  return `
+  <nav class="ag-rail" aria-label="Project links">${links}
+  </nav>`;
+}
+
+// ─── THE ABOUT DECK — five index cards you turn over ───────────────────────
+// The five things a visitor asks after looking at the app cards, in the order
+// they ask them. Every claim is something this build actually does, so the two
+// facts that differ between the local gallery and the browser bundle — how many
+// desks there are, and where the data comes from — are passed IN. Everything
+// else is one text, rendered on both landings.
+//
+// A body part is either a string (escaped) or { href, label } (a link). Only the
+// last card has links; they are keyboard-reachable when the card is turned and
+// inert when it is not.
+const aboutPart = (p) => (typeof p === 'string'
+  ? esc(p)
+  : `<a href="${esc(p.href)}" target="_blank" rel="noopener">${esc(p.label)}</a>`);
+
+const PAPER_DOI = 'https://doi.org/10.1007/978-3-032-30849-8_1';
+
+/** The front-edge hairlines: the three desks' own accents, in desk order. */
+const ABOUT_ACCENTS = ['#C0531F', '#7A4CBF', '#2E7D4F'];
+
+/**
+ * @param o.desks    one sentence naming the desks THIS landing actually offers
+ * @param o.sources  one sentence naming where THIS build's data really comes from
+ */
+export function aboutCards({ desks, sources }) {
+  return [
+    {
+      title: 'What you’re looking at',
+      teaser: 'Real chat apps sharing one machine that records why each answer happened.',
+      body: [`${desks} None of them narrates its own reasoning. Each one records it: every source `
+        + 'the agent consults is a tool call, and the record of which tools ran, what came back and '
+        + 'what it changed survives the reply.'],
+    },
+    {
+      title: 'Why this isn’t the model explaining itself',
+      teaser: 'The framework owns the trace; the model is never asked to narrate its reasons.',
+      body: ['The paper calls this a third paradigm. Instead of asking the model to narrate its '
+        + 'reasons — which cannot be checked — or asking a second model to judge it, the substrate '
+        + 'that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed '
+        + 'events captured as the run happens, not a story told afterwards.'],
+    },
+    {
+      title: 'What the scores mean (and don’t)',
+      teaser: 'A ranking is a lead, not a verdict.',
+      body: ['The visible-reason panel ranks each source by semantic alignment: a deterministic '
+        + 'score comparing what that source said with what the answer said. It is a proxy for '
+        + 'influence, not a proof — a high score means “this reads like it mattered”. Only the '
+        + 're-run convicts: drop a source, answer again over the frozen tool results, and see '
+        + 'whether the decision actually changes.'],
+    },
+    {
+      title: 'Where the data comes from',
+      teaser: 'Every sentence carries the label of where it came from.',
+      body: [`${sources} Every tool sentence carries its own [source: …] label, and the dot beside `
+        + 'a tool names what really happened on the latest reply. The trip advisor’s crowd estimate '
+        + 'is invented by design — modeled, never measured — and always says so.'],
+    },
+    {
+      title: 'The paper and the libraries',
+      teaser: 'Where this comes from, and what it is built on.',
+      body: [
+        'Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems — HCII 2026, '
+        + 'LNCS volume 16745, pages 3–21 (',
+        { href: PAPER_DOI, label: 'doi.org/10.1007/978-3-032-30849-8_1' },
+        '). The machinery is three MIT-licensed libraries: ',
+        { href: 'https://www.npmjs.com/package/footprintjs', label: 'footprintjs' },
+        ' records the run, ',
+        { href: 'https://www.npmjs.com/package/agentfootprint', label: 'agentfootprint' },
+        ' turns that recording into agents, influence rankings and re-runs, and ',
+        { href: 'https://www.npmjs.com/package/agentthinkingui', label: 'agentthinkingui' },
+        ' draws the panels you are clicking.',
+      ],
+    },
+  ];
+}
+
+/**
+ * The ONE flip behaviour, shipped with the markup that needs it.
+ *
+ * Progressive by construction: the deck is authored flat (both faces in flow, the
+ * whole note readable), and this script is what turns it into cards. Scripting
+ * off ⇒ nothing is hidden behind a flip that never happens.
+ *
+ * It is also the only script the BYOK landing carries, so it is deliberately
+ * small enough to read: no network, no storage, no timers beyond the one that
+ * ends the shadow lift, and it never touches anything outside its own deck.
+ */
+export const ABOUT_FLIP_SCRIPT = `<script>
+(function () {
+  var deck = document.querySelector('[data-about-deck]');
+  if (!deck) return;
+  deck.setAttribute('data-flip', 'on');
+  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+
+  Array.prototype.forEach.call(deck.querySelectorAll('.ab-flip'), function (card) {
+    var shell = card.parentNode;
+    var front = card.querySelector('.ab-front');
+    var back = card.querySelector('.ab-back');
+    var timer = 0;
+
+    // The hidden face is not just invisible: it is out of the tab order and out
+    // of the accessibility tree, so a link on the back of a card you can't see
+    // can't be tabbed into. inert does it where it exists; the tabindex sweep is
+    // the fallback that works everywhere.
+    function conceal(face, hidden) {
+      if (hidden) { face.setAttribute('inert', ''); face.setAttribute('aria-hidden', 'true'); }
+      else { face.removeAttribute('inert'); face.removeAttribute('aria-hidden'); }
+      Array.prototype.forEach.call(face.querySelectorAll('a'), function (a) {
+        if (hidden) a.setAttribute('tabindex', '-1'); else a.removeAttribute('tabindex');
+      });
+    }
+    function show(flipped) {
+      card.setAttribute('aria-pressed', flipped ? 'true' : 'false');
+      conceal(front, flipped);
+      conceal(back, !flipped);
+    }
+    function turn() {
+      show(card.getAttribute('aria-pressed') !== 'true');
+      if (reduce && reduce.matches) return;
+      shell.classList.remove('is-turning');
+      void shell.offsetWidth;              // restart the lift on a fast re-flip
+      shell.classList.add('is-turning');
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function () { shell.classList.remove('is-turning'); }, 460);
+    }
+
+    show(false);
+    card.addEventListener('click', function (ev) {
+      // A link on the back stays a link — clicking it must not also turn the card.
+      if (ev.target.closest && ev.target.closest('a')) return;
+      turn();
+    });
+    card.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+      if (ev.target !== card) return;      // Enter on a link inside is that link's
+      ev.preventDefault();                 // Space must not scroll the page
+      turn();
+    });
+  });
+}());
+</script>`;
+
+/**
+ * The about section — five cards, and the script that makes them turn. Rendered
+ * on both landings from one call, so a card here and a card there are the same
+ * element with the same words in it.
+ */
+export function aboutSection({ desks, sources }) {
+  const cards = aboutCards({ desks, sources }).map((c, i) => `
+      <div class="ab-card" style="--ab-accent: ${ABOUT_ACCENTS[i % ABOUT_ACCENTS.length]}">
+        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
+          <div class="ab-inner">
+            <div class="ab-face ab-front">
+              <h3 class="ab-title">${esc(c.title)}</h3>
+              <p class="ab-teaser">${esc(c.teaser)}</p>
+              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
+            </div>
+            <div class="ab-face ab-back">
+              <p class="ab-body">${c.body.map(aboutPart).join('')}</p>
+              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
+            </div>
+          </div>
+        </div>
+      </div>`).join('');
+  return `
+  <section class="ag-sec ag-about" id="about">
+    <div class="ab-head">
+      <h2>About this demo</h2>
+      <p class="ab-hint">Five cards — turn one over to read the rest.</p>
+    </div>
+    <div class="ab-deck" data-about-deck>${cards}
+    </div>
+  </section>
+${ABOUT_FLIP_SCRIPT}`;
+}
+
 // ─── THE CARDS LANDING PAGE ────────────────────────────────────────────────
 /**
  * @param apps  the app packs, in gallery order
@@ -572,6 +848,17 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
     app, caps: capLines, dotState, href: `./${app.id}.html`, dataApp: true,
   })).join('');
 
+  // The two about-deck facts that are NOT the same on both landings. Same honesty
+  // rule as every card line: a mock build fetched nothing, so it says so and
+  // names what a live run would reach instead.
+  const desks = 'Three desks, three sets of sources — a trip advisor, a movie desk, a stock desk — '
+    + 'and one machine underneath.';
+  const sources = live
+    ? 'Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from iTunes, '
+      + 'filings from SEC EDGAR — real public sources, called as tools.'
+    : 'This build answers from rehearsal data written into the demo — no network. Run it live and '
+      + 'the same tool calls reach the real sources: Open-Meteo, Wikipedia, iTunes, SEC EDGAR.';
+
   const buttons = BUTTON_HELP.map((b) => `
       <div class="ag-btn-item">
         <span class="ag-btn-head">${b.icon}<span class="ag-fakebtn${b.solid ? ' solid' : ''}">${esc(b.name)}</span></span>
@@ -585,6 +872,7 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
 </style></head>
 <body>
 <div class="ag-wrap">
+${headerRail()}
   <header class="ag-head">
     <h1>The app gallery — one visible-reason machine, three apps</h1>
     <p>Three real chat desks share one machine: every context source is a tool the agent calls, and
@@ -593,6 +881,7 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
     <p class="ag-cost" data-testid="gallery-cost">${esc(LIVE_COST_LINE)}</p>` : ''}
   </header>
   <div class="ag-grid">${cards}</div>
+${aboutSection({ desks, sources })}
 ${guideSection()}
 
   <section class="ag-sec" id="buttons">
@@ -611,6 +900,9 @@ ${guideSection()}
   </section>
 
   <p class="ag-foot" id="ag-foot"></p>
+  <p class="ag-foot ag-src">This page and the desks behind it are generated from the repo — every
+  sentence on them is something the code does.
+  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">github.com/footprintjs/visible-reasoning</a></p>
 </div>
 <script>
 // Served by the local server → route through it; opened as a file → keep the

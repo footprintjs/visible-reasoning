@@ -20,7 +20,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generate, serve } from './byok.js';
-import { PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
+import { HEADER_LINKS, PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
 import { trip } from './apps/trip.js';
 import { APPS } from './apps/index.js';
 
@@ -186,11 +186,39 @@ for (const d of deskPages) {
 // origin (so the same folder is correct at /visible-reasoning/, at a root, and
 // off file://).
 ok(landing.includes('<h1>Bring your own key · the app gallery</h1>'), '[home] the header names the page');
-ok(!/<script/i.test(landing), '[home] carries no script at all — a landing that cannot misbehave');
 ok(!landing.includes('type="password"') && !landing.includes('byok-key') && !landing.includes('byok-arm'),
   '[home] has NO key input — arming happens on the desk the visitor picked');
 ok(!/sessionStorage|localStorage/.test(landing), '[home] touches no storage');
 ok(landing.includes('data-testid="landing-custody"'), '[home] the custody explainer card is on the home');
+
+// THE LANDING'S ONE SCRIPT. It used to carry none, and "no script" was the
+// cheapest possible proof that it cannot misbehave. The about deck's flip needs
+// aria-pressed and Enter/Space, which is a script — so the proof moves from
+// "there is no code" to "here is all of the code, and here is what it cannot
+// do". Everything below is asserted about the script's own bytes: exactly one,
+// inline (nothing is fetched), and inside it no request, no storage, no key, no
+// URL configuration. The custody claim is unchanged — the key path still has no
+// server of ours in it, and this landing still takes no key at all.
+const landingScripts = [...landing.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+ok(landingScripts.length === 1, '[home] carries exactly ONE script — the about-card flip, nothing else',
+  `${landingScripts.length} script tag(s)`);
+const landingJs = landingScripts.map((m) => m[2]).join('\n');
+ok(landingScripts.every((m) => !/\bsrc=/.test(m[1])),
+  '[home] that script is inline — the landing loads no code from anywhere');
+ok(!/fetch\(|XMLHttpRequest|WebSocket|sendBeacon|new Image\(|import\(/.test(landingJs),
+  '[home] the landing script makes no request of any kind');
+ok(!/sessionStorage|localStorage|document\.cookie|indexedDB/.test(landingJs),
+  '[home] the landing script touches no storage');
+ok(!/apiKey|api\.anthropic|sk-ant|password/i.test(landingJs),
+  '[home] the landing script knows nothing about keys');
+ok(!/location|URLSearchParams|history\./.test(landingJs),
+  '[home] the landing script reads no URL and navigates nowhere');
+ok(landingJs.includes("deck.setAttribute('data-flip', 'on')") && landing.includes('data-about-deck'),
+  '[home] the script only enhances its own deck — the about cards and nothing outside them');
+// Scripting off must not hide anything: the deck is authored flat (both faces in
+// flow) and the script is what stacks them, so a no-JS visitor still reads it.
+ok(landing.includes('<div class="ab-deck" data-about-deck>') && !/<div class="ab-deck"[^>]*data-flip/.test(landing),
+  '[home] the about deck ships flat — with scripting off every card back is still readable');
 
 // The cards, and where they go.
 for (const id of DESKS) {
@@ -237,6 +265,31 @@ const landingBody = landing.slice(landing.indexOf('<body>'));
 ok(!landingBody.includes('scripted'),
   '[home] nothing rendered says “scripted” — no source in this bundle is');
 ok(landing.includes('github.com/footprintjs/visible-reasoning'), '[home] the source link is on the page');
+
+// The header rail and the about deck — both rendered from lib/page.js, so the
+// two landings cannot drift. Asserted here because this is the PUBLIC page: a
+// visitor who arrives cold gets the way to the code, to the library the desks
+// run on, and to the five program notes.
+for (const l of HEADER_LINKS) {
+  ok(new RegExp(`<a href="${l.href.replace(/[/.]/g, '\\$&')}" target="_blank" rel="noopener"`).test(landing),
+    `[home] the header rail links ${l.label} — new tab, rel=noopener`);
+}
+ok((landing.match(/data-testid="about-card"/g) || []).length === 5,
+  '[home] the about deck has five cards', String((landing.match(/data-testid="about-card"/g) || []).length));
+ok((landing.match(/role="button" tabindex="0" aria-pressed="false"/g) || []).length === 5,
+  '[home] every about card ships un-flipped, keyboard-reachable, with aria-pressed on it',
+  String((landing.match(/role="button" tabindex="0" aria-pressed="false"/g) || []).length));
+ok(landing.includes('doi.org/10.1007/978-3-032-30849-8_1'),
+  '[home] the about deck cites the paper by DOI');
+for (const lib of ['footprintjs', 'agentfootprint', 'agentthinkingui']) {
+  ok(landing.includes(`https://www.npmjs.com/package/${lib}`), `[home] the about deck links ${lib}`);
+}
+// The two build-specific facts: this bundle is two browser desks over keyless
+// public APIs. A card that claimed three desks or a network it never touches
+// would be exactly the dishonesty the rest of this file exists to prevent.
+ok(landing.includes('Two desks run in your browser'), '[home] the about deck says TWO desks, not three');
+ok(landing.includes('called straight from your tab'),
+  '[home] the about deck describes browser-side tool calls, not a server’s');
 
 // ═══ (f) same-tab navigation, without losing anything silently ══════════════
 const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';

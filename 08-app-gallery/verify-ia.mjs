@@ -21,8 +21,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  BUTTON_HELP, LIVE_COST_LINE, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE, PROVENANCE_HELP,
-  PROVENANCE_PHILOSOPHY, buildAppPage, buildGalleryPage, provenanceHelpScript,
+  BUTTON_HELP, HEADER_LINKS, LIVE_COST_LINE, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE, PROVENANCE_HELP,
+  PROVENANCE_PHILOSOPHY, aboutCards, buildAppPage, buildGalleryPage, provenanceHelpScript,
 } from './lib/page.js';
 import { APPS } from './apps/index.js';
 import { generate } from './byok.js';
@@ -43,6 +43,22 @@ const deskData = (model) => ({
 });
 
 console.log('=== IA VERIFY (landing = program notes, desk = stage) ===\n');
+
+// The BYOK bundle, built ONCE into a SCRATCH directory, never out/: a gate
+// reads, it does not write the tree it is judging. (out/byok is a build product
+// of `npm run byok:build` and of verify-byok, which owns that artifact; this run
+// must not race them or leave a diff behind.) The pages come back as strings —
+// no round trip to disk. `index.html` is the public landing (checked beside the
+// local one below); `trip.html` is a BYOK DESK, the stage section A3 judges.
+const scratch = mkdtempSync(join(tmpdir(), 'vr-ia-byok-'));
+let byokPages;
+try {
+  byokPages = generate({ quiet: true, outDir: join(scratch, 'byok') }).pages;
+} finally {
+  rmSync(scratch, { recursive: true, force: true });
+}
+const byokHome = byokPages['index.html'];
+const byok = byokPages['trip.html'];
 
 // ═══ A1. the landing carries the vocabulary, single-sourced ═════════════════
 const mockGallery = buildGalleryPage(APPS, { live: false, model: MODEL });
@@ -75,11 +91,53 @@ for (const b of BUTTON_HELP) {
 }
 ok(mockGallery.includes('id="byok"') && mockGallery.includes('footprintjs.github.io/visible-reasoning'),
   'the landing has #byok — the take-home pointer at the public page');
-ok(/#guide, #buttons, #byok \{ scroll-margin-top: 18px; \}/.test(mockGallery),
+ok(/#guide, #about, #buttons, #byok \{ scroll-margin-top: 18px; \}/.test(mockGallery),
   'anchored arrivals get scroll-margin so they do not sit flush against the viewport edge');
 
+// ═══ A1b. the header rail + the about deck, on BOTH landings ════════════════
+// Static information, so it belongs here by the same rule as the guide: it reads
+// the same before the first message and after the hundredth. Both surfaces are
+// rendered from lib/page.js by both landings — neither has its own copy of the
+// text, so a claim can only be wrong in one place.
+const backsOf = (html) => [...html.matchAll(/<p class="ab-body">([\s\S]*?)<\/p>/g)]
+  .map((m) => m[1].replace(/<[^>]+>/g, '').trim());
+for (const [name, html] of [['gallery', mockGallery], ['byok home', byokHome]]) {
+  for (const l of HEADER_LINKS) {
+    ok(html.includes(`<a href="${l.href}" target="_blank" rel="noopener"`),
+      `[${name}] the header rail links ${l.label} in a new tab`);
+  }
+  const titles = aboutCards({ desks: '', sources: '' }).map((c) => c.title);
+  ok((html.match(/data-testid="about-card"/g) || []).length === titles.length,
+    `[${name}] the about deck carries five cards`, String((html.match(/data-testid="about-card"/g) || []).length));
+  for (const title of titles) ok(html.includes(title), `[${name}] the about deck carries the “${title}” card`);
+  // Short enough to read standing up, long enough to say something. Measured on
+  // the RENDERED back of each card, so the per-landing facts are counted too.
+  const backs = backsOf(html);
+  ok(backs.length === titles.length, `[${name}] every card has a back`, String(backs.length));
+  backs.forEach((text, i) => {
+    // Words, not tokens: a lone em dash is punctuation, not something to read.
+    const words = text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+    ok(words >= 40 && words <= 70, `[${name}] “${titles[i]}” is a card, not an essay`, `${words} words`);
+  });
+  // The deck is an ADDITION, not a replacement: the guide's definitions are what
+  // a dot on a desk is checked against, and they stay exactly where they were.
+  ok(html.includes('id="guide"') && html.includes('How to read the demo'),
+    `[${name}] the provenance guide survived the about deck, intact`);
+  ok(html.indexOf('id="about"') < html.indexOf('id="guide"'),
+    `[${name}] the about deck reads before the guide — what this is, then how to read it`);
+  ok(html.includes('github.com/footprintjs/visible-reasoning'),
+    `[${name}] the source is reachable from the page body, not only the header rail`);
+  // The flip is progressive: the deck ships flat and the script stacks it, so
+  // scripting off costs a visitor the animation, never the words.
+  ok(html.includes('<div class="ab-deck" data-about-deck>') && !/<div class="ab-deck"[^>]*data-flip/.test(html),
+    `[${name}] the deck ships flat — every back is readable with scripting off`);
+}
+
 // ═══ A4. the cards are build-honest ═════════════════════════════════════════
-const cardsOf = (html) => html.slice(html.indexOf('<div class="ag-grid">'), html.indexOf('<section class="ag-sec" id="guide">'));
+// The app-card grid alone — it now ends at the about deck, which sits between
+// the cards and the guide. The slice must stop there or the deck's prose would
+// be read as a card's claim.
+const cardsOf = (html) => html.slice(html.indexOf('<div class="ag-grid">'), html.indexOf('<section class="ag-sec ag-about"'));
 const mockCards = cardsOf(mockGallery);
 const liveCards = cardsOf(liveGallery);
 ok(!mockCards.includes('cd-dot live'), 'mock build: no card dot claims a live source');
@@ -132,21 +190,9 @@ for (const app of APPS) {
 }
 
 // ═══ A3. BYOK keeps both sections ═══════════════════════════════════════════
-// Built into a SCRATCH directory, never out/: a gate reads, it does not write
-// the tree it is judging. (out/byok is a build product of `npm run byok:build`
-// and of verify-byok, which owns that artifact; this run must not race them or
-// leave a diff behind.) The pages come back as strings — no round trip to disk.
-//
-// `byok` is a BYOK DESK page, not the bundle's home: the home is a landing (its
-// own gallery, with its own #guide) and the desk is the stage this section
-// judges. verify-byok.mjs owns the home's assertions.
-const scratch = mkdtempSync(join(tmpdir(), 'vr-ia-byok-'));
-let byok;
-try {
-  byok = generate({ quiet: true, outDir: join(scratch, 'byok') }).pages['trip.html'];
-} finally {
-  rmSync(scratch, { recursive: true, force: true });
-}
+// `byok` is a BYOK DESK page (built above), not the bundle's home: the home is a
+// landing (its own gallery, with its own #guide) and the desk is the stage this
+// section judges. verify-byok.mjs owns the home's custody assertions.
 ok(byok.includes('legend-help-sources'), 'BYOK desk dialog keeps the runtime sources section');
 ok(byok.includes('legend-help-defs'),
   'BYOK desk dialog keeps the definitions — its home carries them too, but reaching it costs the conversation');
