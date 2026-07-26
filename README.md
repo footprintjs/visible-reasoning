@@ -1,16 +1,18 @@
 # Visible Reasoning — runnable reference implementations
 
-Seven small, self-contained examples that demonstrate the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Each one runs a real pipeline, records it, and shows the paper's third transparency paradigm — **recorded decision evidence**, where the execution substrate owns the trace instead of a model narrating itself. Every example is one `run.js`, costs nothing to run (mock providers only, no API keys), and prints a stable summary checked against an `expected-output.txt`. The last two also have an interactive mode — a served page where you tap through the influence map, re-run the agent for real, and (in the chat desk) branch the conversation from a counterfactual.
+Runnable reference implementations of the ideas in the published paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*, built on open-source TypeScript libraries. Eight self-contained examples, each behind a single `run.js`, each printing a summary that is byte-checked against a recorded `expected-output.txt`.
 
-## The paper
+The idea the paper argues for is **recorded decision evidence**: instead of asking a model to narrate itself (chain-of-thought, unverifiable) or asking a second model to judge it (recursive trust), the execution substrate owns the trace. Every decision is a typed event, and humans, cheaper models and training pipelines all read the same recording.
 
-Anbalagan, S.K., Nie, X., Kommalapati, A., Kanamarlapudi, V.K., Radhakrishnan, S., Zhao, X., Mohan, U. (2026). "Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems." *Artificial Intelligence in HCI (HCII 2026)*, LNCS 16745, pp. 3–21. Springer, Cham.
+## Try it online
 
-DOI: [10.1007/978-3-032-30849-8_1](https://doi.org/10.1007/978-3-032-30849-8_1)
+**→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
 
-The three paradigms it contrasts: chain-of-thought (a model narrates itself — unverifiable), LLM-as-judge (recursive trust), and **recorded decision evidence** — the framework owns the trace, every decision is a typed event, and humans, cheaper models, and training pipelines all consume the same recording.
+Two of the desks — trip advisor and movie desk — running on real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own Anthropic key: **it runs entirely in your browser.** Your key goes only to `api.anthropic.com`; the site's host (GitHub Pages) serves static files and has no backend that *could* receive it. Open DevTools → Network and check. (The stock desk gets a card too, disabled — the SEC's servers don't allow browser calls, and the card says so rather than pretending.)
 
-## Run everything
+## Run everything locally
+
+Free, no API keys — every example uses mock providers.
 
 ```sh
 git clone https://github.com/footprintjs/visible-reasoning.git
@@ -19,359 +21,319 @@ npm install
 npm run all
 ```
 
-`npm run all` runs all eight examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift (also available alone as `npm run verify`).
+`npm run all` runs all eight examples and byte-diffs each printed `=== SUMMARY ===` block against that example's `expected-output.txt`, exiting non-zero on any drift. Same thing as `npm run verify` — see [verify.js](verify.js). Each example's own run command is in its section below.
 
-Or run a single example:
-
-```sh
-npm run example:1   # 01-substrate-owns-the-trace
-npm run example:2   # 02-one-recording-three-readers
-npm run example:3   # 03-user-facing-why
-npm run example:4   # 04-honest-absence
-npm run example:5   # 05-prove-by-replay
-npm run example:6   # 06-stock-desk (default mode; npm run stock-desk serves the interactive page)
-npm run example:7   # 07-chat-desk (default mode; npm run chat-desk serves the interactive chat)
-npm run example:8   # 08-app-gallery (default mode; npm run gallery serves the cards page + all three desks)
-```
-
-## Try it live (optional)
-
-> Requires Node 20.6+ (the live script uses `node --env-file`).
-
-An optional sixth act tells the same "recorded decision evidence" story against the **real Anthropic API**: a two-tool agent, one short task that forces a tool choice, recorded and then explained from its own trace. As a stranger would follow it:
+**Optional live act.** [live/run.js](live/run.js) tells the same story against the real Anthropic API: a two-tool agent, one task that forces a tool choice, recorded and then explained from its own trace. It is left out of `npm run all` because a real model's wording varies run to run.
 
 ```sh
-git clone https://github.com/footprintjs/visible-reasoning.git
-cd visible-reasoning
-npm install
-npm run all          # the five mock examples — free, no key
-cp .env.example .env # then paste your Anthropic key into .env
-npm run live         # the live act — costs about two small Haiku calls
+cp .env.example .env   # paste your Anthropic key into .env
+npm run live           # about two small Haiku calls; requires Node 20.6+ (--env-file)
 ```
 
-`npm run live` loads your key from `.env` (git-ignored, never committed), runs `claude-haiku-4-5-20251001` (any Claude model id works), and prints which tool was chosen, the recorded why-this-tool evidence, a couple of typed-event counts, and the live model's answer. It is left out of `npm run all` because a real model's wording varies run to run.
+## The paper
 
-## The map
+Anbalagan, S. K., Nie, X., Kommalapati, A., Kanamarlapudi, V. K., Radhakrishnan, S., Zhao, X., & Mohan, U. (2026). Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems. In *Artificial Intelligence in HCI (HCII 2026)*, Lecture Notes in Computer Science vol. 16745, pp. 3–21. Springer, Cham. https://doi.org/10.1007/978-3-032-30849-8_1
 
-| Paper claim | Example directory | What you will see |
-|---|---|---|
-| 1. The substrate owns the trace | `01-substrate-owns-the-trace` | A decider run reconstructed entirely from the snapshot — commit log + engine-recorded decision evidence, no model asked to explain. |
-| 2. One recording, three readers | `02-one-recording-three-readers` | One agent run consumed three ways — human narrative, a cheap mock model answering "why?" from the trace, and a training-data export — zero re-runs. |
-| 3. User-facing "why" | `03-user-facing-why` | A real run emits a self-contained `out/replay.html` an end user can scrub beat-by-beat to see the why-this-tool evidence. |
-| 4. Honest absence | `04-honest-absence` | Two values in one run: one proven back to its origin, one honestly flagged `CANNOT PROVE` because its input (env) was untracked. |
-| 5. Prove by replay | `05-prove-by-replay` | A wrong answer localized to the context that caused it, then confirmed counterfactually by rerunning with that piece ablated. |
-| 6. The stock desk (interactive) | `06-stock-desk` | An influence map you can drive: see what fed a BUY call, suspect social media, ignore it, and re-run the agent for real — the call flips to HOLD, proven by replay. |
-| 7. The chat desk (conversation) | `07-chat-desk` | A real multi-turn chatbot where transparency lives in the chat: every reply has a "visible reason" button, re-running a turn without a source shows a labeled what-if bubble beside the untouched original, and "continue from this version" forks the conversation forward — branch, never rewrite. |
-| 8. The app gallery (three apps, one machine) | `08-app-gallery` | Three real chat apps — stocks, movies, trips — sharing one visible-reason machine, with every context source served as an **MCP tool the agent calls** and labeled with its own provenance (live, synthetic fallback, or always-synthetic). |
+The ideas in this repository were developed with those co-authors and published in that paper. The paper states the argument; this repository makes it runnable.
+
+*This repository is an independent, personal open-source project. It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored by, or endorsed by any employer.*
 
 ## The examples
 
 ### 1 — The substrate owns the trace
 
-A tiny support-ticket flowchart (seed → decider with `decide()` evidence → branch → finish) runs once. The entire "why" — the ordered typed commit events, the decision taken, and the rule-level evidence — is reconstructed from the snapshot alone. No model is asked to explain anything, because the execution substrate produced the record.
+**What it shows:** the paper's core move — a decider run's entire "why" reconstructed from the engine's own record (commit log + typed decision evidence), with no model asked to explain anything.
 
+**Run it:** `npm run example:1`
+
+**Use it in your project:**
+1. Install: `npm install footprintjs`
+2. Record a decision with `decide()`, then read the evidence off the snapshot:
+
+```js
+import { flowChart, decide, FlowChartExecutor } from 'footprintjs';
+
+const chart = flowChart('Intake', (s) => { s.severity = 8; }, 'intake')
+  .addDeciderFunction('Route', (s) => decide(s, [
+      { when: { severity: { gt: 5 } }, then: 'urgent', label: 'Severity above 5' },
+    ], 'normal'), 'route')
+    .addFunctionBranch('urgent', 'Escalate', (s) => { s.lane = 'Human escalation'; })
+    .addFunctionBranch('normal', 'AutoResolve', (s) => { s.lane = 'Auto-resolved'; })
+    .setDefault('normal').end()
+  .build();
+const executor = new FlowChartExecutor(chart);
+executor.attachCombinedRecorder({ id: 'why', onDecision: (e) => console.log(e.evidence.rules) });
+await executor.run();
+const { commitLog } = executor.getSnapshot();   // one typed bundle per executed stage
 ```
-=== SUMMARY ===
-commit events: 4
-  0 intake#0 Intake set:severity
-  1 route#1 Route -
-  2 urgent#2 Escalate set:lane
-  3 finish#3 Finish set:closed
-flow events: 5
-  stageExecuted Intake linear
-  decision Route Escalate
-  stageExecuted Route decider
-  stageExecuted Escalate linear
-  stageExecuted Finish linear
-decision: Route -> Escalate (branch 'urgent')
-  rule[0] "Severity above 5": severity gt 5 matched=true actual=8
-  default: normal
-provenance: engine-recorded (commit log + decision evidence), not model-narrated
-=== END ===
-```
+
+**Code:** [01-substrate-owns-the-trace/run.js](01-substrate-owns-the-trace/run.js)
 
 ### 2 — One recording, three readers
 
-One mock agent run produces a single typed recording, consumed three ways with zero re-runs: a human-readable narrative, a cheap mock model that answers "why did it choose that tool?" using only the recording, and an `assembleTrajectory` training-data export. A runId-free fingerprint of the commit log ties all three readers to the identical recording.
+**What it shows:** the paper's claim that one recording serves every audience — a human narrative, a cheap model answering "why?" from the trace alone, and a training-data export, all from one `agent.run()` with zero re-runs.
 
+**Run it:** `npm run example:2`
+
+**Use it in your project:**
+1. Install: `npm install agentfootprint`
+2. Run the agent once, keep the snapshot and the typed event stream, then read them three ways:
+
+```js
+import { Agent } from 'agentfootprint';
+import { assembleTrajectory, traceDebugAgent } from 'agentfootprint/observe';
+
+const events = [];
+agent.on('*', (e) => events.push(e));            // the substrate emits typed events
+await agent.run({ message: 'Weather in Paris?' });
+const snapshot = agent.getLastSnapshot();        // THE recording
+
+const narrative = agent.getLastNarrativeEntries();                          // reader 1: human
+const triage = traceDebugAgent({ artifacts: { snapshot }, provider, model }); // reader 2: cheap model
+await triage.run({ message: 'Why did the agent choose that tool?' });
+const trajectory = assembleTrajectory({ snapshot, events });                // reader 3: training data
 ```
-=== SUMMARY ===
-ONE RECORDING (runId present but stripped from all assertions)
-  commit-log entries: 40
-  distinct stages: 12
-  llm-call steps: call-llm#18, call-llm#40
-  fingerprint (sha256, runId-free): e65834222993
-READER 1 — human-readable explanation (run narrative)
-  narrative entries: 334
-  opening line: Stage 1: The process began: Agent: ReAct loop.
-READER 2 — cheap mock model, given ONLY the recording
-  question: Why did the agent choose that tool?
-  trace tool the model called: who_wrote(lastToolResult)
-  tool named IN the trace: weather
-  answer: The agent chose the "weather" tool. Trace evidence: ToolCalls wrote lastToolResult with toolName "weather".
-READER 3 — training-data export (assembleTrajectory)
-  trajectory rows (frames): 2
-  row[0] shape: loopIndex, llmCallId, llmCallArrayIdx, headArrayIdx, bodyIds, intermediateText, contextSources, untrackedReadsPresent
-  row[0].llmCallId: call-llm#18
-ALL THREE consumed fingerprint e65834222993 — one agent.run(), zero re-runs
-=== END ===
-```
+
+**Code:** [02-one-recording-three-readers/run.js](02-one-recording-three-readers/run.js)
 
 ### 3 — User-facing "why"
 
-A mock-provider agent (WeatherBot, two tools) runs, the framework records it as a typed agentthinkingui trace, and the generator emits a self-contained `out/replay.html` that inlines React + the ATUI player + that exact recorded trace. An end user can scrub the run beat-by-beat offline **and tap the final answer to open a "Why this answer" board** — the chain (answer ← tool output with score ← chosen tool ← context pieces with scores) is computed FROM THE RECORDING by `localizeContextBug` and mapped to the board by `toBacktrackTrace`; the tap is wired through agentthinkingui's real `onBacktrack` hook to a controlled `BacktrackOverlay`. Nothing is hand-authored: where the library cannot prove a link it says so (top suspects are marked path-only upper bounds, and the slice's honesty flags ride along verbatim).
+**What it shows:** the paper's user-facing end — a real run emits a self-contained page an end user can scrub beat-by-beat and tap for a "why this answer" board, with the chain computed from the recording, not hand-authored.
 
+**Run it:** `npm run example:3`
+
+**Use it in your project:**
+1. Install: `npm install agentfootprint agentthinkingui` (agentthinkingui declares `react` / `react-dom` as peers; npm installs them alongside, and the generator inlines them into the page)
+2. Record the run as a UI trace and compute the why-chain from that same recording:
+
+```js
+import { agentThinkingTrace } from 'agentfootprint/observe';
+import { mockEmbedder } from 'agentfootprint/memory';
+import { embeddingCache, llmCallIdsFromEvents, localizeContextBug, toBacktrackTrace } from 'agentfootprint/debug';
+
+const att = agentThinkingTrace({ agent: 'WeatherBot', model: 'mock-1', asker: 'You' });
+const agent = Agent.create({ provider, model: 'mock-1' }).tool(weather).recorder(att).build();
+const out = await agent.run({ message: 'Weather in Paris?' });
+const llmIds = llmCallIdsFromEvents(events);
+const report = await localizeContextBug({
+  artifacts: { snapshot: agent.getLastSnapshot(), events },
+  embedder: embeddingCache(mockEmbedder()),
+  atStep: llmIds[llmIds.length - 1],             // the answering call = root of the slice
+});
+const trace = att.getTrace();                    // → <AgentThinkingUI trace={...} />
+const backtrack = toBacktrackTrace(report, {     // → <BacktrackOverlay trace={...} />
+  answer: { text: out.content, label: 'WeatherBot answer' },  // required — the report has no output text
+  claim: 'Why this answer?',
+});
 ```
-=== SUMMARY ===
-trace beats: 4
-beat kinds: prompt -> ask -> return -> answer
-tools considered: 2 (weather, clock)
-tool asked: weather
-why this answer (computed from the recording by localizeContextBug):
-  mode: correlational · suspects ranked: 5 · decided at: call-llm#40
-  top influence (path-only upper bound): stage context#6 via systemPromptInjections score 0.836
-  tool output that fed it: weather "Paris: 72F, sunny" score 0.491
-  honesty flags carried into panel: 2 (untracked-sources, no-control-deps)
-  link proven from the recording: yes
-file emitted: 03-user-facing-why/out/replay.html
-size bucket: 256KB-1MB
-html has embedded trace JSON: yes
-html has embedded why-chain JSON: yes
-html has why-answer panel (onBacktrack -> BacktrackOverlay): yes
-html has atui bootstrap: yes
-=== END ===
-```
+
+3. The run writes `03-user-facing-why/out/replay.html` — a self-contained page (inlined React + the ATUI UMD + the embedded trace). Open it in a browser; no server, no network.
+
+**Code:** [03-user-facing-why/run.js](03-user-facing-why/run.js)
 
 ### 4 — Honest absence
 
-One recorded run makes two provenance queries against the same slice layer. `tier` (written from a tracked read of `amount`) reconstructs a full causal chain back to its origin stage; `riskFlag` (written from an untracked env read) is stamped as having an untracked source. The query layer returns PROVEN for the first and CANNOT PROVE for the second — it flags the input it cannot see instead of inventing an edge.
+**What it shows:** the paper's honesty requirement — the same query layer returns PROVEN for a value it can trace to its origin and CANNOT PROVE for one whose input it could not see, instead of inventing the edge.
 
+**Run it:** `npm run example:4`
+
+**Use it in your project:**
+1. Install: `npm install footprintjs`
+2. Slice backward from a variable and read the honesty markers the slice carries:
+
+```js
+import { FlowChartExecutor } from 'footprintjs';
+import { sliceForKey, keysReadFromExecutionTree, formatSlice } from 'footprintjs/trace';
+
+const executor = new FlowChartExecutor(chart);
+await executor.run({ env: { riskThreshold: 80 } });
+const snap = executor.getSnapshot();
+const reads = keysReadFromExecutionTree(snap.executionTree);
+
+const slice = sliceForKey(snap.commitLog, 'tier', reads);
+console.log(formatSlice(slice));          // the safe renderer — never JSON.stringify a slice root
+// slice.root.parentEdges     → the causal chain, one hop per tracked read
+// node.incompleteSources     → the inputs the trace could NOT see (here: 'env')
 ```
-=== SUMMARY ===
-Claim 4 — honest absence: two values, one recorded run, default dials.
 
-TRACKED VALUE            'tier'
-  writer            classify-tracked#1
-  provenance chain  classify-tracked#1 <-amount- seed#0
-  untracked inputs  none
-  VERDICT           PROVEN — full causal chain back to seed#0; nothing hidden
-
-ABSENT-PROVENANCE VALUE  'riskFlag'
-  writer            score-from-env#2
-  provenance chain  score-from-env#2
-  untracked inputs  env
-  VERDICT           CANNOT PROVE — writer read env (untracked); the trace refuses to guess
-
-Same run, same query layer: it proves what it can see and flags what it cannot.
-=== END ===
-```
+**Code:** [04-honest-absence/run.js](04-honest-absence/run.js)
 
 ### 5 — Prove by replay
 
-A mock refunds agent is seeded with several facts, one of which is a planted wrong fact ("VIP override — refund beyond 30 days"), so the agent approves an out-of-policy refund. `localizeContextBug` slices back from the answering LLM call, ranks the suspects, then rebuilds and reruns the agent with each suspect ablated to see which removal flips the outcome. The confirmed culprit is named by replay, not by asking a model; the benign decoy is correctly not confirmed.
+**What it shows:** the paper's causal claim — a wrong answer localized to the one piece of context that caused it, then confirmed by rerunning with that piece ablated. The verdict comes from the replay, not from asking a model.
 
+**Run it:** `npm run example:5`
+
+**Use it in your project:**
+1. Install: `npm install agentfootprint`
+2. Give the localizer a runner it can re-drive with suspects removed, and let it convict:
+
+```js
+import { applyAblations, embeddingCache, llmCallIdsFromEvents, localizeContextBug } from 'agentfootprint/observe';
+import { mockEmbedder } from 'agentfootprint/memory';
+
+async function runAgent(ablations = []) {
+  const { injections } = applyAblations(ablations, { tools: [], injections: [PLANTED, BENIGN] });
+  /* build a FRESH agent from `injections`, run it, tap its events */
+  return { content, snapshot: agent.getLastSnapshot(), events };
+}
+const original = await runAgent();
+const llmIds = llmCallIdsFromEvents(original.events);
+const report = await localizeContextBug({
+  artifacts: { snapshot: original.snapshot, events: original.events },
+  embedder: embeddingCache(mockEmbedder()),
+  atStep: llmIds[llmIds.length - 1],
+  rerun: {                                     // supplying `rerun` upgrades mode to 'causal'
+    runner: async (specs) => (await runAgent(specs)).content,
+    originalOutput: original.content, samples: 3,
+    outcomeChanged: (a, b) => a.includes('APPROVED') !== b.includes('APPROVED'),
+  },
+});
+const culprit = report.suspects.find((s) => s.verdict?.verdict === 'confirmed');
 ```
-=== SUMMARY ===
-original answer wrong (approved out-of-policy): true
-localization mode: causal
-suspects ranked: 4
-injection verdicts: vip-override=confirmed, style-rule=not-confirmed
-localized culprit: injection:vip-override
-confirmation verdict: confirmed
-counterfactual answer flips to in-policy: true
-=== END ===
-```
+
+**Code:** [05-prove-by-replay/run.js](05-prove-by-replay/run.js)
 
 ### 6 — The stock desk (interactive)
 
-The paper's finale, made tap-able. A trading-desk agent weighs three sources — quarterly results (solid-but-unspectacular fundamentals), insider activity (neutral), and social sentiment (hyped bullish chatter) — and calls **BUY**. The scripted mock is wired so social sentiment's *presence* yields BUY and its *absence* yields HOLD, so the flip is real, produced by the re-run, never hand-authored. `localizeContextBug` (semantic-alignment strategy, mock embedder) ranks the sources, `removableSources` is the toggle list, and one `rerunWithoutSources({ ignore: ['social-sentiment'], checkBaseline: true })` ablates-and-reruns to confirm the cause.
+**What it shows:** the paper's finale made tap-able — an influence map a non-technical person can drive: suspect a source, ignore it, re-run the agent for real, and watch BUY become HOLD. Scores suggest; the re-run convicts.
 
-```
-=== SUMMARY ===
-scenario: stock (stock desk)
-ranked by: semantic-alignment
-influence (removable sources, ranked — proxy scores, not proof):
-  social-sentiment [injection] score 0.872
-  insider-activity [injection] score 0.841
-  quarterly-results [injection] score 0.811
-original answer: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
-ignored source: social-sentiment
-rerun answer: HOLD — no catalyst beyond fair value: revenue up 4% as guided, insider activity steady, nothing driving a move.
-flipped: true
-verdict: confirmed
-=== END ===
-```
-
-**The interactive routine.** Serve the page and drive it yourself:
+**Run it:**
 
 ```sh
-npm run stock-desk   # generates 06-stock-desk/out/desk.html from real run data and serves it
+npm run example:6                           # default mode — the byte-stable summary
+node 06-stock-desk/run.js --scenario career # the career-advice variant
+npm run stock-desk                          # generate out/desk.html and serve it on :4173
 ```
 
-Then open **http://localhost:4173** and:
+Then open **http://localhost:4173**: see the influence map, flip the **✕** on `social-sentiment`, tap **Re-run without 1 source** (a `POST /rerun` that re-runs the agent on the server), and watch the call flip with the causal verdict. Ignoring a fundamentals source instead leaves the call unchanged — the contrast that shows a score alone never convicts. Cost: $0, mock provider and mock embedder, offline and deterministic. Opened as a plain file (no server) the Re-run button says it needs the local server rather than pretending.
 
-1. See the **influence map** — the BUY answer at the centre, every source orbiting it, sized by its influence estimate. Social sentiment towers over the fundamentals.
-2. Suspect the hype drove it. Flip the **✕** on `social-sentiment` to ignore it.
-3. Tap **Re-run without 1 source**. The desk re-runs the agent *for real* on the server (`POST /rerun` → `rerunWithoutSources({ checkBaseline: true })`), minus that one source.
-4. Watch **BUY become HOLD** — shown side by side, with the causal verdict: *"Proven by re-run: removing it changed the answer."*
+**Use it in your project:**
+1. Install: `npm install agentfootprint`
+2. Rank the sources, expose them as toggles, and ablate-and-rerun the ones the user flips:
 
-A **scenario switcher** offers a second drill — career advice (skills assessment / market salaries / trending titles), where the trending-titles hype drives a PIVOT and ignoring it flips the advice to STAY. Same honesty throughout: the scores are labelled a proxy (clues, not proof), the run's honesty flags ride along as plain chips, and only the re-run earns the word *causal*. Ignoring a fundamentals source instead (quarterly results) leaves the call unchanged — the contrast that shows a score alone never convicts.
+```js
+import { listInfluenceStrategies, localizeContextBug, removableSources,
+         rerunWithoutSources, semanticAlignmentStrategy } from 'agentfootprint/debug';
 
-**Cost: $0.** Everything is a mock provider with a mock embedder — no API keys, no network, offline and deterministic. Opened as a static file (no server), the Re-run button degrades honestly: it tells you it needs the local server rather than pretending to re-run.
+const report = await localizeContextBug({ artifacts, embedder, atStep, scorer: semanticAlignmentStrategy });
+const sources = removableSources(report);      // [{ id, kind, label, source, stageName, score }]
+
+const result = await rerunWithoutSources({
+  report, ignore: ['social-sentiment'], embedder,
+  runner: async (specs) => (await runScenario(sc, specs)).content,
+  originalAnswer: original.content,
+  answerChanged: (a, b) => a.includes('BUY') !== b.includes('BUY'),
+  checkBaseline: true,                         // only this earns `result.verdict`
+});
+// result.answer · result.whatChanged.answerFlipped · result.verdict.verdict
+```
+
+3. Serve it: the example renders `sources` into agentthinkingui's `InfluenceMap` and wires the toggle to a `POST /rerun` that calls the block above. `listInfluenceStrategies()` supplies the strategy dropdown.
+
+**Code:** [06-stock-desk/run.js](06-stock-desk/run.js)
 
 ### 7 — The chat desk (conversation)
 
-Transparency where people actually meet an agent: inside the chat — a clean, mainstream chat surface (a single centered conversation column with a fixed composer). A financial-advisor bot answers over three context sources; under every reply sits a quiet "visible reason" button. Tap it and a panel slides in from the right (a full overlay on narrow screens) reading that reply's influence as a ranked bar list — the sources that fed it, highest-scoring first, each with an inline ignore control, over a real `localizeContextBug` on that turn's recording; a strategy dropdown swaps the ranking. Flip a source to ignore it and Re-run: the desk re-runs THAT TURN for real — same recorded conversation up to that point, minus the source — and the counterfactual appears as a clearly-labeled what-if bubble next to the original ("without social media sentiment, I would have said: HOLD…"), with the causal-verdict chip. "Continue from this version" forks the conversation forward from the what-if as a new recorded session; the original transcript stays whole. The default mode runs a scripted 3-turn conversation and proves the whole loop deterministically: the turn-2 flip AND the fork's turn-3 divergence (ADD in the original, KEEP in the fork).
+**What it shows:** the paper's transparency where people actually meet an agent — inside the chat. Every reply carries a "visible reason" panel; a re-run appears as a labeled what-if bubble *beside* the untouched original, and "continue from this version" forks the conversation forward. Branch, never rewrite.
 
-```
-=== SUMMARY ===
-scripted conversation: 3 turns (financial advisor, mock provider)
-turn 1 top influence: social-sentiment [injection] score 0.838
-turn 2 top influence: social-sentiment [injection] score 0.881
-turn 3 top influence: social-sentiment [injection] score 0.807
-turn 2 original reply: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
-turn 2 ignored source: social-sentiment
-turn 2 what-if reply: HOLD — no catalyst beyond fair value: revenue up 4% as guided, insider activity steady, nothing driving a move.
-turn 2 flipped: true
-turn 2 verdict: confirmed
-fork: continued from the turn-2 what-if (social-sentiment stays ignored)
-turn 3 in the original conversation: ADD — momentum supports adding: the desk is already long on a BUY call, lift allocation by 5%.
-turn 3 in the fork: KEEP — allocation unchanged: the desk is on HOLD, there is no catalyst to add exposure.
-fork continuation proof (replies diverge): true
-=== END ===
-```
+**Run it:**
 
 ```sh
-npm run example:7      # default mode — the gated, byte-stable summary
+npm run example:7      # default mode — a scripted 3-turn conversation, byte-stable summary
 npm run chat-desk      # serve the chat on http://localhost:4174
 npm run chat-desk:live # the same desk against the real Anthropic API (needs .env)
 ```
 
-**BRANCH, NEVER REWRITE.** The original reply is immutable; a re-run never replaces it — the counterfactual is a separate, clearly-labeled what-if bubble, and a fork is a new recorded session (the original transcript stays whole). The verdict chip renders only when `checkBaseline: true` earned it; scores suggest, re-runs convict. Opened as a static file the recorded story renders read-only and every interactive control states what it needs and does nothing else — nothing is ever faked.
+**Use it in your project:**
+1. Install: `npm install agentfootprint`
+2. Let `recordedChat` own the transcript and the per-turn recording; you keep only the agent factory:
 
-### Live mode — real data behind the desk
+```js
+import { recordedChat, removableSources, semanticAlignmentStrategy } from 'agentfootprint/debug';
 
-`npm run chat-desk:live` swaps the mock for the real Anthropic API (Haiku); the key is read from `.env` and never printed. In live mode the three context sources are **fetched for real** (keyless, `node` fetch, ~4s timeout each) instead of scripted:
+// makeAgent({ specs }) → a FRESH agent with those ablations applied at construction
+const chat = recordedChat({ makeAgent, format: { assistantLabel: 'Advisor' } });
 
-- **quarterly-results** — SEC EDGAR (`data.sec.gov` company-facts; ticker→CIK via `www.sec.gov/files/company_tickers.json`, cached per process) → the latest reported revenue for the period, as one plain sentence.
-- **insider-activity** — SEC EDGAR submissions → the count of Form 4 (insider) filings in the last 90 days plus the most-recent date (the count carries its own window so it can't read as an unbounded multi-year "spike").
-- **social-sentiment** — a keyless Reddit JSON search over `r/stocks+wallstreetbets` → post count + latest title. (Reddit commonly 403/429s unauthenticated traffic; when it does, this source falls back — see below.)
+await chat.send('Should we BUY or HOLD?');              // turn 0 — bytes, snapshot, events frozen
+const report = await chat.reason(0, { embedder, scorer: semanticAlignmentStrategy }); // memoized
+const sources = removableSources(report);               // the panel's ranked ignore list
 
-The ticker is parsed from your message (`$NVDA`, or a known company name; default **NVDA**), and the bot's system prompt notes the active ticker. Every tool result ends with its own **provenance label** — ` [source: live — SEC EDGAR]` or ` [source: synthetic fallback — <reason>]` — so the influence panel's snippet shows exactly where each figure came from. A turn that mixes live and fallback sources is fine; each source is labeled independently. When a source cannot be fetched, a realistic **labeled** synthetic figure is used instead of any scripted test string, and the chat keeps working. The page header shows the active ticker and a per-tool provenance legend (live/fallback dots).
+const result = await chat.rerunTurn(0, {                // replays turn 0 minus one source
+  ignore: ['social-sentiment'], embedder, checkBaseline: true, samples: 3,
+  answerChanged: decisionChanged,                       // your comparator: did the decision change?
+});
+const forked = chat.fork(0, { fromRerun: result });     // identity-checked; original stays whole
+```
 
-**Frozen-world re-runs (the honesty keystone).** When you ignore a source and Re-run in live mode, the desk does **not** re-fetch. It replays the exact tool outputs recorded on the original turn — *same world, minus the ignored source* — and only the LLM calls stay real. The what-if bubble is labeled *"(world frozen at the original run)"*, and the server logs `[frozen-world] … external tool fetches during re-run = 0, live LLM calls = N` so the guarantee is auditable. This keeps a counterfactual honest: the answer can only move because a source was removed, never because the market data drifted between runs.
+3. Live mode swaps the mock for `anthropic()` and fetches the three context sources for real (SEC EDGAR, Reddit — keyless, ~4s timeout, each result carrying its own `[source: live …]` or `[source: synthetic fallback …]` label). **Re-runs do not re-fetch:** the desk replays the exact tool outputs recorded on the original turn — same world, minus the ignored source — and logs `[frozen-world] … external tool fetches during re-run = 0` so the guarantee is auditable. Offline drill: `CHATDESK_FORCE_FALLBACK=1` forces every fetcher to fail; all three sources fall back, labeled, and the chat keeps working.
 
-**Cost.** Each reply ≈ 1 Haiku call; a baseline-checked Re-run ≈ up to ~8 small Haiku calls (ablated + baseline samples); forking costs nothing until you chat in it. Offline drill: set `CHATDESK_FORCE_FALLBACK=1` to force every fetcher to fail — all three sources fall back (labeled) and the chat still works.
+**Code:** [07-chat-desk/run.js](07-chat-desk/run.js)
 
 ### 8 — The app gallery (three apps, one machine)
 
-The same machine, three products. A cards landing page opens onto a **stock desk** ("BUY or HOLD $NVDA?"), a **movie desk** ("should I watch *Heat* tonight?") and a **trip advisor** ("should I hike Mission Peak on Saturday?") — all sharing one copy of 07's visible-reason machine, parameterized by a small app pack.
+**What it shows:** the same visible-reason machine across three products — stocks, movies, trips — with every context source served as an **MCP tool the agent calls** and labeled with its own provenance (live, synthetic fallback, or always-synthetic).
 
-The step past 07 is where the context comes from. An app's sources are no longer facts the host pins into the prompt: they are **MCP tools the agent calls**. One small local MCP server (`08-app-gallery/mcp-server.js`, official `@modelcontextprotocol/sdk`, stdio) hosts every live fetcher; agentfootprint's `mcpClient` turns them into agent tools; a thin host decorator adds per-turn memoization, labeled fallbacks and a dispatch counter. Default mode swaps in `mockMcpClient` — same code path, no subprocess, no network, byte-stable.
-
-Every tool sentence carries its own provenance label, and the trip advisor's `crowd_level` is **synthetic by construction**: it never fetches anything, in any mode, and always says `[source: synthetic — modeled crowd estimate, not measured]`. A source that says what it is.
-
-Tap "visible reason" under any reply, flip a source off, and Re-run: the turn re-runs over the **frozen** tool results of the original turn — 0 new fetches, and the dispatch counter prints the proof — and the counterfactual appears beside the original with its causal verdict. "Continue from this version" forks the conversation forward. Branch, never rewrite.
-
-```
-=== SUMMARY ===
-the app gallery: 3 apps, one scripted turn each (mock provider, mock MCP tools)
-[stocks] Q: Should we BUY or HOLD $NVDA?
-[stocks] reply: BUY — bullish social momentum: the EXTREMELY bullish sentiment trending across forums is a strong BUY signal.
-[stocks] top influence: social_sentiment [tool] score 0.791
-[movies] Q: Should I watch "Heat" tonight?
-[movies] reply: WATCH — near-universal acclaim outweighs the rental price.
-[movies] top influence: wiki_reception [tool] score 0.659
-[trip] Q: Should I hike Mission Peak on Saturday?
-[trip] reply: GO — Saturday looks clear with a high near 71°F and only a 5% chance of rain.
-[trip] top influence: weather_forecast [tool] score 0.736
-[movies] ignored source: wiki_reception
-[movies] what-if reply: SKIP — mixed signals: price is fine but nothing here says tonight is the night.
-[movies] flipped: true
-[movies] verdict: confirmed
-=== END ===
-```
+**Run it:**
 
 ```sh
-npm run example:8      # scripted run, no network, no key — the verified summary
+npm run example:8      # one scripted turn per app on mock MCP tools — the verified summary
 npm run gallery        # cards page + all three desks on http://localhost:4175 (mock, no key)
 npm run gallery:live   # real Anthropic (haiku) + real keyless APIs over MCP (needs .env)
 GALLERY_FORCE_FALLBACK=1 npm run gallery:live   # offline drill: every source falls back, labeled
 ```
 
-**Live sources, all keyless.** The movie desk reads iTunes Search (price, availability, advisory rating — commerce facts, never critic scores) and Wikipedia (plot + the Reception section, resolved through Wikipedia's search API so "Heat" lands on the 1995 film and not on thermodynamics). The trip advisor reads Open-Meteo (geocode → 7-day forecast → the next Saturday) and Wikipedia; its crowd estimate stays synthetic. The stock desk reuses 06/07's SEC EDGAR + Reddit fetchers — note that SEC's fair-access policy wants a contact **email** in the User-Agent, so out of the box those two tools return a labeled fallback; set `SEC_CONTACT=you@example.com` to make them live. Reddit 403s unauthenticated traffic and falls back too. Nothing is ever faked: a source that could not be fetched says so in its own sentence.
+**Use it in your project:**
+1. Install: `npm install agentfootprint @modelcontextprotocol/sdk`
+2. Serve your context sources from an MCP server and hand the resulting tools to the agent:
 
-**What the live model does with its tools is its own business.** The agent decides which tools to consult; a tool it skipped shows in the legend as "not consulted" rather than being invented. And a live re-run can honestly come back **not-confirmed** — the real model sometimes keeps its answer without the source you suspected. Scores suggest; re-runs convict.
+```js
+import { mcpClient, mockMcpClient } from 'agentfootprint/tool-providers';
 
-## Try it with your own key (BYOK)
+const client = await mcpClient({                 // --live: one local stdio subprocess
+  name: 'gallery-tools',
+  transport: { transport: 'stdio', command: process.execPath, args: ['./mcp-server.js'] },
+});
+const tools = await client.tools();              // [{ schema, execute }]
+const agent = Agent.create({ provider, model }).system(system).tools(tools).build();
 
-### Try it online
-
-**→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
-
-A live public demo of the two desks — trip advisor and movie desk — running on
-real keyless data (Open-Meteo, Wikipedia, iTunes). The home is a gallery: read
-where your key goes, pick a desk from the cards, paste your key there, and see
-the visible reason, the verified what-if re-run and the fork, exactly as the
-paper describes them. (The stock desk gets a card too, disabled — the SEC's
-servers don't allow browser calls, and the card says so rather than pretending.)
-
-**It runs entirely in your browser. Your key goes only to Anthropic; the site's
-host (GitHub Pages) never receives it.** GitHub Pages hands out static files and
-nothing else — there is no backend to send a key to, so no server of ours or
-theirs is in the key path. Open DevTools → Network and check: the only requests
-carrying your key go to `api.anthropic.com`.
-
-Prefer to run it yourself? `npm run byok` serves the identical page from your own
-machine on `http://localhost:4176` — same files, same behaviour, no host at all.
-(`npm run byok:publish` is what stages the hosted copy.)
-
-### How it works
-
-The app gallery has a bring-your-own-key bundle: a gallery home (`index.html`)
-whose cards open one page per desk (`trip.html`, `movies.html`). Paste your
-Anthropic API key on the desk you picked and chat — visible reasons, verified
-what-if re-runs and forks included — with everything running in your browser.
-Every link is relative, so the same folder is correct at
-`/visible-reasoning/`, at a domain root, or off a local file server.
-
-**Your key stays in your tab.** Every Claude call goes straight from your
-browser to `api.anthropic.com` (agentfootprint's browser provider); the tools
-are keyless public APIs (Open-Meteo, Wikipedia, iTunes) called from your
-browser too. There is no backend: the page is a plain static file, so there is
-no server code that *could* see your key. Verify it yourself in DevTools →
-Network — the only requests carrying your key go to `api.anthropic.com`.
-
-```sh
-npm run byok        # generate 08-app-gallery/out/byok/ and serve it on :4176
+// default / offline: same code path, no subprocess, no network
+const mockClient = mockMcpClient({
+  name: 'gallery-tools',
+  tools: [{ name, description, inputSchema, handler: (args) => scripted(args) }],
+});
 ```
 
-The folder is fully static — any file server works the same:
+3. Wrap each tool so a re-run replays the original turn's bytes instead of re-fetching — the decorator in [08-app-gallery/lib/mcp.js](08-app-gallery/lib/mcp.js) memoizes per turn, turns a failed fetch into a normal labeled sentence, and counts dispatches so `metrics.toolDispatches` proves a re-run made zero new calls. The MCP server itself is [08-app-gallery/mcp-server.js](08-app-gallery/mcp-server.js); the shared machine lifted out of 07 is [08-app-gallery/lib/chat-core.js](08-app-gallery/lib/chat-core.js).
+
+Live sources are all keyless: iTunes Search and Wikipedia (movies), Open-Meteo and Wikipedia (trips), SEC EDGAR and Reddit (stocks). SEC's fair-access policy wants a contact email in the User-Agent, so out of the box those two return a labeled fallback — set `SEC_CONTACT=you@example.com` to make them live. The trip advisor's `crowd_level` is synthetic by construction: it never fetches anything, in any mode, and always says so.
+
+**Code:** [08-app-gallery/run.js](08-app-gallery/run.js)
+
+## The libraries
+
+| Library | One job | npm |
+|---|---|---|
+| footprintjs | Self-explaining flowchart engine: the substrate records every stage, decision and write as typed events. | [npmjs.com/package/footprintjs](https://www.npmjs.com/package/footprintjs) |
+| agentfootprint | Observable, explainable AI agents on that engine — recordings, influence localization, ablate-and-rerun, MCP tools. | [npmjs.com/package/agentfootprint](https://www.npmjs.com/package/agentfootprint) |
+| agentthinkingui | React components that render a recording for an end user — the scrubbable player, influence map and backtrack overlay. | [npmjs.com/package/agentthinkingui](https://www.npmjs.com/package/agentthinkingui) |
+| hcifootprint | The fourth library in the same family — a declarative skill graph for front ends. Not used by these examples. | [npmjs.com/package/hcifootprint](https://www.npmjs.com/package/hcifootprint) |
+
+## Bring your own key (hosted or local)
+
+The app gallery has a bring-your-own-key bundle: a gallery home (`index.html`) whose cards open one page per desk (`trip.html`, `movies.html`). Paste your Anthropic key on the desk you picked and chat — visible reasons, verified what-if re-runs and forks included — with everything running in your browser. Every link is relative, so the same folder is correct at `/visible-reasoning/`, at a domain root, or off a local file server.
 
 ```sh
-npm run byok:build
+npm run byok         # generate 08-app-gallery/out/byok/ and serve it on :4176
+npm run byok:build   # generate only — any file server works
 python3 -m http.server 4176 -d 08-app-gallery/out/byok
 ```
 
-(A double-clicked `file://` page won't load ES modules — that's a browser
-platform rule; use any dumb file server, including GitHub Pages.)
+(A double-clicked `file://` page won't load ES modules — that's a browser platform rule; use any dumb file server, including GitHub Pages.)
 
-Your key is kept in a page variable only. Tick "remember my key in this tab"
-and it is kept in `sessionStorage` until the tab closes — which is also what
-carries it across the trip back to the gallery and into the other desk; leave it
-unticked and the key lives in that one page only. "Forget my key" erases it
-instantly. It is never sent to us, never logged, never in a URL.
-`npm run verify:byok` re-generates the bundle and asserts all of that, on every
-page that can hold a key.
+**Your key stays in your tab.**  Every Claude call goes straight from your browser to `api.anthropic.com` (agentfootprint's browser provider); the tools are keyless public APIs called from your browser too. There is no backend, so there is no server code that *could* see your key. It is kept in a page variable only; tick "remember my key in this tab" and it lives in `sessionStorage` until the tab closes (which is also what carries it back through the gallery into the other desk). "Forget my key" erases it instantly. It is never sent to us, never logged, never in a URL — `npm run verify:byok` re-generates the bundle and asserts all of that, on every page that can hold a key.
 
-Leaving a desk for the gallery is a real page load, so the conversation ends
-with it — the "← gallery" link asks first, but only once there is something to
-lose.
-
-Honest scope: two desks, not three. The SEC's servers don't allow browser
-calls, so the stock desk runs only in the server demo (`npm run gallery:live`).
-Each reply spends a handful of small Haiku calls on your key; re-runs replay
-the original turn's frozen tool results — zero new fetches.
+Honest scope: two desks, not three. The SEC's servers don't allow browser calls, so the stock desk runs only in the server demo (`npm run gallery:live`). Each reply spends a handful of small Haiku calls on your key; re-runs replay the original turn's frozen tool results — zero new fetches.
 
 ### Publishing the hosted copy
 
@@ -379,15 +341,7 @@ the original turn's frozen tool results — zero new fetches.
 npm run byok:publish   # regenerate + stage into .gh-pages-staging/ (gitignored)
 ```
 
-It writes the generated folder plus `.nojekyll` (GitHub Pages otherwise runs
-Jekyll, which silently drops every path starting with `_` — a hazard in a
-vendored dist tree we don't control) and a `404.html` that redirects to `./`.
-Then it prints the `git worktree` commands that push the staged folder to an
-orphan `gh-pages` branch, which keeps the 6.6 MB artifact out of `main`.
-
-Nothing in the page assumes an origin or a base path: every asset reference and
-every import-map entry is relative, so the same folder works at
-`/visible-reasoning/`, at a domain root, or off `python3 -m http.server`.
+It writes the generated folder plus `.nojekyll` (GitHub Pages otherwise runs Jekyll, which silently drops every path starting with `_` — a hazard in a vendored dist tree we don't control) and a `404.html` that redirects to `./`. Then it prints the `git worktree` commands that push the staged folder to an orphan `gh-pages` branch, which keeps the artifact out of `main`. Nothing in the page assumes an origin or a base path.
 
 ## Citing
 
@@ -426,8 +380,6 @@ If you use these libraries in research, please cite the software:
   license = {MIT}
 }
 ```
-
-The companion publication is the HCII 2026 paper above; its citation is available at the DOI: [10.1007/978-3-032-30849-8_1](https://doi.org/10.1007/978-3-032-30849-8_1).
 
 ## License
 
