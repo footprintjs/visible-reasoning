@@ -30,6 +30,7 @@ import { trip } from './apps/trip.js';
 import { movies } from './apps/movies.js';
 import { stocks } from './apps/stocks.js';
 import { buildByokLanding, buildByokPage, packToPageData } from './lib/byok-page.js';
+import { copyDevViews } from './lib/dev-views.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolvePath(here, '..');
@@ -247,6 +248,17 @@ export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
     vendorBytes += r.bytes;
   }
   log(`copied ${vendorFiles} vendor .js files (${(vendorBytes / 1e6).toFixed(1)} MB) → out/byok/vendor/`);
+
+  // 2b. the two developer views, as ONE built browser file (the only bundled
+  // thing in this artifact — esbuild over the pinned devDependencies, from
+  // dev-views/entry.js, reproducible with `node 08-app-gallery/dev-views/build.mjs`).
+  // It is bundled rather than copied because both packages ship bare React
+  // imports, and this page has React in a script registry, not an import map.
+  // The desk pages do not load it: the debug modal asks for it, relatively,
+  // the first time a visitor opens a view that needs it.
+  const dev = copyDevViews(join(outDir, 'vendor'), { quiet: true });
+  log(`built the dev views (${(dev.bytes.js / 1024).toFixed(0)} KB js + ${(dev.bytes.css / 1024).toFixed(0)} KB css) `
+    + '→ out/byok/vendor/ — lazy-loaded, only by the debug modal');
 
   // 3. the traced import map, verified against what we just wrote
   const seeds = appFiles

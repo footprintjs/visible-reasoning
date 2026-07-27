@@ -557,6 +557,18 @@ var core = createChatCore({ live: true, model: MODEL, makeProvider: makeProvider
 var built = browserToolsFor(PACKS, ctx, core.getPending);
 var api = createLocalApi({ core: core, packs: PACKS, perApp: built.perApp });
 
+// ── the debug modal's two library views, and the recording they read ────────
+// The views are one built file beside this page — the only thing this desk ever
+// asks its own host for after load, and it asks only when a visitor opens the
+// flowchart or inspector tab. The RECORDING those views read never travels at
+// all: the turn is already in this tab, so api.artifacts is a read, not a
+// request. Relative paths, like everything else here, so the bundle works at a
+// subpath, at a root and off file://.
+var DEV_VIEWS = { js: './vendor/vr-dev-views.iife.js', css: './vendor/vr-dev-views.iife.css' };
+function getArtifacts(sessionId, k) {
+  return Promise.resolve(api.artifacts({ appId: APP.id, sessionId: sessionId, turnIndex: k }));
+}
+
 // The desk's whole state: the first session, plus whatever forks it grows.
 var FIRST = api.startSession(PACK);
 var INITIAL = { order: [FIRST.id], active: FIRST.id, sessions: {}, reason: {}, reruns: {}, panelKey: null };
@@ -1062,7 +1074,10 @@ function Byok() {
         e('span', { className: 'cd-tagline' }, APP.tagline),
         badge,
         // One small control; everything it opens lives inside the dialog.
-        e(DebugControl, { turns: (sess && sess.turns) || [] }),
+        e(DebugControl, { turns: (sess && sess.turns) || [],
+          loadArtifacts: sess ? function (k) { return getArtifacts(sess.id, k); } : null,
+          artifactsKey: (sess && sess.id) || 'none',
+          devViews: DEV_VIEWS, appName: APP.assistantLabel }),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },

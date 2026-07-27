@@ -21,9 +21,11 @@
     "gallery:live": "node --env-file=.env 08-app-gallery/run.js --serve --live",
     "byok": "node 08-app-gallery/byok.js --serve",
     "byok:build": "node 08-app-gallery/byok.js",
+    "dev-views:build": "node 08-app-gallery/dev-views/build.mjs",
     "verify:byok": "node 08-app-gallery/verify-byok.mjs",
     "verify:ia": "node 08-app-gallery/verify-ia.mjs",
     "verify:stream": "node 08-app-gallery/verify-stream.mjs",
+    "verify:dev-views": "node 08-app-gallery/verify-dev-views.mjs",
     "byok:publish": "node 08-app-gallery/publish-byok.mjs",
     "live": "node --env-file=.env live/run.js",
     "verify": "node verify.js",
@@ -38,5 +40,10 @@
   },
   "engines": {
     "node": ">=20.6"
+  },
+  "devDependencies": {
+    "agentfootprint-lens": "0.29.0",
+    "esbuild": "0.28.1",
+    "footprint-explainable-ui": "0.30.0"
   }
 }

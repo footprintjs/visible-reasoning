@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url';
 import { trip } from './apps/trip.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PORT = 4175;
+// The default is run.js's default. The override exists so this gate can run
+// while a rehearsal server is already sitting on 4175 — it is passed straight
+// through to the server this file spawns, and nothing else reads it.
+const PORT = Number(process.env.VR_GALLERY_PORT || 4175);
 const BASE = `http://localhost:${PORT}/app/trip`;
 const MSG = 'Should I hike Mission Peak on Saturday?';
 
@@ -30,7 +33,10 @@ const ok = (cond, label, detail = '') => {
 };
 
 // ─── boot the mock serve mode as a subprocess ───────────────────────────────
-const child = spawn(process.execPath, [join(here, 'run.js'), '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(process.execPath, [join(here, 'run.js'), '--serve'], {
+  stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, VR_GALLERY_PORT: String(PORT) },
+});
 const serverLog = [];
 child.stdout.on('data', (c) => serverLog.push(String(c)));
 child.stderr.on('data', (c) => serverLog.push(String(c)));

@@ -21,19 +21,24 @@
 //                                       → real Anthropic (haiku) + the real MCP
 //                                          server over stdio + keyless public APIs
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { encodeSSE } from 'agentfootprint/stream';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APPS, appById } from './apps/index.js';
 import { buildLiveClient, buildMockTools, decorateTools, metrics } from './lib/mcp.js';
 import { createChatCore } from './lib/chat-core.js';
+import { DEV_VIEWS_CSS, DEV_VIEWS_JS, ensureDevViews } from './lib/dev-views.js';
 import { buildAppPage, buildGalleryPage } from './lib/page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const LIVE = args.includes('--live');
-const PORT = 4175;
+// 4175 unless told otherwise. The override exists for one reason: a gate must
+// be able to run while a rehearsal server is already sitting on the default
+// port. Nothing else reads it, and the desks' own copy still names 4175.
+const PORT = Number(process.env.VR_GALLERY_PORT || 4175);
 // The model badge names what actually answers. Live turns go to THIS id (it is
 // what Agent.create sends on every request); mock turns go to no model at all,
 // and the pages say so rather than borrowing a real model's name.
@@ -212,6 +217,14 @@ async function serveMode() {
     pages = await buildStories(perApp);
   }
 
+  // The ecosystem's own developer views, built once per serve (esbuild over the
+  // pinned devDependencies). The desks link at it but do not load it: the debug
+  // modal fetches it the first time a visitor opens the flowchart or inspector
+  // tab, so a desk that is only chatted with never pays the ~200 KB.
+  const devViews = ensureDevViews({ quiet: true });
+  console.log(`dev views: ${DEV_VIEWS_JS} ${(devViews.bytes.js / 1024).toFixed(0)} KB `
+    + `+ ${DEV_VIEWS_CSS} ${(devViews.bytes.css / 1024).toFixed(0)} KB — served at /vendor/, loaded only when the debug modal needs it`);
+
   const outDir = join(here, 'out');
   mkdirSync(outDir, { recursive: true });
   const html = new Map();
@@ -226,6 +239,23 @@ async function serveMode() {
 
   const readBody = (req) => new Promise((res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => res(b)); });
   const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  // The recording is by far the biggest thing this server sends (a turn is
+  // ~340 KB of JSON, and JSON of that shape gzips to about 7% of itself). It is
+  // the one response worth compressing, and only for a client that said it can
+  // read it — everything else stays plain.
+  const sendRecording = (req, res, obj) => {
+    const body = Buffer.from(JSON.stringify(obj));
+    if (!/\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+      res.writeHead(200, { 'content-type': 'application/json', vary: 'accept-encoding' });
+      res.end(body);
+      return;
+    }
+    const gz = gzipSync(body);
+    res.writeHead(200, {
+      'content-type': 'application/json', 'content-encoding': 'gzip', vary: 'accept-encoding',
+    });
+    res.end(gz);
+  };
   const sendHtml = (res, body) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(body); };
 
   const server = createServer(async (req, res) => {
@@ -239,6 +269,36 @@ async function serveMode() {
       if (req.method === 'GET' && staticApp && html.has(staticApp[1])) { sendHtml(res, html.get(staticApp[1])); return; }
       const appRoute = path.match(/^\/app\/(\w+)$/);
       if (req.method === 'GET' && appRoute && html.has(appRoute[1])) { sendHtml(res, html.get(appRoute[1])); return; }
+
+      // ─── GET /vendor/vr-dev-views.iife.{js,css} — the two dev-view files ──
+      // Two exact names off one known directory: no path parameter reaches the
+      // filesystem, so this route cannot be walked. The desks never request it
+      // on load; the debug modal injects it when a visitor opens a view.
+      if (req.method === 'GET' && (path === `/vendor/${DEV_VIEWS_JS}` || path === `/vendor/${DEV_VIEWS_CSS}`)) {
+        const file = path.endsWith('.css') ? devViews.css : devViews.js;
+        res.writeHead(200, {
+          'content-type': path.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
+        });
+        res.end(readFileSync(file));
+        return;
+      }
+
+      // ─── GET /app/<id>/turn/<k>/artifacts?session=<id> — the recording ────
+      // A pure read of a turn that already happened: the frozen snapshot, the
+      // frozen event log, and the agent's own blueprint. It runs nothing, and
+      // it is the whole data path of the two library views in the debug modal.
+      const artifactsRoute = path.match(/^\/app\/(\w+)\/turn\/(\d+)\/artifacts$/);
+      if (req.method === 'GET' && artifactsRoute) {
+        const app = appById(artifactsRoute[1]);
+        if (!app) { send(res, 404, { error: `unknown app '${artifactsRoute[1]}'` }); return; }
+        const session = core.sessions.get(url.searchParams.get('session') ?? '');
+        if (!session) { send(res, 404, { error: 'unknown sessionId — start a conversation first' }); return; }
+        if (session.appId !== app.id) { send(res, 400, { error: `session ${session.id} belongs to '${session.appId}'` }); return; }
+        const artifacts = core.artifactsFor(session, Number(artifactsRoute[2]));
+        if (!artifacts) { send(res, 404, { error: 'unknown session/turn' }); return; }
+        sendRecording(req, res, artifacts);
+        return;
+      }
 
       // POST /app/<id>/{chat,reason,rerun-turn,fork} — 07's four endpoints, scoped per app.
       const api = path.match(/^\/app\/(\w+)\/([\w-]+)$/);
@@ -358,6 +418,7 @@ async function serveMode() {
     console.log(`The app gallery is live → http://localhost:${PORT}`);
     console.log(`  ${APPS.map((a) => `/app/${a.id}`).join(' · ')}`);
     console.log('POST /app/<id>/chat {message} · /reason {sessionId,turnIndex} · /rerun-turn {sessionId,turnIndex,ignore} · /fork {sessionId,turnIndex,rerunId}');
+    console.log('GET  /app/<id>/turn/<k>/artifacts?session=<id> → the turn\'s frozen recording (the debug modal\'s library views read it) · /vendor/vr-dev-views.iife.{js,css}');
     console.log('POST /app/<id>/chat-stream {message} → text/event-stream: session · status · token · final|error (the page falls back to /chat if it fails)');
   });
 

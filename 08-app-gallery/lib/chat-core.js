@@ -88,6 +88,17 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     const agent = Agent.create({
       provider, model: live ? model : 'mock-1', maxIterations: pending.maxIterations,
     }).system(pending.system).tools(tools).build();
+    // THE BLUEPRINT — the one thing the debug views need that a recording does
+    // not carry. `getSpec()` is a pure read of the chart this agent already IS
+    // (no run, no model call, no state), and `buildTimeStructure` is the shape
+    // agentfootprint-lens draws as the composition flowchart. Stashing it here
+    // records the REAL agent's own structure instead of reconstructing one
+    // later; run semantics are untouched, which is why the byte gate cannot
+    // move. Only a RECORDED turn keeps it — a replay probe's agent is a
+    // counterfactual, and its blueprint is not this turn's.
+    if (pending.mode === 'record' && !pending.blueprint) {
+      try { pending.blueprint = agent.getSpec()?.buildTimeStructure ?? null; } catch (err) { pending.blueprint = null; }
+    }
     if (probeEventSink) { const evs = []; agent.on('*', (e) => evs.push(e)); probeEventSink.push(evs); }
     // The live tap. Double-gated on purpose: a sink exists ONLY while a
     // chatTurn op is in flight, and the mode check makes a replay probe's
@@ -163,7 +174,10 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       session.entity = entity;
       const toolLog = new Map();
       const system = systemFor(pack, entity);
-      pending = {
+      // Held by name as well as by `pending`: makeAgent writes this turn's
+      // blueprint onto it while the turn runs, and reading it back off the
+      // object (rather than off `pending`) keeps that read pinned to THIS turn.
+      const world = {
         system,
         tools: session.decoratedTools,
         scriptedRespond: (req, extra) => pack.scriptedRespond(req, { entity, ...extra }),
@@ -171,7 +185,9 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         toolLog,
         // one LLM call per tool the agent consults, plus one to answer.
         maxIterations: session.decoratedTools.length + 2,
+        blueprint: null,
       };
+      pending = world;
       liveEventSink = opts.onEvent ?? null;
       try {
         const turn = await session.chat.send(userMessage);
@@ -180,7 +196,9 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         // The verdict WORD and the reason behind it are recorded together, so a
         // fallback can never reach the screen without the reason it fell back for.
         const sourceLabels = sourceLabelsFromToolLog(toolLog, names);
-        session.meta[turn.index] = { toolLog, provenance, sourceLabels, system, entity };
+        session.meta[turn.index] = {
+          toolLog, provenance, sourceLabels, system, entity, blueprint: world.blueprint,
+        };
         if (live) {
           console.log(`[live][${pack.id}] ${entity}: `
             + Object.entries(provenance).map(([k, v]) => `${k}=${v}`).join(' '));
@@ -331,22 +349,38 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   }
 
   // ═══ The debug view — a pure read of turn K's recording ═══════════════════
-  // No agent, no model, no fetch: lib/debug-view.js derives both views from the
+  // No agent, no model, no fetch: lib/debug-view.js derives the story from the
   // events recordedChat already froze on the turn. It rides the SAME response
-  // the reply arrives in (and the page data of a pre-run story), so opening the
-  // modal costs the page nothing at all — there is no debug endpoint to call.
+  // the reply arrives in (and the page data of a pre-run story), so the modal
+  // opens on data the page already has.
   function debugFor(session, k) {
     const turn = session.chat.turns[k];
     if (!turn) return null;
-    return debugForTurn({
-      turn,
-      toolMeta: session.pack.tools.map((t) => ({
-        name: t.name, legendLabel: t.legendLabel, description: t.description,
-        alwaysSynthetic: t.alwaysSynthetic === true,
-      })),
-      assistantLabel: session.pack.assistantLabel,
-      excludedIds: session.excludedIds,
-    });
+    return debugForTurn({ turn, assistantLabel: session.pack.assistantLabel });
+  }
+
+  // ═══ The recording itself — what the ecosystem's own dev views read ═══════
+  // The debug modal's "flowchart" (agentfootprint-lens) and "inspector"
+  // (footprint-explainable-ui) tabs are the libraries' real developer views,
+  // and they read the recording DIRECTLY rather than a distillate of it:
+  // `snapshot` is the footprintjs run snapshot recordedChat froze on the turn,
+  // `events` is the typed event log it froze beside it, and `blueprint` is the
+  // agent's own build-time structure, stashed at construction (makeAgent).
+  //
+  // Nothing is derived, adapted or summarized here — this is the turn's own
+  // bytes, handed over unchanged. It is deliberately NOT shipped with the reply
+  // (it is ~20× the size of the debug payload): the modal asks for it only when
+  // a visitor opens one of those two tabs.
+  function artifactsFor(session, k) {
+    const turn = session.chat.turns[k];
+    if (!turn) return null;
+    const artifacts = turn.artifacts ?? {};
+    return {
+      turnIndex: k,
+      snapshot: artifacts.snapshot ?? null,
+      events: artifacts.events ?? [],
+      blueprint: session.meta[k]?.blueprint ?? null,
+    };
   }
 
   /** A removable source's human label, for the what-if bubble. */
@@ -374,6 +408,6 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   return {
     sessions, embedder, getPending, makeChat, newSession, chatTurn,
     getReport, reasonAbout, rerunTurnK, forkFrom, labelsFor, sessionToData,
-    debugFor,
+    debugFor, artifactsFor,
   };
 }

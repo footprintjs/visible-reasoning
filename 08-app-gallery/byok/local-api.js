@@ -52,6 +52,23 @@ export function createLocalApi({ core, packs, perApp }) {
     };
   }
 
+  // The turn's own recording — snapshot, event log, blueprint — for the debug
+  // modal's two library views. On the server demo this is an HTTP GET; here the
+  // ChatTurn objects are already in tab memory, so it is a function call and a
+  // read. Same shape, same bytes, no wire hop and nothing new to trust.
+  //
+  // COPIED, exactly as the wire copies it. The server path serializes, so what
+  // reaches those views there is a detached copy; here the same call would hand
+  // over the very objects recordedChat froze, and a view that wrote into one —
+  // by accident or by design — would rewrite the session's own recording. The
+  // recording is the evidence; a reader of it gets a copy.
+  function artifacts({ appId, sessionId, turnIndex }) {
+    const session = resolve(appOr404(appId), sessionId);
+    const out = core.artifactsFor(session, turnIndex);
+    if (!out) throw new Error('unknown session/turn');
+    return structuredClone(out);
+  }
+
   async function reason({ appId, sessionId, turnIndex }) {
     const session = resolve(appOr404(appId), sessionId);
     if (!session.chat.turns[turnIndex]) throw new Error('unknown session/turn');
@@ -76,5 +93,5 @@ export function createLocalApi({ core, packs, perApp }) {
     };
   }
 
-  return { startSession, chat, reason, rerunTurn, fork };
+  return { startSession, chat, artifacts, reason, rerunTurn, fork };
 }
