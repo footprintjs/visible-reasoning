@@ -70,7 +70,20 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     const provider = makeProvider
       ? makeProvider()
       : live
-        ? anthropic()
+        // `parallelToolCalls: false` ENFORCES the house rule every pack already
+        // states in prose ("Call ONE tool, wait for its result … never request
+        // more than one tool in a single step"). Prose alone does not hold: a
+        // real model regularly answers with all three tool_use blocks in ONE
+        // reply, the agent runs them inside ONE iteration, and the influence
+        // map — which reads one tool source per iteration — then credits the
+        // LAST tool of the batch and drops the other two. A desk that genuinely
+        // consulted three sources shows one bar, and the two it hides cannot be
+        // ignored/re-run. The option puts Anthropic's `disable_parallel_tool_use`
+        // on the wire, so the cap is enforced by the API rather than requested
+        // in a prompt. Costs one extra round trip per tool; buys the three-way
+        // comparison this gallery exists to show. Mock mode is untouched (no
+        // Anthropic provider at all), so the byte gate cannot move.
+        ? anthropic({ parallelToolCalls: false })
         : mock({ respond: (req) => pending.scriptedRespond(req, { toolNames }) });
     const agent = Agent.create({
       provider, model: live ? model : 'mock-1', maxIterations: pending.maxIterations,

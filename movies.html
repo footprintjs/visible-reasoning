@@ -1449,6 +1449,27 @@
   }
 
 
+  .cd-starters { display: flex; flex-wrap: wrap; }
+  .cd-starters button { font: inherit; cursor: pointer; border-radius: 999px; text-align: left;
+    max-width: 100%; transition: color .18s ease, border-color .18s ease, background-color .18s ease; }
+  .cd-starters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-starters button:disabled { opacity: .5; cursor: not-allowed; }
+  @media (prefers-reduced-motion: reduce) { .cd-starters button { transition: none; } }
+
+  /* the empty desk: the one thing to do, in the size of a thing to do */
+  .cd-starters.big { gap: 10px; justify-content: center; margin: 20px 0 0; }
+  .cd-starters.big button { font-size: 15px; font-weight: 600; line-height: 1.35; padding: 12px 20px;
+    color: var(--ink); background: var(--bg); border: 1.5px solid var(--line); }
+  .cd-starters.big button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--soft); }
+
+  /* the composer row: quiet, and never wider than the column */
+  .cd-starters.compact { gap: 7px; margin: 0 0 9px; }
+  .cd-starters.compact button { font-size: 12px; font-weight: 600; padding: 5px 12px;
+    color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cd-starters.compact button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+
+
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
     transform: translateX(100%); transition: transform .28s ease; z-index: 50; display: flex; flex-direction: column; }
@@ -18708,7 +18729,7 @@ import { makeBrowserCtx } from './app/byok/browser-ctx.js';
 import { browserToolsFor } from './app/byok/tools.js';
 import { createLocalApi } from './app/byok/local-api.js';
 
-var DATA = {"app":{"id":"movies","title":"The movie desk","tagline":"should I watch it? — with visible reasons","assistantLabel":"Critic","accent":"#7A4CBF","accentDark":"#5A3395","entityLabel":"Movie","entityDefault":"Heat","starters":["Should I watch \"Heat\" tonight?","Is \"Dune\" worth renting?"],"driver":"wiki_reception","tools":[{"name":"itunes_lookup","legendLabel":"itunes","description":"Price, availability and advisory rating for a movie (iTunes Search, keyless).","alwaysSynthetic":false},{"name":"wiki_plot","legendLabel":"plot","description":"One-paragraph plot / overview for a movie (Wikipedia, keyless).","alwaysSynthetic":false},{"name":"wiki_reception","legendLabel":"reception","description":"What critics said about a movie — its critical reception (Wikipedia, keyless).","alwaysSynthetic":false}]},"model":"claude-haiku-4-5-20251001","custody":[[{"b":"Your key stays in this tab."}],[{"t":"This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it."}],[{"t":"Every Claude call goes straight from your browser to "},{"code":"api.anthropic.com"},{"t":" — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. "},{"b":"Forget my key"},{"t":" erases it instantly."}],[{"t":"This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that "},{"em":"could"},{"t":" see your key."}],[{"b":"Don’t take our word for it"},{"t":" — open DevTools → Network and watch: the only requests that carry your key go to "},{"code":"api.anthropic.com"},{"t":". Everything else is weather, Wikipedia and iTunes, called keylessly from your browser."}]],"footer":[[{"t":"Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the "},{"b":"frozen"},{"t":" tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic."}]],"checkboxLabel":"Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)","leaveConfirm":"Leaving resets this conversation — your key stays per your “remember” choice."};
+var DATA = {"app":{"id":"movies","title":"The movie desk","tagline":"should I watch it? — with visible reasons","assistantLabel":"Critic","accent":"#7A4CBF","accentDark":"#5A3395","entityLabel":"Movie","entityDefault":"Heat","starters":["Should I watch \"Interstellar\" tonight?","Is \"Dune\" worth renting?"],"driver":"wiki_reception","tools":[{"name":"itunes_lookup","legendLabel":"itunes","description":"Price, availability and advisory rating for a movie (iTunes Search, keyless).","alwaysSynthetic":false},{"name":"wiki_plot","legendLabel":"plot","description":"One-paragraph plot / overview for a movie (Wikipedia, keyless).","alwaysSynthetic":false},{"name":"wiki_reception","legendLabel":"reception","description":"What critics said about a movie — its critical reception (Wikipedia, keyless).","alwaysSynthetic":false}]},"model":"claude-haiku-4-5-20251001","custody":[[{"b":"Your key stays in this tab."}],[{"t":"This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it."}],[{"t":"Every Claude call goes straight from your browser to "},{"code":"api.anthropic.com"},{"t":" — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. "},{"b":"Forget my key"},{"t":" erases it instantly."}],[{"t":"This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that "},{"em":"could"},{"t":" see your key."}],[{"b":"Don’t take our word for it"},{"t":" — open DevTools → Network and watch: the only requests that carry your key go to "},{"code":"api.anthropic.com"},{"t":". Everything else is weather, Wikipedia and iTunes, called keylessly from your browser."}]],"footer":[[{"t":"Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the "},{"b":"frozen"},{"t":" tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic."}]],"checkboxLabel":"Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)","leaveConfirm":"Leaving resets this conversation — your key stays per your “remember” choice."};
 var MODEL = DATA.model;
 var APP = DATA.app;
 // One desk per page: the visitor picked it on the gallery home, so there is no
@@ -19145,6 +19166,27 @@ function DebugControl(props) {
 }
 
 
+// ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
+function Starters(props) {
+  var list = props.starters || [];
+  if (!list.length) return null;
+  var variant = props.variant === 'compact' ? 'compact' : 'big';
+  var disabled = !!props.disabled;
+  return React.createElement('div', {
+      className: 'cd-starters ' + variant, 'data-testid': 'starters-' + variant,
+      role: 'group', 'aria-label': 'Starter questions' },
+    list.map(function (q, i) {
+      return React.createElement('button', {
+        key: q, type: 'button', 'data-testid': 'starter-' + variant + '-' + i,
+        disabled: disabled,
+        // The compact chip may ellipsize on a phone; the full question stays
+        // readable on hover and is the button's accessible name either way.
+        title: variant === 'compact' ? q : null,
+        onClick: function () { props.onPick(q); } }, q);
+    }));
+}
+
+
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
 // closure. It is handed to browserAnthropic and to nothing else. In particular
@@ -19171,7 +19213,10 @@ function apiUrlOverride() {
 function makeProvider() {
   if (!apiKey) throw new Error('Paste your Anthropic key above to start.');
   var url = apiUrlOverride();
-  var opts = { apiKey: apiKey, defaultModel: MODEL };
+  // parallelToolCalls: false — the browser half of the server desk's setting
+  // (see lib/chat-core.js). One tool per reply, so each source lands on its own
+  // agent iteration and the influence panel can name all three.
+  var opts = { apiKey: apiKey, defaultModel: MODEL, parallelToolCalls: false };
   if (url) opts.apiUrl = url;
   return browserAnthropic(opts);
 }
@@ -19676,7 +19721,11 @@ function Byok() {
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, armed
         ? 'Ask a question to begin. Every reply carries a “visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.'
-        : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.');
+        : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.',
+        // Only once a key can actually send them: an offer that would fail on
+        // tap is worse than no offer. (The pack's own questions, one tap each —
+        // the same component the server desks render.)
+        armed ? e(Starters, { starters: APP.starters, variant: 'big', onPick: send }) : null);
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : ''),
       style: { '--accent': APP.accent, '--accent-dk': APP.accentDark } },
@@ -19706,6 +19755,13 @@ function Byok() {
             DATA.footer.map(function (line, i) { return richLine(line, 'f' + i); })))),
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
+          // After the first turn the starters leave the transcript and live
+          // here, in the composer, quietly — same component, compact size, and
+          // exactly the composer's own enabled/disabled state.
+          hasContent
+            ? e(Starters, { starters: APP.starters, variant: 'compact',
+                disabled: !armed || !!liveTurn, onPick: send })
+            : null,
           e('div', { className: 'cd-inputrow' },
             e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed || !!liveTurn,
               placeholder: armed ? APP.starters[0] : 'Paste your Anthropic key above to start',

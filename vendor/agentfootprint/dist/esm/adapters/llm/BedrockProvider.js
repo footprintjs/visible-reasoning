@@ -13,6 +13,13 @@
  * The Converse API is model-agnostic — one adapter covers every
  * Bedrock-hosted model (Claude, Llama, Mistral, Titan, Mixtral, ...).
  *
+ * Tool calling works on BOTH paths: `complete()` reads `toolUse` blocks
+ * off the Converse response, and `stream()` accumulates ConverseStream
+ * `contentBlockStart` / `contentBlockDelta` / `contentBlockStop` events
+ * (keyed by `contentBlockIndex`, so parallel tool calls that interleave
+ * are parsed correctly) and delivers them on the terminal chunk's
+ * `response.toolCalls`. A parity test pins the two paths together.
+ *
  * ─── Limitations ────────────────────────────────────────────────────
  *
  * • Multi-modal NOT supported  (text content only).
@@ -59,13 +66,54 @@ export function bedrock(options = {}) {
             let stopReason = 'stop';
             let usage = { input: 0, output: 0 };
             let tokenIndex = 0;
+            // Tool-use blocks under construction, keyed by `contentBlockIndex`.
+            // Keying by index (not arrival order) is what makes PARALLEL tool
+            // calls work: Bedrock interleaves their argument fragments.
+            const toolUseByIndex = new Map();
+            const completedToolCalls = [];
             try {
                 for await (const event of stream) {
+                    // ── Block start: id + name arrive here; arguments follow as
+                    //    JSON string fragments on deltas at the same index. ──
+                    const startIndex = event.contentBlockStart?.contentBlockIndex;
+                    const startToolUse = event.contentBlockStart?.start?.toolUse;
+                    if (startToolUse && typeof startIndex === 'number') {
+                        toolUseByIndex.set(startIndex, {
+                            id: startToolUse.toolUseId ?? '',
+                            name: startToolUse.name ?? '',
+                            fragments: [],
+                        });
+                    }
                     if (event.contentBlockDelta?.delta?.text) {
                         const text = event.contentBlockDelta.delta.text;
                         textParts.push(text);
                         yield { tokenIndex, content: text, done: false };
                         tokenIndex++;
+                    }
+                    // ── Argument fragment. `LLMChunk` has no tool-delta field, so
+                    //    these are NOT yielded as chunks (same as both Browser
+                    //    providers) — they surface on the terminal `response`. ──
+                    const inputFragment = event.contentBlockDelta?.delta?.toolUse?.input;
+                    if (typeof inputFragment === 'string') {
+                        const deltaIndex = event.contentBlockDelta?.contentBlockIndex;
+                        const open = typeof deltaIndex === 'number' ? toolUseByIndex.get(deltaIndex) : undefined;
+                        // Bedrock sends `input: ''` fragments for no-arg tools; push
+                        // them anyway — the join below collapses them to ''.
+                        if (open)
+                            open.fragments.push(inputFragment);
+                    }
+                    // ── Block complete: join the fragments and parse. ──
+                    const stopIndex = event.contentBlockStop?.contentBlockIndex;
+                    if (typeof stopIndex === 'number') {
+                        const tu = toolUseByIndex.get(stopIndex);
+                        if (tu) {
+                            toolUseByIndex.delete(stopIndex);
+                            completedToolCalls.push({
+                                id: tu.id,
+                                name: tu.name,
+                                args: parseToolArgs(tu.fragments.join(''), tu.name, tu.id, stopIndex),
+                            });
+                        }
                     }
                     if (event.messageStop?.stopReason) {
                         stopReason = normalizeStopReason(event.messageStop.stopReason);
@@ -77,16 +125,16 @@ export function bedrock(options = {}) {
                         };
                     }
                 }
-                const finalResponse = {
+                // A block still open here never received its `contentBlockStop` —
+                // truncated wire data. Emitting a half-parsed call would run a
+                // tool with incomplete arguments, so we drop it and let the
+                // honesty invariant below catch the resulting contradiction.
+                const finalResponse = ensureHonestToolUse({
                     content: textParts.join(''),
-                    // Tool-call streaming is NOT yielded as deltas
-                    // build — the consumer falls back to `complete()` to recover
-                    // the authoritative tool_use payload. Most Bedrock streams
-                    // currently emit tool_use only at messageEnd anyway.
-                    toolCalls: [],
+                    toolCalls: completedToolCalls,
                     usage,
                     stopReason,
-                };
+                });
                 yield { tokenIndex, content: '', done: true, response: finalResponse };
             }
             catch (err) {
@@ -221,7 +269,7 @@ function fromBedrockResponse(response) {
             }
         }
     }
-    return {
+    return ensureHonestToolUse({
         content: textParts.join(''),
         toolCalls,
         usage: {
@@ -230,7 +278,59 @@ function fromBedrockResponse(response) {
         },
         stopReason: normalizeStopReason(response.stopReason ?? 'end_turn'),
         providerRef: response.ResponseMetadata?.RequestId,
-    };
+    });
+}
+/**
+ * Honesty invariant: a response claiming `tool_use` with zero parsed tool
+ * calls is self-contradictory — the model asked for tools and the adapter
+ * lost them. Never return it quietly; throw so a configured `reliability`
+ * rule (retry / fallback / fail-fast) can act instead of the agent
+ * silently answering without running its tools.
+ *
+ * Post-7.6.1 this cannot happen on today's wire shapes — it is a tripwire
+ * for future ConverseStream shape drift. Applied on BOTH the streaming and
+ * non-streaming exits so the two paths can never drift apart again.
+ */
+function ensureHonestToolUse(response) {
+    if (response.stopReason === 'tool_use' && response.toolCalls.length === 0) {
+        throw Object.assign(new Error("[bedrock] stopReason 'tool_use' with zero parsed tool calls — " +
+            'tool-use blocks were lost (stream-shape drift?). ' +
+            'Refusing to return a self-contradictory response.'), { name: 'BedrockProviderError', code: 'BEDROCK_STREAM_TOOLUSE_LOST' });
+    }
+    return response;
+}
+/**
+ * Parse the joined JSON fragments of one streamed tool-use block.
+ *
+ * Empty (no-arg tools stream zero fragments, or a single `''`) → `{}`.
+ * Malformed → a TYPED throw, never a silent `{}`: swallowing the failure
+ * would execute a side-effecting tool with its arguments dropped, which is
+ * the worst failure mode available. A thrown provider error reaches the
+ * `reliability` / `withRetry` machinery, and a retry usually streams clean
+ * JSON.
+ *
+ * The raw fragment bytes are deliberately NOT put in the message — tool
+ * arguments can carry user data and provider error messages land in audit
+ * logs unredacted. `rawLength` is reported instead.
+ */
+function parseToolArgs(joined, toolName, toolUseId, contentBlockIndex) {
+    if (joined.trim().length === 0)
+        return {};
+    try {
+        return JSON.parse(joined);
+    }
+    catch (parseErr) {
+        throw Object.assign(new Error(`[bedrock] malformed tool-use JSON for tool '${toolName}' (toolUseId ${toolUseId}): ` +
+            `${parseErr.message}. Refusing to run the tool with dropped arguments.`), {
+            name: 'BedrockProviderError',
+            code: 'BEDROCK_MALFORMED_TOOL_ARGS',
+            toolName,
+            toolUseId,
+            contentBlockIndex,
+            rawLength: joined.length,
+            cause: parseErr,
+        });
+    }
 }
 function normalizeStopReason(raw) {
     switch (raw) {
@@ -250,6 +350,10 @@ function normalizeStopReason(raw) {
     }
 }
 function wrapError(err) {
+    // Already ours (the typed tool-use conditions above) — re-wrapping would
+    // drop `code` / `toolName` / `toolUseId` and double-prefix the message.
+    if (err instanceof Error && err.name === 'BedrockProviderError')
+        return err;
     if (err instanceof Error) {
         return Object.assign(new Error(`[bedrock] ${err.message}`), {
             name: 'BedrockProviderError',

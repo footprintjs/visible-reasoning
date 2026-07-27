@@ -208,6 +208,21 @@ export const movies = {
       : 'SKIP — mixed signals: price is fine but nothing here says tonight is the night.';
   },
 
-  starters: ['Should I watch "Heat" tonight?', 'Is "Dune" worth renting?'],
+  // The starters are TAPPABLE on the desk (lib/page.js Starters) — a visitor,
+  // and the demo's owner on stage, sends them without typing. So they are not
+  // decorative: each one must come back LIVE from all three sources.
+  //
+  // Apple's public Search API covers movies unevenly (`media=movie` returns
+  // nothing at all, and the unfiltered search misses plenty of major titles —
+  // "Blade Runner 2049", "The Matrix", "Top Gun: Maverick" all come back empty).
+  // "Heat" — the pack's original starter, and still its default subject — has NO
+  // exact iTunes match: the tool answers live and honestly, but about
+  // "Heatwave" (2021), so the desk priced one film while Wikipedia described
+  // another. These two were verified live on all three sources — iTunes Search,
+  // Wikipedia plot and Wikipedia Reception (2026-07); "Dune: Part Two", "Jaws",
+  // "Barbie" and "Nope" verified the same way if a swap is ever wanted.
+  starters: ['Should I watch "Interstellar" tonight?', 'Is "Dune" worth renting?'],
+  // The scripted story is NOT a starter: it drives the byte-gated mock summary
+  // (expected-output.txt) and runs on scripted tools that answer for any title.
   story: ['Should I watch "Heat" tonight?'],
 };

@@ -28,6 +28,7 @@ export function browserAnthropic(options) {
     const apiUrl = options.apiUrl ?? ANTHROPIC_API_URL;
     const defaultModel = options.defaultModel ?? 'claude-sonnet-4-5-20250929';
     const defaultMaxTokens = options.defaultMaxTokens ?? 4096;
+    const parallelToolCalls = options.parallelToolCalls;
     const fetchImpl = options._fetch ?? fetch;
     const headers = {
         'content-type': 'application/json',
@@ -39,7 +40,7 @@ export function browserAnthropic(options) {
         name: 'browser-anthropic',
         async complete(req) {
             const body = {
-                ...buildBody(req, defaultModel, defaultMaxTokens),
+                ...buildBody(req, defaultModel, defaultMaxTokens, parallelToolCalls),
             };
             let response;
             try {
@@ -60,7 +61,7 @@ export function browserAnthropic(options) {
         },
         async *stream(req) {
             const body = {
-                ...buildBody(req, defaultModel, defaultMaxTokens),
+                ...buildBody(req, defaultModel, defaultMaxTokens, parallelToolCalls),
                 stream: true,
             };
             let response;
@@ -264,7 +265,7 @@ export class BrowserAnthropicProvider {
     }
 }
 // ─── Internals ──────────────────────────────────────────────────────
-function buildBody(req, defaultModel, defaultMaxTokens) {
+function buildBody(req, defaultModel, defaultMaxTokens, parallelToolCalls) {
     // v2.14 — auto-bump max_tokens when thinking would violate Anthropic's
     // `max_tokens > thinking.budget_tokens` invariant. See the matching
     // logic in AnthropicProvider.buildParams; identical heuristic.
@@ -288,6 +289,11 @@ function buildBody(req, defaultModel, defaultMaxTokens) {
     // v2.14 — extended-thinking activation, mirrors Node AnthropicProvider.
     if (req.thinking) {
         body.thinking = { type: 'enabled', budget_tokens: req.thinking.budget };
+    }
+    // One tool per reply — same guard as the Node provider: Anthropic rejects
+    // `tool_choice` on a request that carries no tools.
+    if (parallelToolCalls === false && body.tools !== undefined && body.tools.length > 0) {
+        body.tool_choice = { type: 'auto', disable_parallel_tool_use: true };
     }
     // v2.6+ cache markers — applied AFTER body construction so we have
     // the materialized fields (system / tools / messages) to mark.

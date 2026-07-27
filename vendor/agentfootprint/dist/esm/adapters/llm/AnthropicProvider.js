@@ -35,10 +35,11 @@ export function anthropic(options = {}) {
     const client = resolveClient(options);
     const defaultModel = options.defaultModel ?? 'claude-sonnet-4-5-20250929';
     const defaultMaxTokens = options.defaultMaxTokens ?? 4096;
+    const parallelToolCalls = options.parallelToolCalls;
     const provider = {
         name: 'anthropic',
         async complete(req) {
-            const params = buildParams(req, defaultModel, defaultMaxTokens);
+            const params = buildParams(req, defaultModel, defaultMaxTokens, parallelToolCalls);
             try {
                 const message = await client.messages.create(params);
                 return fromAnthropicResponse(message);
@@ -48,7 +49,7 @@ export function anthropic(options = {}) {
             }
         },
         async *stream(req) {
-            const params = buildParams(req, defaultModel, defaultMaxTokens);
+            const params = buildParams(req, defaultModel, defaultMaxTokens, parallelToolCalls);
             let stream;
             try {
                 stream = client.messages.stream(params);
@@ -118,7 +119,7 @@ function resolveClient(options) {
         ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
     });
 }
-function buildParams(req, defaultModel, defaultMaxTokens) {
+function buildParams(req, defaultModel, defaultMaxTokens, parallelToolCalls) {
     // v2.14 — Anthropic requires `max_tokens > thinking.budget_tokens`.
     // When thinking is enabled and the resolved max_tokens would violate
     // that, bump max_tokens to `budget + 1024` (1024 visible-response
@@ -150,6 +151,12 @@ function buildParams(req, defaultModel, defaultMaxTokens) {
     // SDK error path surfaces violations through wrapError().
     if (req.thinking) {
         params.thinking = { type: 'enabled', budget_tokens: req.thinking.budget };
+    }
+    // One tool per reply, enforced by the API rather than asked for in prose.
+    // Guarded on `params.tools`: Anthropic rejects `tool_choice` on a request
+    // that carries no tools, and an agent's final answer call often has none.
+    if (parallelToolCalls === false && params.tools !== undefined && params.tools.length > 0) {
+        params.tool_choice = { type: 'auto', disable_parallel_tool_use: true };
     }
     return params;
 }

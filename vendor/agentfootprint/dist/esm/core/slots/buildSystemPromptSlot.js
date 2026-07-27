@@ -15,7 +15,7 @@
 import { flowChart } from 'footprintjs';
 import { INJECTION_KEYS } from '../../conventions.js';
 import { COMPOSITION_KEYS } from '../../recorders/core/types.js';
-import { composeSlot, fnv1a, truncate } from './helpers.js';
+import { composeSlot, fnv1a, formatOverflowWarning, slotOverflow, truncate } from './helpers.js';
 /**
  * Build the System-Prompt slot subflow.
  *
@@ -29,6 +29,8 @@ export function buildSystemPromptSlot(config) {
     const budgetCap = config.budgetCap ?? 4000;
     const reason = config.reason ?? 'static system prompt';
     const promptSource = config.prompt;
+    // Dedup latch for the human-facing overflow warning (see buildToolsSlot).
+    let warnedOverflow = false;
     return flowChart('Compose', async (scope) => {
         const args = scope.$getArgs();
         const resolved = typeof promptSource === 'function' ? await promptSource(args) : promptSource;
@@ -79,7 +81,23 @@ export function buildSystemPromptSlot(config) {
             });
         }
         scope.$setValue(INJECTION_KEYS.SYSTEM_PROMPT, injections);
-        scope.$setValue(COMPOSITION_KEYS.SLOT_COMPOSED, composeSlot('system-prompt', args.iteration ?? 1, injections, budgetCap));
+        const composition = composeSlot('system-prompt', args.iteration ?? 1, injections, budgetCap);
+        scope.$setValue(COMPOSITION_KEYS.SLOT_COMPOSED, composition);
+        // Overflow is LOUD — nothing here truncates (see buildToolsSlot).
+        const pressure = slotOverflow(composition);
+        if (pressure) {
+            scope.$setValue(COMPOSITION_KEYS.BUDGET_PRESSURE, [pressure]);
+            if (!warnedOverflow) {
+                warnedOverflow = true;
+                console.warn(formatOverflowWarning({
+                    pressure,
+                    itemCount: injections.length,
+                    itemNoun: 'prompt fragment',
+                    contentNoun: 'fragments',
+                    remedy: 'Raise budgetCap on the slot config or shorten the system prompt.',
+                }));
+            }
+        }
     }, 'compose', { description: 'Compose system-prompt slot' }).build();
 }
 //# sourceMappingURL=buildSystemPromptSlot.js.map
