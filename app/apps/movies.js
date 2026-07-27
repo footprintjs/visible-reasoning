@@ -3,8 +3,10 @@
 // "Should I watch X tonight?" over two KEYLESS public APIs: iTunes Search
 // (price / availability / advisory rating) and Wikipedia (plot + reception).
 // Honest scope: iTunes gives commerce facts, NOT critic scores — the reception
-// sentence comes from Wikipedia and says so. Every `live` handler runs inside
-// mcp-server.js and returns ONE sentence whose tail is its provenance label.
+// sentence comes from the critical-response section of the film's Wikipedia
+// article, or says plainly that the article has none. Every `live` handler runs
+// inside mcp-server.js and returns ONE sentence whose tail is its provenance
+// label.
 
 import { nextToolCall, sawDriver } from './mock-turn.js';
 
@@ -44,7 +46,11 @@ async function resolveFilmTitle(ctx, title) {
       { headers: { 'user-agent': WIKI_UA } },
     )).json();
     const hits = ((j.query && j.query.search) || []).map((h) => String(h.title));
-    const isFilm = (t) => /\(.*film.*\)/i.test(t);
+    // Only a parenthetical that ENDS in "film)" counts. "The Godfather (film
+    // series)" carries the word too, and answering about the SERIES when someone
+    // asked about the FILM is the same confidently-wrong context in a smaller
+    // costume — the series article's reception is about three films at once.
+    const isFilm = (t) => /\(.*\bfilm\)$/i.test(t);
     const resolved =
       hits.find((t) => isFilm(t) && t.toLowerCase().startsWith(key))
       ?? hits.find((t) => t.toLowerCase() === key)
@@ -64,6 +70,111 @@ async function wikiSummary(ctx, title) {
     { headers: { 'user-agent': WIKI_UA } },
   )).json();
 }
+
+// The whole article as plain text — headings kept, citation markers and markup
+// already stripped by MediaWiki. One request, on the SAME /w/api.php endpoint the
+// title search uses, which is why this works unchanged in a browser tab: the BYOK
+// ctx (byok/browser-ctx.js) appends MediaWiki's `origin=*` CORS switch to that
+// path and drops the user-agent a tab may not set. Verified byte-identical with
+// and without `origin=*` (2026-07). The REST endpoints were the alternative and
+// buy nothing here: /page/html would hand back HTML to strip, and section
+// fetching (action=parse&prop=sections then &section=N) costs a second round trip
+// for a section index this text already carries.
+async function wikiPlainText(ctx, page) {
+  const url = 'https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1&format=json'
+    + `&titles=${encodeURIComponent(page)}`;
+  const j = await (await ctx.safeFetch(url, { headers: { 'user-agent': WIKI_UA } })).json();
+  const pages = Object.values((j.query && j.query.pages) || {});
+  // A miss comes back as a `missing` page with no extract; longest wins if a
+  // redirect ever returns more than one.
+  return pages.map((p) => String(p.extract || '')).sort((a, b) => b.length - a.length)[0] || '';
+}
+
+// Wikipedia files critic sentiment in a SUBSECTION. A film article's
+// "== Reception ==" almost always opens with "=== Box office ===", so anchoring
+// on "Reception" and reading its first paragraph returns MONEY — which is exactly
+// the bug this tool shipped with: it was described to the model as critical
+// reception and paid out grosses, and the model apologized for its own source
+// mid-reply ("the reception data shows box office information but not critical
+// reviews"). Section vocabulary surveyed across 30 film articles (2026-07): 27
+// carry "Critical response"/"Critical reception"; older films file it under a
+// different word (Casablanca "Initial response", Citizen Kane "Contemporary
+// response"); short articles (Heat 1995) carry critic prose directly under a bare
+// "Reception" with no subsections at all.
+const CRITICAL_SECTION = /^critical\s+(?:response|reception|reaction|reviews?|analysis|reassessment)$/i;
+const CRITICAL_SECTION_DATED = /^(?:initial|contemporary|original|modern|retrospective|critics'?)\s+(?:response|reception|reviews?)$/i;
+const RECEPTION_SECTION = /^(?:release and )?reception(?:\s+and\s+legacy)?$/i;
+// Evidence that a paragraph IS about critics, and evidence that it is about
+// takings. Only the bare-"Reception" path needs them — there the heading promises
+// nothing, so the prose has to prove itself. The bar deliberately mis-fires
+// toward silence: Birdemic's reception paragraph quotes two publications without
+// ever using a word from this list, and so comes back as honest absence rather
+// than as a guess.
+const CRITIC_WORDS = /\b(?:critics?|critical|reviews?|reviewers?|acclaim(?:ed)?|praise[ds]?|panned|consensus|Rotten Tomatoes|Metacritic|CinemaScore)\b|\d\/10/i;
+const BOX_OFFICE_WORDS = /\bgross(?:ed|es|ing)?\b|\bbox[- ]office\b|\bopening weekend\b|\bproduction budget\b|\$\d/i;
+
+const HEADING_LINE = /^=+.*=+$/;
+// Sentence boundaries, minus the ones that are not: a plain /[.!?]\s/ split ends
+// the sentence inside "stars J. K. Simmons", "ranked at No. 1", "Mr. Welles", and
+// at the ellipsis in a quoted review ("The Warners ... have a picture").
+const SENTENCE_BREAK = /(?<!\.\.)(?<!\b(?:No|Nos|Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|Vol|Inc|Ltd|Co|Prof|Rev|Gen|Sen|Rep|approx|al|[A-Z])\.)(?<=[.!?]["'”’]?)\s+(?=["“'([]?[A-Z0-9])/;
+
+// The article's section tree. `lead` is the section's OWN prose (it stops at the
+// first subsection); `body` also spans everything nested under it.
+function wikiSections(text) {
+  const marks = [];
+  const heading = /\n(=+)\s*([^=\n]+?)\s*\1\n/g;
+  let m;
+  while ((m = heading.exec(text))) marks.push({ level: m[1].length, title: m[2], at: m.index, start: m.index + m[0].length });
+  return marks.map((s, i) => {
+    const closing = marks.slice(i + 1).find((n) => n.level <= s.level);
+    return {
+      title: s.title,
+      lead: text.slice(s.start, marks[i + 1] ? marks[i + 1].at : text.length),
+      body: text.slice(s.start, closing ? closing.at : text.length),
+    };
+  });
+}
+
+const firstParagraph = (body) => body.split('\n').map((l) => l.trim())
+  .find((l) => l.length >= 40 && !HEADING_LINE.test(l)) || '';
+const firstSentences = (paragraph, n = 2) => paragraph.split(SENTENCE_BREAK).slice(0, n).join(' ').trim();
+
+/**
+ * What critics said, or null when the article does not say. Never box office:
+ * a tool that promises criticism and pays out grosses is the defect this
+ * function exists to make impossible, so every path either returns prose from a
+ * section that names critics or returns nothing at all.
+ */
+function criticalResponse(text) {
+  const sections = wikiSections(text);
+  const named = sections.find((s) => CRITICAL_SECTION.test(s.title))
+    ?? sections.find((s) => CRITICAL_SECTION_DATED.test(s.title));
+  if (named) {
+    // `body`, not `lead`: Titanic's "Critical response" holds no prose of its
+    // own — its first words live in an "==== Initial ====" child.
+    const sentence = firstSentences(firstParagraph(named.body));
+    if (sentence && !(BOX_OFFICE_WORDS.test(sentence) && !CRITIC_WORDS.test(sentence))) {
+      return { heading: named.title, sentence };
+    }
+  }
+  const generic = sections.find((s) => RECEPTION_SECTION.test(s.title));
+  if (generic) {
+    // `lead`, not `body`: stopping at the first subsection is what keeps a
+    // "=== Box office ===" child from bleeding back into the answer.
+    const sentence = firstSentences(firstParagraph(generic.lead));
+    if (sentence && CRITIC_WORDS.test(sentence) && !BOX_OFFICE_WORDS.test(sentence)) {
+      return { heading: generic.title, sentence };
+    }
+  }
+  return null;
+}
+
+// Exposed for verify-ia.mjs section F. The defect this file just fixed was
+// LIVE-ONLY — the byte gate runs on scripted fixtures and never saw it — so the
+// one thing that can catch its return is a pure test of this function against a
+// fixture article. Same idiom as byok/browser-ctx.js.
+export const __testables = { criticalResponse, wikiSections };
 
 export const movies = {
   id: 'movies',
@@ -163,31 +274,39 @@ export const movies = {
     },
     {
       name: 'wiki_reception',
-      description: 'What critics said about a movie — its critical reception (Wikipedia, keyless).',
+      // The description is a CONTRACT with the model, and this tool's original
+      // one was broken: it promised criticism and returned box office, so the
+      // model consulted it and then apologized for it in the reply ("the
+      // reception data shows box office information but not critical reviews").
+      // Both halves of what it can now return are named here — the sentiment and
+      // the absence — so that "this article has no critical-response section" is
+      // a real answer to work with, not a malfunction to apologize for.
+      description: 'What critics said about a movie — the critical-response section of its Wikipedia '
+        + 'article, never box office; says plainly when the article carries none (Wikipedia, keyless).',
       inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Movie title' } }, required: ['title'] },
       legendLabel: 'reception',
-      // The flakiest fetch in the gallery. Its fallback is deliberately
-      // UNOPINIONATED: a synthetic "acclaim" sentence would steer the live
-      // decision with data nobody measured.
+      // The flakiest fetch in the gallery, and the one with the most ways to be
+      // quietly wrong. Both silences below are LABELED and specific rather than
+      // invented: a synthetic "acclaim" sentence would steer the live decision
+      // with data nobody measured, and box-office prose dressed as criticism
+      // would do it while sounding sourced.
       async live({ title }, ctx) {
         try {
           const page = await resolveFilmTitle(ctx, title);
-          const url = 'https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1&format=json'
-            + `&titles=${encodeURIComponent(page)}`;
-          const j = await (await ctx.safeFetch(url, { headers: { 'user-agent': WIKI_UA } })).json();
-          const pages = Object.values((j.query && j.query.pages) || {});
-          const text = pages.map((p) => String(p.extract || '')).sort((a, b) => b.length - a.length)[0] || '';
-          if (!text) throw new Error('no Wikipedia extract');
-          const m = text.match(/\n==+\s*(Reception|Critical response|Critical reception)[^=]*==+\n([\s\S]{40,4000})/i);
-          if (!m) throw new Error('no reception section');
-          // Skip the subsection headings ("=== Box office ===") that often open a
-          // Reception section — take the first line of actual prose.
-          const body = m[2].trim().split('\n')
-            .map((l) => l.trim())
-            .find((l) => l.length > 60 && !/^=+.*=+$/.test(l)) || '';
-          const sentence = body.split(/(?<=[.!?])\s+/).slice(0, 2).join(' ');
-          if (!sentence) throw new Error('empty reception section');
-          return `${ctx.clip(sentence, 300)}` + ctx.labelLive(`Wikipedia — ${page}, Reception section`);
+          const text = await wikiPlainText(ctx, page);
+          if (!text) {
+            return `No Wikipedia article was found for "${title}", so what critics said about it is unknown here.`
+              + ctx.labelFallback('no Wikipedia article');
+          }
+          const found = criticalResponse(text);
+          if (!found) {
+            // The honest arm. The article exists and was read; it simply carries
+            // no critic sentiment, and saying which article was read lets anyone
+            // check that in one click.
+            return `The Wikipedia article "${page}" has no critical-response section, so there is no critic sentiment to report for "${title}".`
+              + ctx.labelFallback('no critical-response section');
+          }
+          return `${ctx.clip(found.sentence, 300)}` + ctx.labelLive(`Wikipedia — ${page}, ${found.heading} section`);
         } catch (err) {
           return `Critical reception for "${title}" could not be retrieved (illustrative — no signal).`
             + ctx.labelFallback(ctx.reasonOf(err));
@@ -219,8 +338,10 @@ export const movies = {
   // exact iTunes match: the tool answers live and honestly, but about
   // "Heatwave" (2021), so the desk priced one film while Wikipedia described
   // another. These two were verified live on all three sources — iTunes Search,
-  // Wikipedia plot and Wikipedia Reception (2026-07); "Dune: Part Two", "Jaws",
-  // "Barbie" and "Nope" verified the same way if a swap is ever wanted.
+  // Wikipedia plot and Wikipedia critical response (2026-07, re-verified when
+  // the reception tool was fixed to read critics instead of grosses); "Dune:
+  // Part Two", "Jaws", "Barbie", "Nope" and "The Godfather" answer with real
+  // critic sentiment the same way if a swap is ever wanted.
   starters: ['Should I watch "Interstellar" tonight?', 'Is "Dune" worth renting?'],
   // The scripted story is NOT a starter: it drives the byte-gated mock summary
   // (expected-output.txt) and runs on scripted tools that answer for any title.

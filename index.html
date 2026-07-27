@@ -25,8 +25,20 @@
   a:focus-visible, button:focus-visible { outline: 2px solid var(--terra); outline-offset: 3px; border-radius: 1px; }
   a:focus:not(:focus-visible), button:focus:not(:focus-visible) { outline: none; }
 
+  /* THE READING TRACK, CENTRED. The column used to be a bare max-width, so on a
+     wide display it sat hard against the left padding edge with the whole right
+     half empty — the page looked broken rather than composed.
+     Centring it is the fix; the clamp is the judgement.
+
+     It grows with the viewport and stops at 1040px, which is as wide as this
+     design's structural elements (the double rule over the desk listing, the
+     note-row hairlines with their +/− at the far right, the top rail and the
+     footer) can stretch and still read as one page. RUNNING PROSE DOES NOT GROW
+     WITH IT: vr-lead / vr-sub cap themselves at 56ch and a note body at 62ch,
+     so the measure a person actually reads is the same at 1280px and at 2560px.
+     Only the frame breathes. */
   .vr-page { min-height: 100dvh; padding: 0 clamp(20px, 5.5vw, 72px) 56px; }
-  .vr-col { max-width: 768px; }
+  .vr-col { max-width: clamp(768px, 62vw, 1040px); margin-inline: auto; }
 
   /* header — the demo's own label, the way to the code, the venue */
   .vr-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
@@ -133,6 +145,24 @@
   .vr-desknote { margin-top: 12px; }
   .vr-desknote .vr-notes { border-bottom: none; }
 
+  /* THE COLOPHON — the landing's only standing prose, and it is a list.
+     Each library is one line: its name (the link), what it is, and the ask.
+     The measure is capped like every other run of prose on this page, so the
+     section reads the same at 1280px and at 2560px. */
+  .vr-colophon { margin-top: clamp(44px, 8vh, 80px); }
+  .vr-lib { margin: 0 0 10px; max-width: 62ch; font-size: 16px; line-height: 1.55; color: var(--body); }
+  .vr-libname { font-family: var(--mono); font-size: 14px; color: var(--green); text-decoration: none;
+    border-bottom: 1px solid var(--green-soft); }
+  .vr-libname:hover { color: var(--green-dk); border-bottom-color: var(--green-dk); }
+  .vr-libwhat em { color: var(--muted); }
+  .vr-eco { margin: 14px 0 0; max-width: 62ch; font-size: 15.5px; color: var(--muted); }
+  .vr-what-kick { margin-top: clamp(30px, 5vh, 46px); }
+  .vr-what { margin: 0 0 14px; max-width: 56ch; font-size: 17px; line-height: 1.55; color: var(--body); }
+  .vr-colophon .vr-cite { max-width: 62ch; }
+  .vr-colophon .vr-meta { max-width: 62ch; }
+  .vr-disclaim { margin: 10px 0 0; max-width: 62ch; font-size: 14.5px; line-height: 1.6;
+    font-style: italic; color: var(--faint); }
+
   .vr-program { margin-top: clamp(48px, 8vh, 88px); }
 
   .vr-foot { margin-top: clamp(56px, 10vh, 96px); border-top: 1px solid var(--hair);
@@ -172,25 +202,10 @@
       </div>
       <h1 class="vr-h1">Visible Reasoning — the app gallery</h1>
       <p class="vr-lead">Three real chat desks share one machine; every reply can be re-run without a source, to see what that source really changed.</p>
-      <p class="vr-sub">Two of them run right here in your browser, on your own Anthropic API key — <em>the key never leaves this tab.</em></p>
+      <p class="vr-sub">Two of them run right here in your browser, on your own Anthropic API key — <em>the key never leaves your browser.</em></p>
     </header>
 
     <div class="vr-notes" data-note-group>
-      <div class="vr-note" id="about" data-note-row>
-        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-about">
-          <span>what is visible reasoning?</span>
-          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
-        </button>
-        <div class="vr-fold" data-note-fold>
-          <div class="vr-fold-inner" id="note-about" data-note-pane>
-            <div class="vr-body">
-            <p>Three chat desks that answer a question and then show why: the sources that shaped the answer, ranked — each one droppable, so the same turn can be re-run without it and compared. A working companion to a published paper, not a product.</p>
-            <p>None of them narrates its own reasoning. Each one records it: every source the agent consults is a tool call, and the record of which tools ran, what came back and what it changed survives the reply.</p>
-            <p>Two of the three run here, in your browser; the third needs a server, and its row below says so. The paper and the method are under <em>program notes</em>, below. Everything — the stock desk included — runs from <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>. Every file here — this page, the desks, the vendored library bytes — is generated from that repo and served as-is.</p>
-            </div>
-          </div>
-        </div>
-      </div>
       <div class="vr-note" id="key" data-note-row>
         <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-key">
           <span>the key, in full</span>
@@ -199,12 +214,13 @@
         <div class="vr-fold" data-note-fold>
           <div class="vr-fold-inner" id="note-key" data-note-pane>
             <div class="vr-body">
-            <p><strong>Your key stays in this tab.</strong></p>
+            <p><strong>Your key stays in your browser.</strong></p>
             <p>This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.</p>
-            <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. <strong>Forget my key</strong> erases it instantly.</p>
+            <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With <strong>keep it in this browser</strong> ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. <strong>Forget my key</strong> erases it from both, instantly.</p>
             <p>This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that <em>could</em> see your key.</p>
-            <p>You’ll paste your key on the desk you open — this page never asks for one. Tick <strong>remember</strong> there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.</p>
+            <p>You’ll add your key on the desk you open — this page never asks for one. Leave <strong>keep it in this browser</strong> ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again.</p>
             <p>The one thing this page fetches is its web fonts, from <code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code> — a stylesheet and a few font files, no key, no data of yours, and if those requests fail you get your system fonts and the same page. Nothing else leaves it: this page takes no key at all.</p>
+            <p>Every file here — this page, the desks, the vendored library bytes — is generated from that repo and served as-is: <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>.</p>
             <p class="vr-aside"><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to <code>api.anthropic.com</code>. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
             </div>
           </div>
@@ -292,7 +308,7 @@
             </div>
             <div class="vr-defrow">
               <span class="vr-defname"><span class="cd-dot live"></span>reception</span>
-              <span>What critics said about a movie — its critical reception (Wikipedia, keyless).</span>
+              <span>What critics said about a movie — the critical-response section of its Wikipedia article, never box office; says plainly when the article carries none (Wikipedia, keyless).</span>
             </div>
             <div class="vr-kicker">THIS DESK</div>
             <div class="vr-lines">
@@ -337,6 +353,28 @@
           </div>
         </article>
       </div>
+    </section>
+
+    <section class="vr-colophon" aria-label="The libraries, the ecosystem and the paper">
+      <div class="vr-seckick">THE LIBRARIES IT RUNS ON</div>
+        <p class="vr-lib"><a class="vr-libname" href="https://github.com/footprintjs/agentfootprint" target="_blank"
+          rel="noopener">agentfootprint</a> <span class="vr-libwhat">observable, explainable AI agents: recordings, influence localization, ablate-and-rerun, MCP tools. <em>If it’s useful, a star helps people find it.</em></span></p>
+        <p class="vr-lib"><a class="vr-libname" href="https://github.com/footprintjs/footPrint" target="_blank"
+          rel="noopener">footprintjs</a> <span class="vr-libwhat">the self-explaining flowchart engine underneath, recording every stage, decision and write as a typed event. <em>A star there is welcome too, for the same reason.</em></span></p>
+        <p class="vr-lib"><a class="vr-libname" href="https://github.com/footprintjs/agentThinkingUI" target="_blank"
+          rel="noopener">agentthinkingui</a> <span class="vr-libwhat">the panels you are clicking — the reply’s story, its sources and its re-runs.</span></p>
+      <p class="vr-eco">All of them, and the rest of the family, live at <a href="https://footprintjs.github.io/"
+        target="_blank" rel="noopener">footprintjs.github.io</a> — the repositories are at <a
+        href="https://github.com/footprintjs" target="_blank" rel="noopener">github.com/footprintjs</a>.</p>
+
+      <div class="vr-seckick vr-what-kick">WHAT THIS IS</div>
+      <p class="vr-what">The reference implementation of the paper below.</p>
+      <p class="vr-cite">Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems</p>
+      <p class="vr-meta">HCII 2026 · LNCS 16745 · pp. 3–21 · <a href="https://doi.org/10.1007/978-3-032-30849-8_1" target="_blank"
+        rel="noopener">doi.org/10.1007/978-3-032-30849-8_1</a></p>
+      <p class="vr-meta">Anbalagan, Nie, Kommalapati, Kanamarlapudi, Radhakrishnan, Zhao, Mohan</p>
+      <p class="vr-disclaim">The ideas in this repository were developed with those co-authors and published in that paper. The paper states the argument; this repository makes it runnable.</p>
+      <p class="vr-disclaim">This repository is an independent, personal open-source project. It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored by, or endorsed by any employer.</p>
     </section>
 
     <section class="vr-program" aria-label="Program notes">
@@ -425,6 +463,7 @@
           <div class="vr-fold-inner" id="note-why" data-note-pane>
             <div class="vr-body">
             <p>Ask a model why it said something and you get a story about itself — fluent, plausible, unverified. Here the why is established outside the model: remove a source, run the same turn again, read what changed.</p>
+            <p>None of these desks narrates its own reasoning. Each one records it: every source the agent consults is a tool call, and the record of which tools ran, what came back and what it changed survives the reply.</p>
             <p>The paper calls this a third paradigm. Instead of asking the model to narrate its reasons — which cannot be checked — or asking a second model to judge it, the substrate that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed events captured as the run happens, not a story told afterwards.</p>
             </div>
           </div>
@@ -454,22 +493,6 @@
             <div class="vr-body">
             <p>Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from iTunes — keyless public APIs, called straight from your tab.</p>
             <p>Every tool sentence carries its own <code>[source: …]</code> label, and the dot beside a source names what really happened on the latest reply. The 4 labels are spelled out in <em>how to read the demo</em>, above.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="vr-note" id="paper" data-note-row>
-        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-paper">
-          <span>the paper &amp; the libraries</span>
-          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
-        </button>
-        <div class="vr-fold" data-note-fold>
-          <div class="vr-fold-inner" id="note-paper" data-note-pane>
-            <div class="vr-body">
-            <p class="vr-cite">Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems</p>
-            <p class="vr-meta">HCII 2026 · LNCS 16745 · pp. 3–21 · <a href="https://doi.org/10.1007/978-3-032-30849-8_1" target="_blank" rel="noopener">doi.org/10.1007/978-3-032-30849-8_1</a></p>
-            <p class="vr-meta">Anbalagan, Nie, Kommalapati, Kanamarlapudi, Radhakrishnan, Zhao, Mohan</p>
-            <p>The machinery is three MIT-licensed libraries: <a href="https://www.npmjs.com/package/footprintjs" target="_blank" rel="noopener">footprintjs</a> records the run, <a href="https://www.npmjs.com/package/agentfootprint" target="_blank" rel="noopener">agentfootprint</a> turns that recording into agents, influence rankings and re-runs, and <a href="https://www.npmjs.com/package/agentthinkingui" target="_blank" rel="noopener">agentthinkingui</a> draws the panels you are clicking. The whole site is open: <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>.</p>
             </div>
           </div>
         </div>
