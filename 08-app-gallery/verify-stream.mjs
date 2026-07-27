@@ -140,9 +140,9 @@ try {
   // ═══ 2. the streamed final IS the plain /chat payload ═════════════════════
   const plain = await post('/chat', { message: MSG });
   ok(plain.res.status === 200, 'plain /chat still answers 200 (unchanged for every existing caller)');
-  const shared = ['reply', 'provenance', 'entity', 'turnIndex'];
+  const shared = ['reply', 'provenance', 'sourceLabels', 'entity', 'turnIndex'];
   const same = shared.every((k) => JSON.stringify(plain.json?.[k]) === JSON.stringify(final?.[k]));
-  ok(same, 'streamed `final` and plain /chat agree on reply/provenance/entity/turnIndex',
+  ok(same, 'streamed `final` and plain /chat agree on reply/provenance/sourceLabels/entity/turnIndex',
     shared.map((k) => `${k}:${JSON.stringify(plain.json?.[k]) === JSON.stringify(final?.[k])}`).join(' '));
   ok(JSON.stringify(Object.keys(plain.json ?? {})) === JSON.stringify(Object.keys(final ?? {})),
     'both payloads carry the same keys in the same order (one builder, no drift)');

@@ -126,6 +126,7 @@ const chatPayload = (session, turn) => {
     sessionId: session.id, turnIndex: turn.index, reply: turn.reply,
     label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
     entity: m.entity ?? session.entity, provenance: m.provenance ?? null,
+    sourceLabels: m.sourceLabels ?? null,
   };
 };
 

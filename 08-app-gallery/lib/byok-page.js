@@ -815,7 +815,7 @@ function Byok() {
         var sessions = Object.assign({}, d.sessions);
         var s = Object.assign({}, sessions[j.sessionId]);
         s.turns = s.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply,
-          provenance: j.provenance, entity: j.entity }]);
+          provenance: j.provenance, sourceLabels: j.sourceLabels || null, entity: j.entity }]);
         if (j.entity) s.entity = j.entity;
         sessions[j.sessionId] = s;
         d.sessions = sessions;
@@ -964,14 +964,20 @@ function Byok() {
 
   // The newest turn that recorded a verdict map drives the dots — and the same
   // shared ProvLegend the desk pages render draws them (see lib/page.js).
+  // The verdict and its reason come off the SAME turn — never a word from one
+  // reply explained by another reply's label.
   var lastProv = null;
+  var lastLabels = null;
   var tks = (sess && sess.turns) || [];
-  for (var li = tks.length - 1; li >= 0; li -= 1) { if (tks[li].provenance) { lastProv = tks[li].provenance; break; } }
+  for (var li = tks.length - 1; li >= 0; li -= 1) {
+    if (tks[li].provenance) { lastProv = tks[li].provenance; lastLabels = tks[li].sourceLabels || null; break; }
+  }
   var legend = e(ProvLegend, {
     entityLabel: APP.entityLabel,
     entityValue: (sess && sess.entity) || APP.entityDefault,
     tools: APP.tools,
     provenance: lastProv,
+    sourceLabels: lastLabels,
   });
 
   // ═══ custody panel / armed strip ════════════════════════════════════════

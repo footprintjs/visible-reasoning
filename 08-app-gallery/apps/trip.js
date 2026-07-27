@@ -27,6 +27,45 @@ function placeFromMessage(msg, fallback = 'Mission Peak') {
   return fallback || 'Mission Peak';
 }
 
+// Resolve a spoken place name to the Wikipedia page that is actually ABOUT it.
+//
+// The REST summary endpoint matches a title exactly apart from its first letter,
+// so the lowercase name a person actually types 404s: `…/summary/Mission%20Peak`
+// answers, `…/summary/mission%20peak` does not (verified 2026-07, and the same
+// for "mount tamalpais"). Title-casing would be a guess in both directions — it
+// mangles the real titles that carry lowercase words ("Mount of the Holy Cross")
+// and it still cannot help a name that is right but decorated ("Mission Peak
+// Trail"). So ask Wikipedia's own keyless search API which page this name means,
+// exactly as the movie pack does for film titles (movies.js resolveFilmTitle).
+//
+// Cached per process; failures are NOT cached. Two outcomes the caller must keep
+// apart: search says "no such page" → null, and the tool falls back honestly;
+// search is UNREACHABLE → the name as given, which is still worth one try (it is
+// the canonical title most of the time) and degrades into the same labeled
+// fallback if it isn't.
+const placeTitleCache = new Map();
+async function resolvePlaceTitle(ctx, place) {
+  const key = String(place).toLowerCase();
+  if (placeTitleCache.has(key)) return placeTitleCache.get(key);
+  let hits;
+  try {
+    const j = await (await ctx.safeFetch(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=5&srsearch=${encodeURIComponent(place)}`,
+      { headers: { 'user-agent': WIKI_UA } },
+    )).json();
+    hits = ((j.query && j.query.search) || []).map((h) => String(h.title));
+  } catch {
+    return place; // search unreachable — not the same fact as "no such page"
+  }
+  const resolved =
+    hits.find((t) => t.toLowerCase() === key)
+    ?? hits.find((t) => t.toLowerCase().startsWith(key))
+    ?? hits[0]
+    ?? null;
+  if (resolved) placeTitleCache.set(key, resolved);
+  return resolved;
+}
+
 // WMO weather codes → one plain word. Open-Meteo documents the full table; these
 // ten buckets are what a hiking decision actually turns on.
 const WEATHER_WORD = {
@@ -121,13 +160,18 @@ export const trip = {
       legendLabel: 'place',
       async live({ place }, ctx) {
         try {
+          // Resolve FIRST, then fetch — see resolvePlaceTitle. The label names
+          // the page that was actually read, so a resolution the visitor would
+          // dispute is visible in the reply rather than buried in the request.
+          const page = await resolvePlaceTitle(ctx, place);
+          if (!page) throw new Error(`no Wikipedia page named like "${place}"`);
           const j = await (await ctx.safeFetch(
-            `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(place)}`,
+            `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(page)}`,
             { headers: { 'user-agent': WIKI_UA } },
           )).json();
           const extract = String(j.extract || '').trim();
           if (!extract) throw new Error('no Wikipedia extract');
-          return `${ctx.clip(extract, 240)}` + ctx.labelLive('Wikipedia');
+          return `${ctx.clip(extract, 240)}` + ctx.labelLive(`Wikipedia — ${page}`);
         } catch (err) {
           return `A description of ${place} could not be retrieved (illustrative — no signal).`
             + ctx.labelFallback(ctx.reasonOf(err));

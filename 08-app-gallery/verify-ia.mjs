@@ -14,7 +14,11 @@
 //      desks, and the vocabulary is still exactly one tap away (the dialog's
 //      guide link, which resolves on both transports);
 //   3. BYOK IS UNTOUCHED — a public visitor arrives with no landing behind
-//      them, so its dialog keeps BOTH sections.
+//      them, so its dialog keeps BOTH sections;
+//   4. A MISSING SOURCE SAYS WHY — the vocabulary word is static and lives on
+//      the landing, but the reason a source fell back belongs to one reply, so
+//      it travels with the turn to the dot and the dialog. A dot that says
+//      "fallback" and nothing else is honest and useless.
 //
 //   node 08-app-gallery/verify-ia.mjs
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -26,6 +30,7 @@ import {
   question, statesForBuild,
 } from './lib/page.js';
 import { APPS } from './apps/index.js';
+import { provenanceFromToolLog, sourceLabelsFromToolLog } from './lib/mcp.js';
 import { generate } from './byok.js';
 
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -356,6 +361,46 @@ ok(threw, 'hiding the definitions without a guide link is a BUILD ERROR, not a q
 // with no dot class cannot reach a page, on either surface.
 ok(PROVENANCE_HELP.every((h) => guide.includes(`class="cd-dot `)) && !guide.includes('cd-dot unknown'),
   'no landing definition fell through to the “unknown” dot');
+
+// ═══ E. a missing source says WHY, not just that it is missing ══════════════
+// The vocabulary word ("fallback") is static and lives on the landing. The
+// REASON ("HTTP 404", "no Wikipedia page named like …") is runtime, belongs to
+// exactly one reply, and therefore has to travel with the turn all the way to
+// the dot. Without it the dot is honest but useless: a visitor can see that a
+// source did not answer and has no way, short of reading code, to learn why.
+const LOG = new Map([
+  ['weather_forecast::{"place":"mission peak"}',
+    'A Saturday forecast for mission peak could not be retrieved (illustrative — no signal).'
+    + ' [source: synthetic fallback — HTTP 404]'],
+  ['wiki_place::{"place":"mission peak"}', 'Mission Peak is a mountain peak east of Fremont. [source: live — Wikipedia — Mission Peak]'],
+  ['crowd_level::{"place":"mission peak"}', 'mission peak is modeled as heavily busy. [source: synthetic — modeled crowd estimate, not measured]'],
+]);
+const NAMES = ['weather_forecast', 'wiki_place', 'crowd_level', 'never_called'];
+const verdicts = provenanceFromToolLog(LOG, NAMES);
+const reasons = sourceLabelsFromToolLog(LOG, NAMES);
+
+ok(verdicts.weather_forecast === 'fallback' && reasons.weather_forecast === 'synthetic fallback — HTTP 404',
+  'a fallback records BOTH the verdict word and the reason behind it', reasons.weather_forecast);
+ok(verdicts.wiki_place === 'live' && reasons.wiki_place === 'live — Wikipedia — Mission Peak',
+  'a live source records which page actually answered', reasons.wiki_place);
+ok(verdicts.crowd_level === 'synthetic' && reasons.crowd_level === 'synthetic — modeled crowd estimate, not measured',
+  'the always-synthetic source keeps saying what it is', reasons.crowd_level);
+ok(verdicts.never_called === 'not consulted' && reasons.never_called === null,
+  'a tool this turn never called has no reason to report, and none is invented');
+// Read off the SAME sentence tail with the SAME convention agentthinkingui uses
+// on an influence-panel snippet, so the legend dot and the panel row cannot
+// disagree about what a source said about itself.
+ok(NAMES.filter((n) => reasons[n]).every((n) => reasons[n].startsWith(verdicts[n] === 'fallback' ? 'synthetic fallback' : verdicts[n])),
+  'the verdict word is the head of the recorded label — one string, read one way');
+
+// Both surfaces hand the turn's reasons to the ONE shared legend, and the
+// tooltip really composes them in.
+for (const [name, html] of [['desk', deskLive], ['byok', byok]]) {
+  ok(html.includes('sourceLabels: lastLabels'), `[${name}] the legend is given THIS turn's reasons`);
+  ok(html.includes("sourceLabels: j.sourceLabels || null"), `[${name}] a committed turn carries its reasons with it`);
+}
+ok(deskLive.includes("body += ' · this reply: ' + detail"),
+  'the dot tooltip composes the reason in — the shared provBody, one copy, both surfaces');
 
 console.log(failed === 0
   ? '\nAll checks passed — the landing teaches, the desk performs, and neither invented its own vocabulary.'
