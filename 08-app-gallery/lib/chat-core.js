@@ -16,6 +16,10 @@ import {
   applyAblations, embeddingCache, listInfluenceStrategies, llmCallIdsFromEvents,
   recordedChat, removableSources, semanticAlignmentStrategy,
 } from 'agentfootprint/debug';
+import { boundaryRecorder } from 'agentfootprint/observe';
+// footprintjs's stage-timing recorder. Aliased because `metrics` is already
+// this file's MCP dispatch counter (./mcp.js) — two different meters.
+import { metrics as stageMetrics } from 'footprintjs/recorders';
 import { metrics, provenanceFromToolLog, sourceLabelsFromToolLog } from './mcp.js';
 import { debugForTurn } from './debug-view.js';
 
@@ -105,6 +109,40 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     if (pending.mode === 'record' && !pending.blueprint) {
       try { pending.blueprint = agent.getSpec()?.buildTimeStructure ?? null; } catch (err) { pending.blueprint = null; }
     }
+    // THE OBSERVABILITY RECORDERS — the other thing a recording does not carry
+    // unless somebody asks for it at RECORD time. Both are the libraries' own,
+    // both are passive (they observe; they never steer), and both ride the
+    // snapshot recordedChat already freezes on the turn — so nothing new has to
+    // be transported and no view has to change:
+    //
+    //   metrics()  → footprintjs's MetricRecorder. Its toSnapshot() lands a
+    //                `Metrics` entry whose `data.steps[runtimeStageId].duration`
+    //                is EXACTLY what explainable-ui's extractStageTimings reads.
+    //                Without it the inspector's Gantt bars are all 0 ms and its
+    //                Insights list is the literal "No insights available. Attach
+    //                recorders to see data." — the two defects, one attach.
+    //   boundary   → agentfootprint's BoundaryRecorder. `getCommitCount` is what
+    //                stamps each event with the commit index it happened at,
+    //                which is the axis agentfootprint-lens's step strip and
+    //                transport are built on. `getLastSnapshot()` is live during
+    //                the run (the executor is set before traversal), which is the
+    //                same closure a live LensRecorder injects.
+    //
+    // RECORD MODE ONLY. A re-run probe is a counterfactual, not a recording:
+    // nobody reads its snapshot, and a lean probe keeps the comparison honest.
+    // Run semantics are untouched either way — recorders cannot steer a run and
+    // cannot abort one (footprintjs isolates their errors), which is why the
+    // frozen byte gate cannot move. The only cost is artifact payload size.
+    // `attach` is deliberately NOT idempotent in af and nothing auto-expires —
+    // which would leak on a long-lived runner. It cannot here: makeAgent builds
+    // a FRESH agent per call, so each run gets its own pair and drops them with
+    // the agent when the turn is over.
+    if (pending.mode === 'record') {
+      agent.attach(stageMetrics());
+      agent.attach(boundaryRecorder({
+        getCommitCount: () => agent.getLastSnapshot()?.commitLog?.length ?? 0,
+      }));
+    }
     if (probeEventSink) { const evs = []; agent.on('*', (e) => evs.push(e)); probeEventSink.push(evs); }
     // The re-run tap, gated the same way in the other direction. THIS call is
     // also the only honest boundary marker a probe has: af builds exactly one
@@ -164,6 +202,37 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     return s;
   }
 
+  // ═══ A LIBRARY BUG, worked around here and nowhere else ═══════════════════
+  // footprintjs 9.11.0 lands the `Metrics` entry in `snapshot.recorders` TWICE.
+  // MetricRecorder declares `onPause`, which appears in BOTH of CombinedRecorder's
+  // routing lists (RECORDER_EVENT_METHODS and FLOW_RECORDER_EVENT_METHODS), so the
+  // recorder legitimately registers on both channels — but the two inline
+  // collection loops in FlowChartExecutor.getSnapshot() have no shared `seen` set,
+  // while the deferred branch right below them DOES dedupe by id. So the same
+  // recorder is asked for its snapshot once per channel and both answers are kept.
+  //
+  // Duplicate ids are not cosmetic downstream: explainable-ui turns every entry
+  // into an Insights tab keyed by `id`, so the duplicate is a repeated React key
+  // AND a second identical tab. We drop the repeats by id here — the recording is
+  // otherwise untouched, and the object identity of the snapshot is preserved
+  // because the views read the turn's own frozen bytes, not a copy.
+  //
+  // FOLLOW-UP (library, not app): give those two loops one shared `seen` set, the
+  // way the deferred branch already has. Then this function becomes a no-op and
+  // can be deleted — it is written to survive the fix rather than depend on it.
+  function dedupeRecorderSnapshots(snapshot) {
+    const list = snapshot?.recorders;
+    if (!Array.isArray(list) || list.length < 2) return;
+    const seen = new Set();
+    const unique = list.filter((r) => {
+      const key = r?.id ?? r?.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (unique.length !== list.length) snapshot.recorders = unique;
+  }
+
   // ═══ Running turn K ═══════════════════════════════════════════════════════
   // recordedChat.send freezes the message bytes, snapshot, events and
   // last-LLM-call id on the turn. There is NO host-side pre-fetch here: the AGENT
@@ -207,6 +276,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       liveEventSink = opts.onEvent ?? null;
       try {
         const turn = await session.chat.send(userMessage);
+        dedupeRecorderSnapshots(turn.artifacts?.snapshot);
         const names = pack.tools.map((t) => t.name);
         const provenance = provenanceFromToolLog(toolLog, names);
         // The verdict WORD and the reason behind it are recorded together, so a

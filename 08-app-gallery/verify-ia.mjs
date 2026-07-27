@@ -21,17 +21,24 @@
 //      "fallback" and nothing else is honest and useless.
 //
 //   node 08-app-gallery/verify-ia.mjs
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-  BUTTON_HELP, HEADER_LINKS, LIVE_COST_LINE, PAPER_AUTHORS, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE,
-  PROVENANCE_HELP, PROVENANCE_PHILOSOPHY, STARTERS_CSS, buildAppPage, buildGalleryPage,
-  provenanceHelpScript, question, startersScript, statesForBuild,
+  ABOUT_LINE, BUTTON_HELP, HEADER_LINKS, LIBRARIES, LIVE_COST_LINE, PAPER_AUTHORS,
+  PAPER_INDEPENDENCE, PAPER_WITH, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE, PROVENANCE_HELP,
+  PROVENANCE_PHILOSOPHY, STARTERS_CSS, buildAppPage, buildGalleryPage, provenanceHelpScript,
+  question, replyActionsScript, startersScript, statesForBuild,
 } from './lib/page.js';
 import { APPS } from './apps/index.js';
+import { __testables as __movies } from './apps/movies.js';
 import { provenanceFromToolLog, sourceLabelsFromToolLog } from './lib/mcp.js';
 import { generate } from './byok.js';
+
+// The README is the OTHER surface the checked citation copy lives on. It is read
+// here so "verbatim" can be compared rather than asserted.
+const README = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'README.md'), 'utf8');
 
 const MODEL = 'claude-haiku-4-5-20251001';
 const COST_NOTE = 'Live mode: each reply ≈ one small Haiku call per tool the agent consults';
@@ -138,10 +145,19 @@ ok(/\.vr-note \{ border-top: 1px solid var\(--hair\); scroll-margin-top: 18px; \
 // The reveal gesture is asserted structurally on both: rows are authored OPEN
 // (scripting off ⇒ the whole page still reads), the control is a native
 // button[aria-expanded], and the fold is the grid-template-rows animation.
+// The rows that survive on both landings. TWO ARE GONE, and neither was
+// deleted from the page — both moved, and the checks that follow assert them at
+// their new addresses:
+//   “what is visible reasoning?”  was a standing block ABOVE the desks. Its
+//     argument is now the second paragraph of “why this isn’t the model
+//     explaining itself”; its one-sentence claim is the colophon's WHAT THIS IS.
+//   “the paper & the libraries”   was a folded row at the very bottom. The
+//     citation is not program notes — it is what this demo IS — so it reads in
+//     the open under the desk listing, with the libraries and the ecosystem.
 const NOTES = [
-  'what is visible reasoning?', 'how to read the demo', 'what the buttons do', 'what a reply costs',
+  'how to read the demo', 'what the buttons do', 'what a reply costs',
   'why this isn’t the model explaining itself', 'what the scores mean — and don’t',
-  'where the data comes from', 'the paper &amp; the libraries',
+  'where the data comes from',
 ];
 for (const [name, html] of [['gallery', mockGallery], ['byok home', byokHome]]) {
   for (const l of HEADER_LINKS) {
@@ -188,12 +204,67 @@ for (const [name, html] of [['gallery', mockGallery], ['byok home', byokHome]]) 
   // were, rendered from the same table.
   ok(html.includes('id="guide"') && html.includes('how to read the demo'),
     `[${name}] the provenance guide survived the redesign, intact`);
-  ok(html.indexOf('id="about"') < html.indexOf('id="guide"'),
-    `[${name}] what-this-is reads before how-to-read-it`);
   ok(html.includes('github.com/footprintjs/visible-reasoning'),
     `[${name}] the source is reachable from the page body, not only the top rail`);
-  ok(html.includes(PAPER_AUTHORS), `[${name}] the paper note credits every author, in order`);
-  ok(html.includes('doi.org/10.1007/978-3-032-30849-8_1'), `[${name}] the paper note cites the DOI`);
+
+  // ── THE COLOPHON — the landing's only standing prose, and the README's order.
+  // The trim moved real claims; each one is asserted where it now lives, and the
+  // ORDER is asserted too, because "the demo first" is the point of the change.
+  const colo = html.slice(html.indexOf('<section class="vr-colophon"'), html.indexOf('<section class="vr-program"'));
+  ok(colo.length > 0, `[${name}] the colophon section is on the page`);
+  ok(html.indexOf('<section class="vr-desks"') < html.indexOf('<section class="vr-colophon"')
+    && html.indexOf('<section class="vr-colophon"') < html.indexOf('<section class="vr-program"'),
+    `[${name}] the desks come first, then the libraries and the paper, then the program notes`);
+  // Nothing stands between the header and the desks on the local gallery, and
+  // only the custody contract does on the public one — that is the trim itself,
+  // measured rather than described.
+  const above = html.slice(html.indexOf('</header>'), html.indexOf('<section class="vr-desks"'));
+  const rowsAbove = (above.match(/<div class="vr-note" id="/g) || []).length;
+  ok(rowsAbove === (name === 'byok home' ? 1 : 0),
+    `[${name}] ${name === 'byok home' ? 'the ONE row above the desks is the custody contract' : 'nothing stands above the desks — the demo is the first thing on the page'}`,
+    `${rowsAbove} row(s)`);
+  if (name === 'byok home') {
+    ok(above.includes('id="key"') && above.includes('<span>the key, in full</span>'),
+      `[${name}] …and it is the key row, where a visitor decides whether to bring one`);
+  }
+  ok(!html.includes('what is visible reasoning?'),
+    `[${name}] the standing "what is visible reasoning?" block is gone from the page`);
+  // …and its argument is not: it reads in the row a visitor opens to ask it.
+  ok(noteOf(html, 'why').includes('None of these desks narrates its own reasoning'),
+    `[${name}] its argument moved into “why this isn’t the model explaining itself”`);
+  // ONE sentence of what this is — and it says the one thing the owner asked it
+  // to say. A landing that grows a second explanatory paragraph fails here.
+  ok(colo.includes('WHAT THIS IS') && colo.includes(ABOUT_LINE),
+    `[${name}] what this is, in one sentence: the reference implementation of the paper`);
+  ok((colo.match(/<p class="vr-what">/g) || []).length === 1,
+    `[${name}] …and exactly one such sentence — the explanation did not grow back`);
+  // The libraries, in the README's order, each linked and each with its ask.
+  for (const [i, lib] of LIBRARIES.entries()) {
+    ok(colo.includes(`href="${lib.href}"`) && colo.includes(`>${lib.name}</a>`) && colo.includes(lib.what),
+      `[${name}] the colophon names and links ${lib.name}, and says what it is`);
+    if (lib.ask) ok(colo.includes(lib.ask), `[${name}] …with the star ask beside it`);
+    if (i > 0) {
+      ok(colo.indexOf(LIBRARIES[i - 1].href) < colo.indexOf(lib.href),
+        `[${name}] …in the README's order (${LIBRARIES[i - 1].name} before ${lib.name})`);
+    }
+  }
+  // The ecosystem home, after the libraries — the README's third step.
+  ok(colo.includes('href="https://footprintjs.github.io/"') && colo.includes('footprintjs.github.io</a>'),
+    `[${name}] the ecosystem home is linked, after the libraries it belongs to`);
+  ok(colo.indexOf(LIBRARIES[0].href) < colo.indexOf('https://footprintjs.github.io/'),
+    `[${name}] …in that order: the libraries first, the family they belong to second`);
+  // THE CITATION, whole. It moved out of a folded row and into the open; not one
+  // of its claims may be lost or reworded on the way.
+  ok(colo.includes(PAPER_AUTHORS), `[${name}] the citation credits every author, in order`);
+  ok(colo.includes('doi.org/10.1007/978-3-032-30849-8_1'), `[${name}] the citation cites the DOI`);
+  ok(colo.includes('Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems'),
+    `[${name}] …and names the paper it is the implementation of`);
+  ok(colo.includes(PAPER_WITH), `[${name}] the co-author sentence rides with it, verbatim`);
+  ok(colo.includes(PAPER_INDEPENDENCE), `[${name}] and the independence disclaimer, verbatim`);
+  // Verbatim means verbatim: these two are checked copy, so they are compared
+  // against the README's own bytes rather than against a second typing of them.
+  ok(README.includes(PAPER_WITH) && README.includes(PAPER_INDEPENDENCE),
+    `[${name}] both are byte-equal to the README's — one wording, two surfaces`);
 }
 
 // ═══ A4. the desk listing is build-honest ═══════════════════════════════════
@@ -309,14 +380,46 @@ ok(byok.includes('legend-help-defs'),
 ok(!byok.includes('legend-help-guide-link'),
   'BYOK does not send a live conversation away to read a definition');
 ok(byok.includes(PROVENANCE_CLOSING), 'BYOK keeps the closing line');
-ok(byok.includes("e('span', { className: 'cd-tagline' }"), 'BYOK keeps its tagline — one desk, named in its own bar');
+// THE TAGLINE IS NOW OFF BOTH BARS. It was kept here on the argument that a BYOK
+// desk is arrived at cold and must name itself — but the bundle grew a landing
+// of its own (index.html), the visitor reaches a desk THROUGH it, and that
+// landing's listing carries the tagline verbatim under the desk's name. So the
+// same rule that cleared it from the local desks applies: it reads the same
+// before the first message and after the hundredth, which makes it program
+// notes, and program notes live on the landing.
+ok(!byok.includes("e('span', { className: 'cd-tagline' }"),
+  'BYOK sheds the tagline too — the bundle’s own landing carries it, one click back');
+ok(byokHome.includes(`“${question(APPS.find((a) => a.id === 'trip'))}”`),
+  '…and it is genuinely there: the BYOK landing states the desk’s one-liner');
+// The BYOK bar's class set, exactly — the same tripwire the local desks have had
+// (section C), which this page never did. It is added WITH the removal: the
+// tagline can only come back, or new chrome arrive, by failing this line.
+const BYOK_BAR = ['by-keybtn', 'by-keyzone', 'cd-back', 'cd-bar', 'cd-brand', 'cd-dot', 'cd-mark', 'cd-model', 'cd-tabs'];
+const byokBar = byok.slice(
+  byok.indexOf("e('div', { className: 'cd-bar' }"), byok.indexOf("e('div', { className: 'cd-scroll' }"));
+const byokBarClasses = [...new Set(
+  [...byok.slice(byok.indexOf('var keyControl = e('), byok.indexOf('var panelOpen ='))
+    .concat(byokBar).matchAll(/className: '((?:cd|by)-[a-z-]+)/g)].map((m) => m[1]))].sort();
+ok(byokBarClasses.join(' ') === BYOK_BAR.join(' '),
+  'the BYOK top bar carries EXACTLY the allowed chrome — badge, Key control, tabs, and the way back',
+  byokBarClasses.join(' '));
+ok(!byokBar.includes('DebugControl'),
+  'BYOK’s debug control is off the header too — it opens ONE turn, so it lives on that turn');
 // The starters are the SAME control on both builds — one generator, one set of
 // classes, one send path — offered only where a message can actually be sent.
 ok(byok.includes("e(Starters, { starters: APP.starters, variant: 'big'")
   && byok.includes("e(Starters, { starters: APP.starters, variant: 'compact'"),
   'BYOK offers the same starter pills, from its pack’s own starters');
-ok(byok.includes("armed ? e(Starters, { starters: APP.starters, variant: 'big'"),
-  'BYOK offers them only once a key can send them — no button that would fail on tap');
+// The property is "no button that would fail on tap", and it is now kept a
+// better way. The pills used to be withheld until a key was armed, because a tap
+// without one silently did nothing. A tap without one now OPENS the key dialog
+// and leaves the question sitting in the composer — so the pill is offered from
+// the first paint and still never fails.
+ok(!/armed \? e\(Starters/.test(byok)
+  && byok.includes("e(Starters, { starters: APP.starters, variant: 'big', onPick: send })"),
+  'BYOK offers its starters from the first paint, key or no key');
+ok(byok.includes('if (!apiKey) { setInput(msg); setKeyOpen(true); return; }'),
+  '…and a tap with no key asks for the key instead of failing quietly');
 ok(byok.indexOf("variant: 'compact'") > byok.indexOf("e('div', { className: 'cd-composer' }")
   && byok.indexOf("variant: 'compact'") < byok.indexOf("'data-testid': 'chat-input'"),
   'BYOK’s compact row is part of the composer too');
@@ -361,7 +464,13 @@ ok(/@media \(prefers-reduced-motion: reduce\) \{ \.cd-starters button \{ transit
 // same reason the input, the Send button, the session tabs and the debug control
 // have never been counted either. It is asserted as a control in section B2.
 const PROBES = [
-  { id: 'tagline', weight: 1, alive: true, match: (h) => h.includes("className: 'cd-tagline'") },
+  // Retired from BOTH surfaces (the BYOK desk shed it with this change), so no
+  // page renders it and it cannot be proven alive by matching any more. That is
+  // the same footing the live cost banner has been on, and it is covered the
+  // same way: an exact bar-class allowlist on each surface — BAR_CLASSES for the
+  // desks, BYOK_BAR in section A3 — which fails on ANY new bar chrome whatever
+  // it is called, including this one coming back.
+  { id: 'tagline', weight: 1, alive: false, match: (h) => h.includes("className: 'cd-tagline'") },
   { id: 'dot definition rows', weight: PROVENANCE_HELP.length, alive: true, match: (h) => h.includes('legend-help-defs') },
   { id: 'closing line', weight: 1, alive: true, match: (h) => h.includes(PROVENANCE_CLOSING) },
   { id: 'teaching sentence', weight: 1, alive: true, match: (h) => h.includes('“visible reason” button — tap it to see') },
@@ -384,9 +493,21 @@ for (const p of PROBES.filter((x) => x.alive && x.id !== 'guide link')) {
 }
 ok(PROBES.find((p) => p.id === 'guide link').match(deskMock),
   'the “guide link” counter still matches real output (the desk renders it)');
-ok(staticElements(byok, false) === 8,
-  'the “8 before” figure is measured, not prose: BYOK still carries exactly the 8 static elements a desk used to',
+// The reference page got quieter too: BYOK carried 8 of the desks' old static
+// elements and now carries 7, having shed the tagline for the same reason the
+// desks did. The figure is measured on every run, so it can only move by a
+// deliberate edit here — which is exactly when the conversation should happen.
+ok(staticElements(byok, false) === 7,
+  'the “before” figure is measured, not prose: BYOK carries 7 of the 8 static elements a desk used to (the tagline went)',
   String(staticElements(byok, false)));
+// Retired means retired EVERYWHERE. Without this, "alive: false" would be a
+// place a probe could quietly rot: the element could return to the BYOK desk
+// (which no allowlist covered before this change) and the counter would read it
+// as noise the desks had shed, on a page that had it back.
+for (const p of PROBES.filter((x) => !x.alive)) {
+  ok(!p.match(byok) && !p.match(deskMock) && !p.match(deskLive),
+    `the retired “${p.id}” is absent from every surface — not merely unmeasured`);
+}
 
 const afterMock = staticElements(deskMock, false);
 const afterLive = staticElements(deskLive, true);
@@ -412,6 +533,53 @@ ok(barClasses(deskMock).join(' ') === BAR_CLASSES.join(' '),
 const modalSections = (html) => (html.includes('legend-help-sources') ? 1 : 0) + (html.includes('legend-help-defs') ? 1 : 0);
 ok(modalSections(deskMock) === 1, 'desk dialog sections: 2 before → 1 after (+1 link)', String(modalSections(deskMock)));
 ok(modalSections(byok) === 2, 'BYOK dialog sections: 2 before → 2 after (unchanged)', String(modalSections(byok)));
+
+// ═══ C2. PER-TURN CONTROLS LIVE ON THE TURN ════════════════════════════════
+// The same split as everything above, one level down. A control that opens ONE
+// turn's material is not page chrome: put it in the top bar and it has to guess
+// which turn you meant (it always guessed "the newest"), and the guess is
+// invisible until it is wrong. Both surfaces now carry the debug control in the
+// reply row, opened AT that reply — and there is exactly one way in, so the
+// header cannot quietly grow a second.
+const replyActionsSrc = replyActionsScript();
+for (const [html, name] of [[byok, 'BYOK'], [deskMock, 'desk']]) {
+  ok(html.includes(replyActionsSrc), `[${name}] renders the shared ReplyActions row, byte for byte`);
+  ok(!barOf(html).includes('DebugControl'), `[${name}] no debug control in the top bar`);
+  ok((html.match(/createElement\(DebugControl, \{/g) || []).length === 1,
+    `[${name}] exactly ONE debug entry point exists`,
+    String((html.match(/createElement\(DebugControl, \{/g) || []).length));
+  ok(html.includes('turnIndex: props.turnIndex') && html.includes('initialTurn: props.turnIndex'),
+    `[${name}] the reply's control opens the dialog on the reply's OWN turn`);
+  // …and the picker is still there, so one open reaches every other turn.
+  ok(html.includes("'data-testid': 'debug-turn'"), `[${name}] the dialog still lists every turn`);
+  ok(html.includes("e(ReplyActions, { key: 'rb' + t.index"),
+    `[${name}] the reason button is inside that row, not loose in the thread`);
+  ok(!/className: 'cd-reasonbtn', 'data-testid': 'reason-' \+ key/.test(html),
+    `[${name}] …and the old loose reason button is gone`);
+}
+// The usage sentence is BYOK's alone — it is the one page spending the visitor's
+// own money — and it is now an ⓘ beside the reply's reason button rather than a
+// standing paragraph under the transcript. A desk with nothing to say renders no
+// icon at all: an ⓘ that opens an empty dialog is worse than no ⓘ.
+const COST_SENTENCE = 'Runs on your key: each reply is a handful of small Haiku calls';
+ok(byok.includes(COST_SENTENCE), 'BYOK still carries the usage sentence, verbatim');
+ok(!byok.includes("'data-testid': 'byok-footer'"),
+  '…but no longer as standing prose under the conversation');
+ok(byok.includes('usage: { title: DATA.usageTitle, lines: DATA.usage },')
+  && byok.includes("testid: 'usage-info-' + props.turnKey"),
+  '…it is the ⓘ on the reply, which exists only once that reply does');
+ok(/props\.usage\s*\n\s*\? React\.createElement\(InfoNote/.test(byok),
+  'the ⓘ is conditional on there being something to say');
+ok(!deskMock.includes("'data-testid': 'usage-info-'") && !deskMock.includes(COST_SENTENCE),
+  'a local desk renders no ⓘ — it spends nothing of the visitor’s');
+// Touch-first, like every other explanation on these pages: it OPENS, it is not
+// a hover tooltip, and it closes the way the other dialogs do.
+ok(replyActionsSrc.includes("onClick: function () { setOpen(true); }")
+  && replyActionsSrc.includes("'aria-haspopup': 'dialog'")
+  && replyActionsSrc.includes("if (ev.key === 'Escape')"),
+  'the ⓘ is click-to-open with a real dialog — never a hover-only tooltip');
+ok(replyActionsSrc.includes("className: 'cd-sr'"),
+  'the icon-only control still has a spoken name');
 
 // ═══ D. the build-time guards still bite ════════════════════════════════════
 let threw = false;
@@ -462,6 +630,39 @@ for (const [name, html] of [['desk', deskLive], ['byok', byok]]) {
 }
 ok(deskLive.includes("body += ' · this reply: ' + detail"),
   'the dot tooltip composes the reason in — the shared provBody, one copy, both surfaces');
+
+// ═══ F. a source cannot promise one thing and pay out another ═══════════════
+// The label says WHERE a sentence came from; it cannot say whether the sentence
+// answers the question the tool advertised. wiki_reception once shipped that
+// gap: described to the model as critical reception, it returned the box-office
+// paragraph that opens a Wikipedia "== Reception ==" section, and the model
+// consulted it and then apologized for it inside the reply. Nothing here caught
+// it — the byte gate runs on scripted fixtures, so the live payload was never
+// read by a test. This section reads it, against a fixture shaped like the real
+// articles (a Reception section whose FIRST child is Box office).
+const HEAD = 'A 2014 film directed by a director, released to cinemas in November of that year.';
+const BOX = 'The film grossed $188 million in the United States and Canada and $493 million in other '
+  + 'countries, for a worldwide total of $681 million against a production budget of $165 million.';
+const CRITICS = 'On review aggregator Rotten Tomatoes, 73% of 375 critic reviews are positive. '
+  + 'The site\'s critics consensus reads, "a thrilling, thought-provoking and visually resplendent picture."';
+const article = (...body) => [HEAD, '', ...body, ''].join('\n');
+const WITH_CRITICS = article('== Reception ==', '', '=== Box office ===', BOX, '', '=== Critical response ===', CRITICS, '', '=== Accolades ===', 'It received five Academy Award nominations.');
+const MONEY_ONLY = article('== Reception ==', '', '=== Box office ===', BOX, '', '=== Accolades ===', 'It received five Academy Award nominations.');
+const BARE = article('== Reception ==', CRITICS);   // short articles (Heat, 1995) have no subsections
+
+const picked = __movies.criticalResponse(WITH_CRITICS);
+ok(picked?.heading === 'Critical response', 'the critic subsection wins over the section that contains it', String(picked?.heading));
+ok(picked?.sentence.startsWith('On review aggregator'), 'and its prose is what comes back', picked?.sentence.slice(0, 40));
+ok(!/grossed|\$\d|box office/i.test(picked?.sentence ?? ''),
+  'NO box-office prose is returned by a tool that promised criticism — the bug this section exists for');
+ok(__movies.criticalResponse(MONEY_ONLY) === null,
+  'an article with takings but no criticism yields NOTHING, so the tool can report the absence instead of substituting money');
+ok(__movies.criticalResponse(BARE)?.heading === 'Reception',
+  'a short article that carries critic prose directly under "Reception" is still read');
+// The tool's own contract: what the model is told matches what it is handed.
+const reception = APPS.find((a) => a.id === 'movies').tools.find((t) => t.name === 'wiki_reception');
+ok(/critical-response section/i.test(reception.description) && /never box office/i.test(reception.description),
+  'the description names BOTH what the tool returns and what it never returns');
 
 console.log(failed === 0
   ? '\nAll checks passed — the landing teaches, the desk performs, and neither invented its own vocabulary.'

@@ -51,6 +51,17 @@ const landing = readFileSync(join(outDir, 'index.html'), 'utf8');
 const DESKS = ['trip', 'movies'];
 const deskPages = DESKS.map((id) => ({ id, file: `${id}.html`, html: readFileSync(join(outDir, `${id}.html`), 'utf8') }));
 const bootOf = (h) => h.slice(h.lastIndexOf('<script type="module">'));
+/**
+ * The page-safe payload the desk actually boots with, parsed rather than
+ * substring-matched — so a claim can be checked in the LAYER it ships in (the
+ * key dialog's front line vs. the contract behind its disclosure) instead of
+ * only "somewhere in the file".
+ */
+const dataOf = (h) => {
+  const src = bootOf(h);
+  const start = src.indexOf('var DATA = ') + 'var DATA = '.length;
+  return JSON.parse(src.slice(start, src.indexOf('\nvar MODEL', start)).trim().replace(/;$/, ''));
+};
 // The desk that carries every page-script property; the checks that are about
 // the SCRIPT (one shared generator) run once over it and are proven identical
 // across desks by the byte-shape check right below.
@@ -131,12 +142,73 @@ ok(/Browser providers do not read environment variables/.test(provider),
   'the browser provider takes its key ONLY from the caller');
 
 // ═══ key custody, as written ════════════════════════════════════════════════
-ok(boot.includes("sessionStorage.setItem"), 'a remembered key is written to sessionStorage');
-ok(!boot.includes('localStorage.setItem'), 'nothing is ever written to localStorage');
-ok(boot.includes("localStorage.removeItem"), '"Forget my key" clears localStorage too, unconditionally');
+// WHERE A KEPT KEY RESTS CHANGED; WHAT CAN READ IT DID NOT. The key is now
+// written to localStorage, on the visitor's own machine, so it survives a reload
+// and a restart — a demo whose key evaporates gets re-typed on a projector, and
+// that is the real hazard. Storage that outlives the tab makes exactly two
+// questions sharper, and both are asserted below rather than assumed:
+//   1. can anything of OURS read what is stored? (no: there is no own-origin
+//      request path at all — section (b) — so nothing we serve can fetch it,
+//      log it, or beacon it out);
+//   2. does "Forget" really forget? (yes, and from BOTH storages — an older
+//      build of this page used sessionStorage, and a key left there must not
+//      outlive a visitor pressing the button that promises it won't).
+ok(boot.includes('localStorage.setItem'), 'a kept key is written to localStorage — on the visitor’s own machine');
+ok(!boot.includes('sessionStorage.setItem'),
+  'the key is written to exactly ONE storage — no second copy is ever created');
+ok(boot.includes('localStorage.removeItem') && boot.includes('sessionStorage.removeItem'),
+  '"Forget my key" clears BOTH storages, unconditionally');
+// The one write is guarded by the checkbox, and the ONLY caller of the writer is
+// the save handler — an unticked box must leave nothing behind at all.
+ok(/function rememberKey\(k\) \{ try \{ window\.localStorage\.setItem\(STORE_KEY, k\); \}/.test(boot),
+  'exactly one function writes the key, and it writes only the key, only to localStorage');
+ok(/if \(remember\) rememberKey\(k\); else eraseStoredKey\(\);/.test(boot),
+  'an unticked “keep it in this browser” actively erases — it does not merely skip the write');
+// Storage that survives the tab makes a stale key from an OLDER build a real
+// object in a real browser. It is cleared on sight rather than read.
+ok(/window\.sessionStorage\.removeItem\(STORE_KEY\);/.test(boot)
+  && !/sessionStorage\.getItem/.test(boot),
+  'a key left in sessionStorage by an older build is erased on load, never read');
 ok(/var apiKey = null/.test(boot), 'the key lives in a module-scoped page variable');
 ok(boot.includes("keyTail = k.slice(-4)") || boot.includes('slice(-4)'),
   'only the last four characters are ever shown');
+
+// ═══ THE KEY GOES NOWHERE BUT ANTHROPIC ════════════════════════════════════
+// Section (b) already proves there is no own-origin fetch on the page. These
+// close the other exits a stored key would make attractive: a logger, a beacon,
+// an image ping, a title or a URL carrying it, or the key rendered as page text.
+for (const d of deskPages) {
+  const b = bootOf(d.html);
+  ok(!/console\.(log|info|warn|error|debug)\s*\(\s*(apiKey|k\b)/.test(b),
+    `[${d.id}] the key is never logged`);
+  ok(!/sendBeacon|new Image\(|XMLHttpRequest|WebSocket|navigator\.send/.test(b),
+    `[${d.id}] there is no beacon, image ping, XHR or socket on the page at all`);
+  ok(!/document\.title\s*=/.test(b) && !/history\.(replace|push)State/.test(b),
+    `[${d.id}] nothing writes the URL or the tab title — a stored key cannot leak through either`);
+  // THE KEY VALUE IS PASSED TO EXACTLY ONE THING. Not a count (a count drifts
+  // with every comment) — an allowlist of the shapes a key reference may take:
+  // the declaration, the provider hand-off, an assignment, a presence guard, or
+  // a comment. Anything else — apiKey handed to a function, put in an object, or
+  // concatenated into a string — is a new exit and fails here.
+  const KEY_SHAPES = [
+    /^var apiKey = null;$/,                                  // the one home
+    /^var opts = \{ apiKey: apiKey, defaultModel: MODEL, parallelToolCalls: false \};$/, // the one hand-off
+    /^apiKey = (k|null);$/,                                  // set / cleared
+    /^if \(!apiKey\)/,                                       // presence guards
+    /^if \(remember\) rememberKey\(apiKey\); else eraseStoredKey\(\);$/,
+    /^if \(k\) \{ apiKey = k; keyTail = k\.slice\(-4\);/,     // auto-arm on load
+    /^\/\//,                                                 // prose
+  ];
+  const keyLines = b.split('\n').map((l) => l.trim()).filter((l) => /\bapiKey\b/.test(l));
+  const strays = keyLines.filter((l) => !KEY_SHAPES.some((re) => re.test(l)));
+  ok(b.includes('apiKey: apiKey') && keyLines.length > 0 && strays.length === 0,
+    `[${d.id}] every use of the key value is one of the allowed shapes — the provider is its only destination`,
+    strays.join(' | ') || `${keyLines.length} references, all allowed`);
+  // The page renders the last four and nothing more: no element anywhere is
+  // given the key itself as a child, a value or a title.
+  ok(!/(children|value|title|placeholder)\s*:\s*apiKey/.test(b) && !/, apiKey\)/.test(b),
+    `[${d.id}] the key is never rendered into the DOM — only its last four characters are`);
+}
 
 // ═══ (d) the custody copy + the three-state badge ═══════════════════════════
 // The contract itself — every sentence that makes the custody claim. It is
@@ -145,39 +217,169 @@ ok(boot.includes("keyTail = k.slice(-4)") || boot.includes('slice(-4)'),
 // A page that can hold a key without carrying the contract is the failure this
 // list exists to catch.
 const mustSay = [
-  'Your key stays in this tab.',
+  // Updated with the storage change, and it had to be: a key that survives the
+  // tab cannot be described as staying in it. The sentence names where the key
+  // now rests (this browser, i.e. the visitor's own machine) — the guarantee
+  // underneath it is unchanged and the rest of the list is untouched.
+  'Your key stays in your browser.',
   'This is a live public demo — it runs entirely in your browser.',
   'this site’s host (GitHub Pages) never receives it',
   'Every Claude call goes straight from your browser to',
   'our demo server never sees your key',
   'there is no server code that',
   'the only requests that carry your key go to',
+  // …and the new mechanics, stated where the visitor decides: what ticking the
+  // box does, how long it lasts, and what unticking it does instead.
+  'saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget',
+  'untick it and the key is held in memory only and is gone the moment you reload',
 ];
 for (const page of [{ id: 'home', html: landing }, ...deskPages]) {
   for (const phrase of mustSay) {
     ok(page.html.includes(phrase), `[${page.id}] custody copy present: “${phrase.slice(0, 46)}…”`);
   }
 }
-// Where the key is actually armed — the checkbox and the forget button live on
-// the desks, and the checkbox now also answers "does it survive the trip back
-// to the gallery?", because on this bundle that trip is one click away.
-const CHECKBOX = 'Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)';
+// ═══ THE KEY CONTROL — one control, one dialog, both states ════════════════
+// Key entry lived in a slab above the transcript and could only be reached
+// before the first message; a demo that is re-run several times had no way to
+// change a key without a reload. It is now a control in the header that opens a
+// dialog, at any moment, and the dialog is where the custody copy is read.
+const CHECKBOX = 'Keep it in this browser (saved on this machine — still here after a reload or a restart, until you press Forget)';
+// The label on the dialog's own disclosure — the row the rest of the custody
+// contract now lives behind. It says what is under it, in the page's voice.
+const MORE_LABEL = 'how this works — and how to check it';
 for (const d of deskPages) {
-  ok(d.html.includes(CHECKBOX), `[${d.id}] the remember checkbox says exactly what it does across a same-tab trip`);
+  const b = bootOf(d.html);
+  ok(d.html.includes(CHECKBOX), `[${d.id}] the checkbox says exactly what keeping the key means, and for how long`);
   ok(d.html.includes('Forget my key'), `[${d.id}] “Forget my key” is on the desk that holds it`);
-  ok(d.html.includes('going back to the gallery clears it'),
-    `[${d.id}] an unremembered key is honestly labeled as page-scoped`);
+  ok(b.includes("'data-testid': 'key-open'") && b.includes("'data-testid': 'key-modal'"),
+    `[${d.id}] the header carries a Key control, and it opens a dialog`);
+  ok(b.includes("armed ? DATA.keyBtnSet : DATA.keyBtnIdle")
+    && d.html.includes('"keyBtnIdle":"Key"') && d.html.includes('"keyBtnSet":"Key saved · change"'),
+    `[${d.id}] the control states what it knows: “Key” with none, “Key saved · change” with one`);
+  // DEFAULT ON, and asserted as the initial state rather than as copy: the owner
+  // must not have to re-tick it between two rehearsal runs.
+  ok(/React\.useState\(true\); var remember = /.test(b),
+    `[${d.id}] “keep it in this browser” starts ticked`);
+  // The dialog is reachable AFTER arming too — that is the whole point of a
+  // control that says “change”.
+  ok(/onClick: function \(\) \{ setKeyOpen\(true\); \}/.test(b),
+    `[${d.id}] the control opens the dialog whatever state the key is in`);
+  ok(b.includes('setInput(msg); setKeyOpen(true); return;'),
+    `[${d.id}] sending with no key OPENS the key dialog and keeps the message — it does not lecture`);
+  // The fingerprint moved off the page chrome and into the dialog the visitor
+  // opened. It is still four characters, and still the only echo anywhere.
+  ok(b.includes("'data-testid': 'byok-keytail'") && b.includes("'key \\u2026' + props.tail"),
+    `[${d.id}] the key’s last four are shown in the dialog, never in the header`);
+
+  // ── THE DIALOG'S TWO LAYERS ──────────────────────────────────────────────
+  // It used to open with five paragraphs of custody prose before the field, and
+  // repeat the usage paragraph under Save. A person who opens it came to paste a
+  // key. So: the promise, the field — then everything else behind ONE row.
+  // NOTHING WAS CUT: every sentence of the contract is asserted below to be in
+  // the dialog's own markup, in one layer or the other, and the mustSay loop
+  // above still reads it off the page.
+  const modalSrc = b.slice(b.indexOf('function KeyModal(props) {'), b.indexOf('function safeStringify('));
+  const leadAt = modalSrc.indexOf("'data-testid': 'key-lead'");
+  const fieldAt = modalSrc.indexOf("'data-testid': 'byok-key'");
+  const saveAt = modalSrc.indexOf("'data-testid': 'byok-arm'");
+  const moreAt = modalSrc.indexOf('e(KeyMore, {');
+  ok(leadAt > 0 && fieldAt > leadAt && saveAt > fieldAt && moreAt > saveAt,
+    `[${d.id}] the dialog reads promise → field → Save → the row with the rest`,
+    `lead ${leadAt} · field ${fieldAt} · save ${saveAt} · more ${moreAt}`);
+  ok(modalSrc.includes('infoSegs(DATA.keyLead)')
+    && d.html.includes('"keyLead":[{"b":"Your key stays in your browser."},'
+      + '{"t":" It goes only to api.anthropic.com, never to this site."}]'),
+    `[${d.id}] the front layer is the promise itself — where the key goes, and where it does not`);
+  // …and it is the SAME sentence the Key control's own title makes, so the
+  // control and the dialog cannot come to say different things.
+  ok(b.includes('It goes only to api.anthropic.com, never to this site.'),
+    `[${d.id}] the control and the dialog make that promise in the same words`);
+  // Exactly one paragraph stands before the field. This is the trim, measured:
+  // a sixth explanatory line creeping back in front of the input fails here.
+  ok((modalSrc.slice(0, fieldAt).match(/className: 'by-copy'/g) || []).length === 0
+    && (modalSrc.slice(0, fieldAt).match(/className: 'by-lead'/g) || []).length === 1,
+    `[${d.id}] and it is the ONLY thing above the field — no custody slab came back`);
+  // CONSENT STAYS IN FRONT. What ticking the box does is not detail: it is the
+  // choice being made, so its label is in the front layer, before the fold.
+  ok(modalSrc.slice(0, moreAt).includes('DATA.checkboxLabel')
+    && d.html.includes(CHECKBOX),
+    `[${d.id}] the “keep it in this browser” label — persistence until Forget — is in the FRONT layer`);
+  // The disclosure: the landing's gesture, not a new one. Native
+  // button[aria-expanded], content authored into the DOM, hidden by the
+  // stylesheet from .is-open alone — so a fold that never animates still ends
+  // hidden and out of the tab order.
+  ok(b.includes("'data-testid': 'key-more-toggle'") && b.includes("'aria-expanded': open ? 'true' : 'false'")
+    && b.includes("'aria-controls': 'by-key-more'"),
+    `[${d.id}] the rest of the contract sits behind a native disclosure, wired to the pane it controls`);
+  ok(d.html.includes('.by-more.is-open .by-more-fold { grid-template-rows: 1fr; }')
+    && d.html.includes('.by-more-inner { overflow: hidden; min-height: 0; visibility: hidden;')
+    && d.html.includes('.by-more.is-open .by-more-inner { visibility: visible; transition: visibility 0s 0s; }'),
+    `[${d.id}] it is the landing's 0fr→1fr fold, with visibility driven by CSS from .is-open`);
+  ok(/@media \(prefers-reduced-motion: reduce\) \{\s*\n\s*\.by-more-fold \{ transition: none; \}/.test(d.html),
+    `[${d.id}] reduced motion turns that fold instant`);
+  ok(b.includes('lines: DATA.custody })') && d.html.includes(`"moreLabel":"${MORE_LABEL}"`),
+    `[${d.id}] and what it holds is the custody contract itself, not a summary of it`);
+  // EVERY sentence, in one layer or the other — read off the dialog's own data.
+  const data = dataOf(d.html);
+  const keyLayers = JSON.stringify([data.keyLead, data.custody]);
+  for (const phrase of mustSay) {
+    ok(keyLayers.includes(phrase),
+      `[${d.id}] the dialog still carries: “${phrase.slice(0, 40)}…”`);
+  }
+  // THE USAGE PARAGRAPH IS OFF THIS DIALOG — and only off THIS dialog. It is
+  // about a reply, so it lives on the reply's ⓘ, which is where it already was.
+  ok(!modalSrc.includes('DATA.usage'),
+    `[${d.id}] the usage paragraph no longer repeats under the Save button`);
+  ok(b.includes('usage: { title: DATA.usageTitle, lines: DATA.usage },')
+    && d.html.includes('Runs on your key: each reply is a handful of small Haiku calls'),
+    `[${d.id}] …and it is still carried, on the ⓘ beside each reply’s reason button`);
+  // The retired tab-scoped claims, by name. (Not a blanket "in this tab" ban —
+  // two comments say true things about the TURN's recording living in the tab,
+  // and a gate that cannot tell those apart teaches people to reword comments.)
+  for (const stale of [
+    'Your key stays in this tab.',
+    'stays in this tab',
+    'in this tab only until you close it',
+    'Remember my key in this tab',
+    'forgotten when the tab closes',
+    'going back to the gallery clears it',
+    'key \\u2026\' + tail + \' \\u2014 in this tab',
+  ]) {
+    ok(!d.html.includes(stale), `[${d.id}] no surface still claims the key is tab-scoped: “${stale.slice(0, 34)}…”`);
+  }
 }
 // The scope fact — why two desks and not three — lives where the third card is.
 ok(landing.includes('the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo'),
   '[home] the honest scope line is on the gallery, beside the disabled card');
 
+// ═══ THE HEADER — minimal, and honest about each thing left on it ══════════
+// The badge used to carry three claims at once (the model, "direct from your
+// browser", and the key's last four). Two of those are custody copy, and custody
+// copy that rides in page chrome gets skimmed; they now live in the key dialog,
+// where a visitor is looking when the answer matters. The badge keeps the one
+// thing it is for: naming what answered.
 for (const d of deskPages) {
+  const b = bootOf(d.html);
   ok(d.html.includes("'data-testid': 'model-badge'"), `[${d.id}] the desk renders a model badge`);
-  ok(d.html.includes('— direct from your browser · '), `[${d.id}] the badge says the call goes direct from the browser`);
-  ok(d.html.includes("'no key yet'"), `[${d.id}] the badge has an honest no-key state`);
   ok(d.html.includes(MODEL), `[${d.id}] the badge names the real model id (${MODEL})`);
+  ok(/e\('span', \{ className: 'cd-dot ' \+ \(armed \? 'live' : 'notconsulted'\) \}\), MODEL\)/.test(b),
+    `[${d.id}] the badge is the model id and its state dot — not a sentence`);
+  ok(!b.includes('— direct from your browser · ') && !b.includes("'no key yet'"),
+    `[${d.id}] the provider sentence and the key fingerprint are off the badge`);
+  // …and the claim they carried is still made, in the dialog and on the badge's
+  // own hover, so nothing was dropped — only moved to where it is read.
+  ok(b.includes('Every request from this page goes straight to api.anthropic.com with this model id'),
+    `[${d.id}] the badge still says, on hover, where its requests go`);
+  ok(b.includes('It goes only to api.anthropic.com, never to this site.'),
+    `[${d.id}] the Key control itself states the custody promise before a key is typed`);
   ok(!d.html.includes('scripted mock'), `[${d.id}] never claims a mock — the desk is live-only by definition`);
+  // The tagline is program notes (same words on every render) and the gallery
+  // listing carries it; the debug control is per-turn and now lives on the turn.
+  const bar = b.slice(b.indexOf("e('div', { className: 'cd-bar' }"), b.indexOf("e('div', { className: 'cd-scroll' }"));
+  ok(!bar.includes('cd-tagline'), `[${d.id}] the tagline is off the header`);
+  ok(!bar.includes('DebugControl'), `[${d.id}] the debug control is off the header`);
+  ok(/e\('div', \{ className: 'by-keyzone' \}, badge, keyControl\)\)/.test(bar),
+    `[${d.id}] the header's right-hand zone is exactly the badge and the Key control`);
 }
 
 // ═══ (e) THE GALLERY HOME ═══════════════════════════════════════════════════
@@ -350,30 +552,64 @@ for (const l of HEADER_LINKS) {
   ok(new RegExp(`<a href="${l.href.replace(/[/.]/g, '\\$&')}" target="_blank" rel="noopener"`).test(landing),
     `[home] the page links ${l.label} — new tab, rel=noopener`);
 }
+// TWO ROWS ARE GONE FROM THIS LIST, and neither claim left the page — the
+// landing was trimmed so the desks come first, and both moved:
+//   “what is visible reasoning?”  was a standing block above the desks; its
+//     argument is now inside “why this isn’t the model explaining itself” and
+//     its one-sentence claim is the colophon's WHAT THIS IS (asserted below).
+//   “the paper & the libraries”   was the last folded row; the citation and the
+//     library links now read in the open under the desk listing (also below).
 for (const label of [
-  'what is visible reasoning?', 'the key, in full', 'how to read the demo', 'what the buttons do',
+  'the key, in full', 'how to read the demo', 'what the buttons do',
   'what a reply costs', 'why this isn’t the model explaining itself',
-  'what the scores mean — and don’t', 'where the data comes from', 'the paper &amp; the libraries',
+  'what the scores mean — and don’t', 'where the data comes from',
 ]) ok(landing.includes(`<span>${label}</span>`), `[home] the note “${label}” is on the page`);
 ok(!landing.includes('take it with you'),
   '[home] the public page does not point at itself — the take-home note is the local gallery’s');
-ok(landing.includes('doi.org/10.1007/978-3-032-30849-8_1'), '[home] the paper note cites the DOI');
-ok(landing.includes(PAPER_AUTHORS), '[home] the paper note names every author, in order');
-for (const lib of ['footprintjs', 'agentfootprint', 'agentthinkingui']) {
-  ok(landing.includes(`https://www.npmjs.com/package/${lib}`), `[home] the paper note links ${lib}`);
+ok(landing.includes('None of these desks narrates its own reasoning'),
+  '[home] the retired block’s argument is in the “why” note, not lost');
+
+// THE COLOPHON — one sentence of what this is, the libraries, the family, the
+// citation. Everything the retired row carried, in the open, in the README's
+// order. (verify-ia.mjs owns the ordering; this file owns "the public page,
+// which a visitor may arrive at cold, carries every one of these claims".)
+const colophonHtml = landing.slice(landing.indexOf('<section class="vr-colophon"'),
+  landing.indexOf('<section class="vr-program"'));
+ok(colophonHtml.includes('The reference implementation of the paper below.'),
+  '[home] what this is, in one sentence — the reference implementation of the paper');
+ok(colophonHtml.includes('doi.org/10.1007/978-3-032-30849-8_1'), '[home] the citation cites the DOI');
+ok(colophonHtml.includes(PAPER_AUTHORS), '[home] the citation names every author, in order');
+ok(colophonHtml.includes('This repository is an independent, personal open-source project.'),
+  '[home] …and the independence disclaimer rides with it');
+// The libraries are still all three, still named, still reachable — at their own
+// repositories now rather than at npm, which is where the README’s star ask
+// points and where a star can actually be given.
+for (const [lib, href] of [
+  ['agentfootprint', 'https://github.com/footprintjs/agentfootprint'],
+  ['footprintjs', 'https://github.com/footprintjs/footPrint'],
+  ['agentthinkingui', 'https://github.com/footprintjs/agentThinkingUI'],
+]) {
+  ok(colophonHtml.includes(`href="${href}"`) && colophonHtml.includes(`>${lib}</a>`),
+    `[home] the colophon names and links ${lib}`);
 }
+ok(colophonHtml.includes('href="https://footprintjs.github.io/"'),
+  '[home] the ecosystem home is linked, after the libraries');
 // The two build-specific facts: this bundle is two browser desks over keyless
-// public APIs. A note that claimed three runnable desks or a network it never
+// public APIs. A page that claimed three runnable desks or a network it never
 // touches would be exactly the dishonesty the rest of this file exists to stop.
-ok(landing.includes('Two of the three run here, in your browser; the third needs a server'),
-  '[home] the page says TWO of the three run here');
+// The sentence that used to carry it lived in the retired block; the claim is
+// now made where a visitor actually meets it — in the lead, and on the row of
+// the desk that cannot run here.
 ok(landing.includes('Two of them run right here in your browser'),
-  '[home] …and says it again in the lead, where a visitor decides');
+  '[home] the page says TWO of them run here, in the lead, where a visitor decides');
+ok(landing.includes('<span class="vr-badge">runs locally only · needs a server</span>')
+  && landing.includes('this page has no server of ours behind it to fetch one on your behalf'),
+  '[home] …and the third desk’s own row says it needs a server, and why');
 ok(landing.includes('called straight from your tab'),
   '[home] the data note describes browser-side tool calls, not a server’s');
 
 // ═══ (f) same-tab navigation, without losing anything silently ══════════════
-const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';
+const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “keep it in this browser” choice.';
 for (const d of deskPages) {
   const b = bootOf(d.html);
   ok(b.includes("href: './index.html'"), `[${d.id}] “← gallery” points at the bundle’s own home, relatively`);
@@ -386,7 +622,7 @@ for (const d of deskPages) {
   ok(b.includes(LEAVE_CONFIRM), `[${d.id}] the guard's sentence names both costs — the conversation and the key`);
   ok(/function hasConversation\(\)/.test(b) && /if \(!hasConversation\(\)\) return;/.test(b),
     `[${d.id}] the guard fires only when there is a conversation to lose`);
-  ok(b.includes('survives reload and the trip back to the gallery'),
+  ok(b.includes('still here after a reload or a restart, until you press Forget'),
     `[${d.id}] the key-travel promise is stated where the choice is made`);
 }
 
@@ -408,8 +644,14 @@ ok(Object.values(imports).every((t) => t.startsWith('./')),
 for (const d of deskPages) {
   const app = APPS.find((a) => a.id === d.id);
   const bootD = bootOf(d.html);
-  ok(bootD.includes("armed ? e(Starters, { starters: APP.starters, variant: 'big'"),
-    `[${d.id}] the empty desk offers the pack’s starters — and only once a key is armed`);
+  // Offered with or WITHOUT a key now. The pills used to be withheld until a key
+  // was armed, because a tap without one silently did nothing; the tap now opens
+  // the key dialog and keeps the question in the composer, so there is no longer
+  // a button that fails — which is the property this pair actually cares about.
+  ok(bootD.includes("e(Starters, { starters: APP.starters, variant: 'big', onPick: send })"),
+    `[${d.id}] the empty desk offers the pack’s starters`);
+  ok(!/armed \? e\(Starters/.test(bootD) && bootD.includes('setInput(msg); setKeyOpen(true); return;'),
+    `[${d.id}] …and a tap with no key opens the key dialog instead of doing nothing`);
   ok(bootD.includes("e(Starters, { starters: APP.starters, variant: 'compact'")
     && bootD.indexOf("variant: 'compact'") > bootD.indexOf("e('div', { className: 'cd-composer' }")
     && bootD.indexOf("variant: 'compact'") < bootD.indexOf("'data-testid': 'chat-input'"),

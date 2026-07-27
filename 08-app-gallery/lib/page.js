@@ -590,6 +590,87 @@ function dbgArtifacts(key, k, load) {
 }
 
 /**
+ * THE STEP STRIP'S AXIS, PUT BACK — from the run's OWN recorded boundaries.
+ *
+ * agentfootprint-lens builds its step strip, its prev/next transport and its
+ * moments rail from ONE array (\`cursorPositionsAtDrill\`), and that array is
+ * derived from the recorder's commit-range index: which run and which subflow
+ * was open across which commits. Live, that index is filled by the footprintjs
+ * FlowRecorder channel — hooks this page's replay runner never fires, because a
+ * replay has no traversal to attach to. So the index stayed empty, every group
+ * count was 0, and the transport reported "1 step" and sat disabled.
+ *
+ * The ranges are not lost, though: agentfootprint's own BoundaryRecorder is
+ * attached while the turn RUNS (lib/chat-core.js), and its snapshot entry —
+ * \`BoundaryEvents\` — carries every entry/exit stamped with the commit index it
+ * happened at. That is exactly what the index stores. So this replays those
+ * events into the recorder's own public index (\`open\`/\`close\` on
+ * footprintjs's CommitRangeIndex), and lens then builds its strip from its own
+ * numbers with no help from us.
+ *
+ * WHAT THIS IS NOT: a derivation. The one thing the commit log cannot give back
+ * is WHEN a boundary opened relative to the commits — a fork's three branches
+ * all open at one moment that the log has no row for — so deriving ranges from
+ * the log yields a strip that is close and wrong (measured: 20 stops where the
+ * run really had 17, with phantom milestones and mis-anchored slots). There is
+ * no fallback path here for that reason: either the turn recorded its
+ * boundaries or the strip stays quiet and the pane says so.
+ *
+ * @returns the number of ranges opened — 0 when the recording predates the
+ *   capture, which is what the pane's note is switched on.
+ */
+function dbgRebuildBoundaryIndex(rec, snapshot) {
+  var entry = null;
+  var list = (snapshot && snapshot.recorders) || [];
+  for (var i = 0; i < list.length; i += 1) {
+    if (list[i] && list[i].name === 'BoundaryEvents' && Array.isArray(list[i].data)) {
+      entry = list[i];
+      break;
+    }
+  }
+  if (!entry) return { events: 0, ranges: 0 };
+  var index = rec.boundary && rec.boundary.boundaryIndex;
+  if (!index || typeof index.open !== 'function' || typeof index.close !== 'function') {
+    return { events: entry.data.length, ranges: 0 };
+  }
+  // If the replay above already opened ranges (a recording whose typed events
+  // carry composition boundaries would), leave them alone: this fills an empty
+  // index, it never doubles a populated one.
+  if (typeof index.overlapping === 'function'
+    && index.overlapping(0, Number.MAX_SAFE_INTEGER).length > 0) {
+    return { events: entry.data.length, ranges: 0 };
+  }
+  var OPEN = { 'run.entry': 1, 'subflow.entry': 1, 'composition.start': 1 };
+  var CLOSE = { 'run.exit': 1, 'subflow.exit': 1, 'composition.end': 1 };
+  var open = {};
+  var ranges = 0;
+  entry.data.forEach(function (ev) {
+    if (!ev || typeof ev.commitIdxBefore !== 'number') return;
+    var opens = OPEN[ev.type] === 1;
+    if (!opens && CLOSE[ev.type] !== 1) return;
+    var key = ev.type === 'composition.start' || ev.type === 'composition.end'
+      ? 'composition:' + ev.compositionId
+      : ev.runtimeStageId;
+    if (typeof key !== 'string' || !key) return;
+    if (opens) {
+      if (open[key]) return;
+      // The index stores a LABEL, and the label is the event itself minus its
+      // payload — the same stripped projection the live recorder stores, and
+      // the reason a chip rendered from this index cannot leak a tool argument
+      // or an LLM message.
+      var label = {};
+      Object.keys(ev).forEach(function (k) { if (k !== 'payload') label[k] = ev[k]; });
+      open[key] = index.open(label, ev.commitIdxBefore);
+      ranges += 1;
+    } else if (open[key]) {
+      index.close(open[key], ev.commitIdxBefore);
+      delete open[key];
+    }
+  });
+  return { events: entry.data.length, ranges: ranges };
+}
+
+/**
  * A LensRecorder fed by REPLAY. The recorder is agentfootprint-lens's own,
  * unmodified; it expects to observe a live runner, so it is given one whose
  * only job is subscription plumbing — every byte it then reports comes from
@@ -625,10 +706,16 @@ function dbgLensModel(views, artifacts) {
     }
     if (lost) skipped += 1;
   });
+  // The one thing the typed replay above cannot deliver: the commit ranges the
+  // step strip is indexed by. They are in the recording when the turn was
+  // recorded with the boundary recorder attached, and nowhere else.
+  var boundary = { events: 0, ranges: 0 };
+  try { boundary = dbgRebuildBoundaryIndex(rec, artifacts.snapshot); } catch (err) { boundary = { events: 0, ranges: 0 }; }
   var stepGraph = null;
   try { stepGraph = views.lens.buildStepGraphFromSnapshot(artifacts.snapshot); } catch (err) { stepGraph = null; }
   return { recorder: rec, stepGraph: stepGraph, runner: artifacts.blueprint ? runner : null,
-    skipped: skipped, total: events.length };
+    skipped: skipped, total: events.length,
+    boundaryEvents: boundary.events, boundaryRanges: boundary.ranges };
 }
 
 /**
@@ -807,14 +894,32 @@ function DbgDevPane(props) {
   var note;
   var body;
   if (props.kind === 'flowchart') {
-    // Stated because it is true: the step strip and the moments rail are driven
-    // by boundary COMMIT RANGES, which only a live attach records. Everything
-    // else on this screen — chart, summary, event stream, commentary — is this
-    // turn's recording.
+    // TWO TRUTHS, AND THE NOTE SAYS WHICHEVER ONE THIS TURN IS.
+    //
+    // The step scrubber and the moments rail are indexed by boundary COMMIT
+    // RANGES — which run and which subflow was open across which commits. A
+    // turn recorded with agentfootprint's boundary recorder attached carries
+    // them (dbgRebuildBoundaryIndex puts them back and the transport works); a
+    // turn recorded before that carries nothing they can be built from, and the
+    // commit log cannot be made to give them back — the timing of a fork's
+    // branches is not in it. So one branch is a fact about the scrubber and the
+    // other is a fact about the recording, and neither is a guess.
     var m = lens.model;
     note = 'agentfootprint-lens \\u2014 the agent debugger its library ships, reading this turn\\u2019s '
-      + 'recorded event log and run snapshot. The step scrubber and the moments rail stay quiet here: '
-      + 'they need commit ranges that only a live attach records, and nothing on this page invents them.';
+      + 'recorded event log and run snapshot. ';
+    note += m.boundaryRanges
+      // The count is the number of BOUNDARIES, and it is named as such — it is
+      // not the number of steps on the strip (lens groups them into its own
+      // milestones), and a number a visitor could read as the step count would
+      // be a small lie in a pane whose whole job is not telling them.
+      ? 'The step scrubber and the moments rail run on the run\\u2019s own boundaries \\u2014 the '
+        + m.boundaryRanges + ' run and subflow spans this turn recorded as it ran, replayed here \\u2014 '
+        + 'so stepping is the order things really happened in.'
+      : 'The step scrubber and the moments rail stay quiet: they are indexed by boundary commit '
+        + 'ranges, captured only while a turn runs, and this turn was recorded before that capture '
+        + 'existed. Nothing on this page reconstructs them from the commit log afterwards \\u2014 the '
+        + 'timing a fork\\u2019s branches open at is not in it, so the strip would be plausible and '
+        + 'wrong. Everything else on this screen is this turn\\u2019s recording.';
     // Said because it happened: a replayed event the debugger could not read is
     // dropped, and a count is the honest way to show what is missing.
     if (m.skipped) {
@@ -874,8 +979,13 @@ function DebugModal(props) {
   closeRef.current = props.onClose;
   var turns = props.turns || [];
   var v0 = React.useState('story'); var view = v0[0], setView = v0[1];
-  // Newest turn by default — the one a visitor just watched go wrong.
-  var k0 = React.useState(turns.length ? turns[turns.length - 1].index : 0);
+  // THE TURN THE CONTROL BELONGS TO. The button lives on a reply, so it opens on
+  // that reply — \`initialTurn\` is the reply's own index. The picker below still
+  // lists every turn, so one open is one click from any of the others; without an
+  // owning turn (there is no such caller today) it falls back to the newest one.
+  var k0 = React.useState(props.initialTurn != null
+    ? props.initialTurn
+    : (turns.length ? turns[turns.length - 1].index : 0));
   var pick = k0[0], setPick = k0[1];
 
   React.useEffect(function () {
@@ -977,8 +1087,13 @@ function DebugModal(props) {
 }
 
 /**
- * The control in the top bar. Owns the open state and gives focus back to
- * itself on close. Disabled (and honest about it) until a turn exists.
+ * The control that opens the dialog. Owns the open state and gives focus back to
+ * itself on close.
+ *
+ * IT LIVES ON A REPLY, NOT IN THE TOP BAR. What it shows is one turn's recording,
+ * so it belongs beside that turn's "visible reason" button — \`turnIndex\` is the
+ * reply it was rendered under, and the dialog opens there. (It is still disabled,
+ * and honest about it, if it is ever rendered where no turn exists.)
  *
  * The transport props are the page shell's, not this component's business:
  * loadArtifacts(turnIndex) returns the turn's recording (an HTTP GET on the
@@ -997,14 +1112,14 @@ function DebugControl(props) {
   }
   return React.createElement(React.Fragment, null,
     React.createElement('button', { type: 'button', className: 'cd-debugbtn', ref: btnRef,
-      'data-testid': 'debug-open', 'aria-haspopup': 'dialog', 'aria-controls': 'cd-debug',
+      'data-testid': props.testid || 'debug-open', 'aria-haspopup': 'dialog', 'aria-controls': 'cd-debug',
       'aria-expanded': open ? 'true' : 'false', disabled: !turns.length,
       title: turns.length
-        ? 'Look inside the last reply: the story it played out, and the two developer views of the run it made'
+        ? 'Look inside this reply: the story it played out, and the two developer views of the run it made'
         : 'Nothing has been asked yet',
       onClick: function () { setOpen(true); } }, 'debug'),
     open ? React.createElement(DebugModal, {
-      turns: turns, narrow: narrow, onClose: close,
+      turns: turns, narrow: narrow, onClose: close, initialTurn: props.turnIndex,
       loadArtifacts: props.loadArtifacts, artifactsKey: props.artifactsKey,
       devViews: props.devViews, appName: props.appName,
     }) : null);
@@ -1084,6 +1199,154 @@ function Starters(props) {
 `;
 
 /**
+ * THE ROW UNDER A REPLY — "visible reason", an optional ⓘ, and "debug".
+ *
+ * All three are about ONE turn, so all three sit on that turn, in one row, in
+ * the same muted-chip treatment the composer's starter pills already use. The
+ * top bar keeps nothing per-turn: a page-level control that opens a per-turn
+ * dialog has to guess which turn you meant, and it always guessed "the newest".
+ *
+ * The ⓘ is deliberately CLICK-to-open, not hover: a hover-only explanation does
+ * not exist on a phone, and this deck is shown on one as often as on a laptop.
+ */
+export const REPLY_ACTIONS_CSS = `
+  .cd-replybar { align-self: flex-start; display: flex; align-items: center; flex-wrap: wrap;
+    gap: 7px; margin: 8px 0 2px; }
+  .cd-reasonbtn { font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
+  .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
+  .cd-reasonbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* the debug chip is the shared one (DEBUG_CSS); in this row it wears the row's size */
+  .cd-replybar .cd-debugbtn { font-size: 12.5px; padding: 4px 13px; }
+
+  /* the ⓘ — an icon-sized member of the same chip family, never a second style */
+  .cd-infobtn { display: inline-flex; align-items: center; justify-content: center; font: inherit;
+    font-size: 13px; line-height: 1; width: 28px; height: 28px; padding: 0; cursor: pointer;
+    color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; }
+  .cd-infobtn:hover, .cd-infobtn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-infobtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* the accessible name of an icon-only control — read aloud, never drawn */
+  .cd-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+  /* the machine voice inside any dialog body, same treatment as the landing's */
+  .cd-modal-body code { background: var(--soft); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 5px; font-size: 12px; }
+  .cd-modal-body p { margin: 0 0 9px; }
+  .cd-modal-body p:last-child { margin-bottom: 0; }
+`;
+
+/**
+ * The reply row, as a browser component — generated ONCE here and embedded by
+ * both page shells, so a desk reply and a BYOK reply carry the same controls in
+ * the same order.
+ *
+ * `usage` is optional and BYOK-only: it is the one page whose replies spend the
+ * visitor's own money, so it is the one page with something to say about what a
+ * reply costs. A desk passes nothing and renders no ⓘ — an info icon that opens
+ * an empty dialog is worse than no icon.
+ *
+ * Emit it AFTER debugModalScript(): DebugControl is a hoisted function
+ * declaration in the same script, but the reading order should match the
+ * dependency order.
+ */
+export const replyActionsScript = () => `
+// ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
+/** Rich-text segments (lib/page.js's \`t\`/\`b\`/\`code\`/\`em\`) → React children. */
+function infoSegs(segs) {
+  return segs.map(function (s, i) {
+    if (s.b !== undefined) return React.createElement('strong', { key: i }, s.b);
+    if (s.code !== undefined) return React.createElement('code', { key: i }, s.code);
+    if (s.em !== undefined) return React.createElement('em', { key: i }, s.em);
+    return s.t;
+  });
+}
+
+/**
+ * A small dialog carrying nothing but prose. Same chrome as the provenance
+ * dialog (it IS that stylesheet), so this is not a second dialog design.
+ * Escape / backdrop / × close it, focus moves in on open and Tab is trapped.
+ */
+function InfoModal(props) {
+  var boxRef = React.useRef(null);
+  var closeRef = React.useRef(props.onClose);
+  closeRef.current = props.onClose;
+  React.useEffect(function () {
+    var box = boxRef.current;
+    if (box) box.focus();
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); closeRef.current(); return; }
+      if (ev.key !== 'Tab' || !box) return;
+      var items = Array.prototype.slice.call(box.querySelectorAll(PROV_FOCUSABLE))
+        .filter(function (el) { return !el.disabled && el.getClientRects().length > 0; });
+      if (!items.length) { ev.preventDefault(); box.focus(); return; }
+      var first = items[0];
+      var last = items[items.length - 1];
+      var here = document.activeElement;
+      var inside = box.contains(here) && here !== box;
+      if (ev.shiftKey) {
+        if (!inside || here === first) { ev.preventDefault(); last.focus(); }
+      } else if (!inside || here === last) { ev.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () { document.removeEventListener('keydown', onKey, true); };
+  }, []);
+  return React.createElement('div', { className: 'cd-modal-wrap' },
+    React.createElement('div', { className: 'cd-modal-backdrop', 'data-testid': props.testid + '-backdrop',
+      onClick: function () { closeRef.current(); } }),
+    React.createElement('div', { className: 'cd-modal', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': props.testid + '-title', 'data-testid': props.testid,
+        tabIndex: -1, ref: boxRef },
+      React.createElement('div', { className: 'cd-modal-head' },
+        React.createElement('h2', { className: 'cd-modal-title', id: props.testid + '-title' }, props.title),
+        React.createElement('button', { type: 'button', className: 'cd-modal-close',
+          'data-testid': props.testid + '-close', 'aria-label': 'close',
+          onClick: function () { closeRef.current(); } }, '\\u00d7')),
+      React.createElement('div', { className: 'cd-modal-body' },
+        (props.lines || []).map(function (segs, i) {
+          return React.createElement('p', { key: i }, infoSegs(segs));
+        }))));
+}
+
+/** The ⓘ itself: click to open, focus returns here on close. */
+function InfoNote(props) {
+  var o0 = React.useState(false); var open = o0[0], setOpen = o0[1];
+  var btnRef = React.useRef(null);
+  function close() { setOpen(false); if (btnRef.current) btnRef.current.focus(); }
+  return React.createElement(React.Fragment, null,
+    React.createElement('button', { type: 'button', className: 'cd-infobtn', ref: btnRef,
+      'data-testid': props.testid, 'aria-haspopup': 'dialog',
+      'aria-expanded': open ? 'true' : 'false', title: props.title,
+      onClick: function () { setOpen(true); } },
+      React.createElement('span', { 'aria-hidden': 'true' }, '\\u24d8'),
+      React.createElement('span', { className: 'cd-sr' }, props.title)),
+    open ? React.createElement(InfoModal, { testid: props.modalTestid || 'info-modal',
+      title: props.title, lines: props.lines, onClose: close }) : null);
+}
+
+/**
+ * One reply's controls. \`turnKey\` is the session:turn id the page already uses
+ * for its own test ids, so nothing about how a turn is addressed changes here.
+ */
+function ReplyActions(props) {
+  return React.createElement('div', { className: 'cd-replybar',
+      'data-testid': 'reply-actions-' + props.turnKey },
+    React.createElement('button', { type: 'button', className: 'cd-reasonbtn',
+      'data-testid': 'reason-' + props.turnKey, onClick: props.onReason }, 'visible reason'),
+    props.usage
+      ? React.createElement(InfoNote, { testid: 'usage-info-' + props.turnKey,
+          modalTestid: 'usage-modal', title: props.usage.title, lines: props.usage.lines })
+      : null,
+    React.createElement(DebugControl, {
+      testid: 'debug-open-' + props.turnKey,
+      turns: props.turns, turnIndex: props.turnIndex,
+      loadArtifacts: props.loadArtifacts, artifactsKey: props.artifactsKey,
+      devViews: props.devViews, appName: props.appName }));
+}
+`;
+
+/**
  * The paints for a provenance verdict. ONE copy, shared by the desks' skin
  * (below) and the home's (HOME_CSS): a definition dot on the home is literally
  * the same element, with the same paint, as the dot on a desk.
@@ -1157,6 +1420,83 @@ const PAPER_WHERE = 'HCII 2026 · LNCS 16745 · pp. 3–21 · ';
 const PAPER_DOI = 'https://doi.org/10.1007/978-3-032-30849-8_1';
 /** Every author, in the order they appear on the paper. */
 export const PAPER_AUTHORS = 'Anbalagan, Nie, Kommalapati, Kanamarlapudi, Radhakrishnan, Zhao, Mohan';
+/**
+ * The two sentences the citation cannot lose. They are checked copy: the first
+ * says who the work was done with, the second says whose project this is. Both
+ * are rendered verbatim, and neither is ever reworded to fit a layout.
+ */
+// Byte-for-byte the README's, apostrophes included — this is checked copy, and
+// the one safe way to keep two surfaces from drifting is to not retype it.
+export const PAPER_WITH = 'The ideas in this repository were developed with those co-authors and '
+  + 'published in that paper. The paper states the argument; this repository makes it runnable.';
+export const PAPER_INDEPENDENCE = 'This repository is an independent, personal open-source project. '
+  + "It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored "
+  + 'by, or endorsed by any employer.';
+
+// ─── THE COLOPHON — libraries, family, paper ────────────────────────────────
+/**
+ * The one section under the desk listing, and the ONLY standing explanation the
+ * landing keeps. It is the README's order, deliberately: the demo first, then
+ * the libraries it runs on, then the family they belong to, then one sentence
+ * of what this is and the paper it implements. Everything longer than a
+ * sentence lives behind a note row, below.
+ *
+ * Both landings render THIS — it is one project, so a library link or a citation
+ * cannot say one thing on the public page and another on the local one.
+ */
+export const LIBRARIES = [
+  {
+    href: 'https://github.com/footprintjs/agentfootprint',
+    name: 'agentfootprint',
+    what: 'observable, explainable AI agents: recordings, influence localization, ablate-and-rerun, MCP tools.',
+    // The README's ask, in this page's voice: the design carries no emoji
+    // anywhere, so the star is the word rather than the glyph.
+    ask: 'If it’s useful, a star helps people find it.',
+  },
+  {
+    href: 'https://github.com/footprintjs/footPrint',
+    name: 'footprintjs',
+    what: 'the self-explaining flowchart engine underneath, recording every stage, decision and write as a typed event.',
+    ask: 'A star there is welcome too, for the same reason.',
+  },
+  {
+    href: 'https://github.com/footprintjs/agentThinkingUI',
+    name: 'agentthinkingui',
+    what: 'the panels you are clicking — the reply’s story, its sources and its re-runs.',
+    ask: '',
+  },
+];
+const ECOSYSTEM_HOME = 'https://footprintjs.github.io/';
+const ECOSYSTEM_ORG = 'https://github.com/footprintjs';
+/**
+ * What this demo is — one line, and deliberately only one. The two sentences
+ * under the citation say the rest; a landing that explains itself at length is
+ * the thing this page was trimmed to stop being.
+ */
+export const ABOUT_LINE = 'The reference implementation of the paper below.';
+
+export function colophon() {
+  const libs = LIBRARIES.map((l) => `
+        <p class="vr-lib"><a class="vr-libname" href="${esc(l.href)}" target="_blank"
+          rel="noopener">${esc(l.name)}</a> <span class="vr-libwhat">${esc(l.what)}${
+  l.ask ? ` <em>${esc(l.ask)}</em>` : ''}</span></p>`).join('');
+  return `
+    <section class="vr-colophon" aria-label="The libraries, the ecosystem and the paper">
+      <div class="vr-seckick">THE LIBRARIES IT RUNS ON</div>${libs}
+      <p class="vr-eco">All of them, and the rest of the family, live at <a href="${ECOSYSTEM_HOME}"
+        target="_blank" rel="noopener">footprintjs.github.io</a> — the repositories are at <a
+        href="${ECOSYSTEM_ORG}" target="_blank" rel="noopener">github.com/footprintjs</a>.</p>
+
+      <div class="vr-seckick vr-what-kick">WHAT THIS IS</div>
+      <p class="vr-what">${esc(ABOUT_LINE)}</p>
+      <p class="vr-cite">${esc(PAPER_TITLE)}</p>
+      <p class="vr-meta">${esc(PAPER_WHERE)}<a href="${PAPER_DOI}" target="_blank"
+        rel="noopener">doi.org/10.1007/978-3-032-30849-8_1</a></p>
+      <p class="vr-meta">${esc(PAPER_AUTHORS)}</p>
+      <p class="vr-disclaim">${esc(PAPER_WITH)}</p>
+      <p class="vr-disclaim">${esc(PAPER_INDEPENDENCE)}</p>
+    </section>`;
+}
 
 // ─── THE WAYS OFF THIS PAGE ─────────────────────────────────────────────────
 /**
@@ -1346,6 +1686,12 @@ export function programNotes({ states = PROVENANCE_HELP.map((h) => h.state), cos
         { p: [t('Ask a model why it said something and you get a story about itself — fluent, '
           + 'plausible, unverified. Here the why is established outside the model: remove a source, '
           + 'run the same turn again, read what changed.')] },
+        // Moved here from the landing's old standing "what is visible reasoning?"
+        // block, unchanged: it is the same argument as the paragraph above it,
+        // and this row is where a visitor asks for it.
+        { p: [t('None of these desks narrates its own reasoning. Each one records it: every source '
+          + 'the agent consults is a tool call, and the record of which tools ran, what came back '
+          + 'and what it changed survives the reply.')] },
         { p: [t('The paper calls this a third paradigm. Instead of asking the model to narrate its '
           + 'reasons — which cannot be checked — or asking a second model to judge it, the substrate '
           + 'that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed '
@@ -1378,22 +1724,10 @@ export function programNotes({ states = PROVENANCE_HELP.map((h) => h.state), cos
       ],
     },
     ...extra,
-    {
-      id: 'paper',
-      label: 'the paper & the libraries',
-      body: [
-        { cite: PAPER_TITLE },
-        { meta: [t(PAPER_WHERE), a(PAPER_DOI, 'doi.org/10.1007/978-3-032-30849-8_1')] },
-        { meta: [t(PAPER_AUTHORS)] },
-        { p: [t('The machinery is three MIT-licensed libraries: '),
-          a('https://www.npmjs.com/package/footprintjs', 'footprintjs'), t(' records the run, '),
-          a('https://www.npmjs.com/package/agentfootprint', 'agentfootprint'),
-          t(' turns that recording into agents, influence rankings and re-runs, and '),
-          a('https://www.npmjs.com/package/agentthinkingui', 'agentthinkingui'),
-          t(' draws the panels you are clicking. The whole site is open: '),
-          a('https://github.com/footprintjs/visible-reasoning', 'source on GitHub'), t('.')] },
-      ],
-    },
+    // NO PAPER ROW. The citation is not program notes — it is what this demo IS,
+    // so it reads in the open above these rows (colophon()), with the libraries
+    // and the ecosystem, in the README's order. A second copy down here would be
+    // the duplication this page was trimmed to remove.
   ];
 }
 
@@ -1486,8 +1820,20 @@ export const HOME_CSS = `
   a:focus-visible, button:focus-visible { outline: 2px solid var(--terra); outline-offset: 3px; border-radius: 1px; }
   a:focus:not(:focus-visible), button:focus:not(:focus-visible) { outline: none; }
 
+  /* THE READING TRACK, CENTRED. The column used to be a bare max-width, so on a
+     wide display it sat hard against the left padding edge with the whole right
+     half empty — the page looked broken rather than composed.
+     Centring it is the fix; the clamp is the judgement.
+
+     It grows with the viewport and stops at 1040px, which is as wide as this
+     design's structural elements (the double rule over the desk listing, the
+     note-row hairlines with their +/− at the far right, the top rail and the
+     footer) can stretch and still read as one page. RUNNING PROSE DOES NOT GROW
+     WITH IT: vr-lead / vr-sub cap themselves at 56ch and a note body at 62ch,
+     so the measure a person actually reads is the same at 1280px and at 2560px.
+     Only the frame breathes. */
   .vr-page { min-height: 100dvh; padding: 0 clamp(20px, 5.5vw, 72px) 56px; }
-  .vr-col { max-width: 768px; }
+  .vr-col { max-width: clamp(768px, 62vw, 1040px); margin-inline: auto; }
 
   /* header — the demo's own label, the way to the code, the venue */
   .vr-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
@@ -1594,6 +1940,24 @@ export const HOME_CSS = `
   .vr-desknote { margin-top: 12px; }
   .vr-desknote .vr-notes { border-bottom: none; }
 
+  /* THE COLOPHON — the landing's only standing prose, and it is a list.
+     Each library is one line: its name (the link), what it is, and the ask.
+     The measure is capped like every other run of prose on this page, so the
+     section reads the same at 1280px and at 2560px. */
+  .vr-colophon { margin-top: clamp(44px, 8vh, 80px); }
+  .vr-lib { margin: 0 0 10px; max-width: 62ch; font-size: 16px; line-height: 1.55; color: var(--body); }
+  .vr-libname { font-family: var(--mono); font-size: 14px; color: var(--green); text-decoration: none;
+    border-bottom: 1px solid var(--green-soft); }
+  .vr-libname:hover { color: var(--green-dk); border-bottom-color: var(--green-dk); }
+  .vr-libwhat em { color: var(--muted); }
+  .vr-eco { margin: 14px 0 0; max-width: 62ch; font-size: 15.5px; color: var(--muted); }
+  .vr-what-kick { margin-top: clamp(30px, 5vh, 46px); }
+  .vr-what { margin: 0 0 14px; max-width: 56ch; font-size: 17px; line-height: 1.55; color: var(--body); }
+  .vr-colophon .vr-cite { max-width: 62ch; }
+  .vr-colophon .vr-meta { max-width: 62ch; }
+  .vr-disclaim { margin: 10px 0 0; max-width: 62ch; font-size: 14.5px; line-height: 1.6;
+    font-style: italic; color: var(--faint); }
+
   .vr-program { margin-top: clamp(48px, 8vh, 88px); }
 
   .vr-foot { margin-top: clamp(56px, 10vh, 96px); border-top: 1px solid var(--hair);
@@ -1643,9 +2007,13 @@ const FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
  * @param o.kicker       the mono label at the top left — what THIS build is
  * @param o.venue        the mono label at the top right
  * @param o.heading/lead/sub   the header
- * @param o.topNotes     the rows above the desks
+ * @param o.topNotes     the rows above the desks — kept for the ONE thing that
+ *   has to be read before a visitor acts (BYOK's custody contract), and empty on
+ *   the local gallery. Explanation goes below the desks or behind a row.
  * @param o.desks        the desk listing
- * @param o.programNotes the rows below it
+ * @param o.programNotes the rows below it. Between the two sits colophon(): the
+ *   libraries, the ecosystem, and one sentence + the citation. It takes no
+ *   argument on purpose — it is the same project on both landings.
  * @param o.footLeft     one honest sentence about the page itself
  * @param o.scripts      extra scripts (the local gallery's routing); the unfold
  *                       script is always present and always first
@@ -1682,6 +2050,7 @@ ${FONT_LINKS}
     </header>
 ${noteGroup(topNotes)}
 ${deskListing(desks)}
+${colophon()}
 
     <section class="vr-program" aria-label="Program notes">
       <div class="vr-seckick">PROGRAM NOTES</div>${noteGroup(notes)}
@@ -1772,22 +2141,12 @@ export function buildGalleryPage(apps, { live = false, model = null } = {}) {
         em('open a desk to watch it happen.')]
       : [t('This build is the rehearsal: scripted data, no model and no network — '),
         em('the machinery is the same, and every label says which it is.')],
-    topNotes: [{
-      id: 'about',
-      label: 'what is visible reasoning?',
-      body: [
-        { p: [t('Three chat desks that answer a question and then show why: the sources that shaped '
-          + 'the answer, ranked — each one droppable, so the same turn can be re-run without it and '
-          + 'compared. A working companion to a published paper, not a product.')] },
-        { p: [t('None of them narrates its own reasoning. Each one records it: every source the '
-          + 'agent consults is a tool call, and the record of which tools ran, what came back and '
-          + 'what it changed survives the reply.')] },
-        { p: [t('All three run here, on this machine. The paper and the method are under '),
-          em('program notes'), t(', below. This page and the desks behind it are generated from '),
-          a(HEADER_LINKS[0].href, 'source on GitHub'), t(' — every sentence on them is something '
-            + 'the code does.')] },
-      ],
-    }],
+    // NOTHING ABOVE THE DESKS. This landing used to open with a standing block
+    // explaining what visible reasoning is, before a visitor had seen a single
+    // desk. The desks are the demo; they go first. What that block argued now
+    // lives where it is asked for: one sentence under the listing (colophon),
+    // and the argument itself in “why this isn’t the model explaining itself”.
+    topNotes: [],
     desks,
     programNotes: programNotes({ states, cost, sources, extra: [takeItHome] }),
     footLeft: 'generated from the repo — every sentence on this page is something the code does',
@@ -1934,10 +2293,6 @@ export function buildAppPage(app, data) {
   @keyframes cdpulse { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
   @media (prefers-reduced-motion: reduce) { .cd-status .cd-pulse { animation: none; } }
 
-  .cd-reasonbtn { align-self: flex-start; margin: 8px 0 2px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-    background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
-  .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
-
   /* what-if — clearly a counterfactual (warm dashed accent) */
   .whatif { align-self: stretch; margin: 12px 0 6px; padding: 13px 15px; border-radius: 13px;
     border: 1px solid var(--line); border-left: 3px solid var(--whatif); background: var(--soft); }
@@ -1960,6 +2315,7 @@ export function buildAppPage(app, data) {
 ${PROVENANCE_CSS}
 ${DEBUG_CSS}
 ${STARTERS_CSS}
+${REPLY_ACTIONS_CSS}
 
   /* the "visible reason" panel — slides in from the right */
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
@@ -2054,6 +2410,7 @@ ${/* A desk's dialog is runtime-only: this reply's sources, then the way to the
     { defs: false, guideHref: "GALLERY_HREF + '#guide'" })}
 ${debugModalScript()}
 ${startersScript()}
+${replyActionsScript()}
 function parseSeed(lines) {
   var uP = 'User: ', aP = DATA.app.assistantLabel + ': ';
   return lines.map(function (l) {
@@ -2561,8 +2918,15 @@ function AppDesk() {
       thread.push(e('div', { key: 'u' + t.index, className: 'msg-user' }, t.userMessage));
       thread.push(e('div', { key: 'a' + t.index, className: 'msg-advisor', 'data-testid': 'reply-' + key,
         dangerouslySetInnerHTML: md(t.reply) }));
-      thread.push(e('button', { key: 'rb' + t.index, className: 'cd-reasonbtn', 'data-testid': 'reason-' + key,
-        onClick: function () { openReason(active, t.index); } }, 'visible reason'));
+      // The reply's own controls, on the reply: its visible reason and the debug
+      // dialog opened AT THIS TURN. (No ⓘ here — a desk on the local gallery
+      // spends nothing of the visitor's, so it has nothing to say about usage.)
+      thread.push(e(ReplyActions, { key: 'rb' + t.index, turnKey: key, turnIndex: t.index,
+        onReason: function () { openReason(active, t.index); },
+        turns: (sess && sess.turns) || [],
+        loadArtifacts: HAS_SERVER && sess ? function (k) { return getArtifacts(sess.id, k); } : null,
+        artifactsKey: (sess && sess.id) || 'none',
+        devViews: DEV_VIEWS, appName: DATA.app.assistantLabel }));
       var wf = reruns[key];
       if (wf) {
         var verdict = wf.result && wf.result.verdict;
@@ -2683,12 +3047,9 @@ function AppDesk() {
             : 'Replies are scripted by the demo — no LLM is called' },
           e('span', { className: 'cd-dot ' + (DATA.model ? 'live' : 'scripted') }),
           DATA.model ? DATA.model : 'scripted mock — no model'),
-        // One small control, and everything it opens is inside the dialog: the
-        // chat surface stays a chat surface.
-        e(DebugControl, { turns: (sess && sess.turns) || [],
-          loadArtifacts: HAS_SERVER && sess ? function (k) { return getArtifacts(sess.id, k); } : null,
-          artifactsKey: (sess && sess.id) || 'none',
-          devViews: DEV_VIEWS, appName: DATA.app.assistantLabel }),
+        // No debug control here: what it opens is ONE turn's recording, so it
+        // lives on that turn (see ReplyActions in the thread above). There is
+        // exactly one way in, and it already knows which reply you meant.
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },

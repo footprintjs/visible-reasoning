@@ -37,8 +37,9 @@ import { dirname, join } from 'node:path';
 // imported, never re-authored, so a card here and a card in the local gallery
 // are the same element with different truths in it.
 import {
-  DEBUG_CSS, PROVENANCE_CSS, STARTERS_CSS, buildHome, codeSeg, debugModalScript, deskNote,
-  orderForHome, programNotes, provenanceHelpScript, question, startersScript, t as tSeg,
+  DEBUG_CSS, PROVENANCE_CSS, REPLY_ACTIONS_CSS, STARTERS_CSS, buildHome, codeSeg, debugModalScript,
+  deskNote, orderForHome, programNotes, provenanceHelpScript, question, replyActionsScript,
+  startersScript, t as tSeg,
 } from './page.js';
 
 const require = createRequire(import.meta.url);
@@ -57,8 +58,14 @@ const b = (s) => ({ b: s });
 const code = (s) => ({ code: s });
 const em = (s) => ({ em: s });
 
+// WHAT CHANGED, AND WHAT DID NOT. The key is now kept in localStorage — on the
+// visitor's own machine, surviving a reload and a restart, because a demo whose
+// key has to be re-pasted between runs gets re-pasted on a projector. The
+// custody guarantee is untouched by that, and it is the only thing this copy is
+// for: the key goes to api.anthropic.com and to no origin of ours, ever. Where
+// it rests is the visitor's disk; where it travels is Anthropic. Both are said.
 const CUSTODY_COPY = [
-  [b('Your key stays in this tab.')],
+  [b('Your key stays in your browser.')],
   // The hosted line. This page is published to GitHub Pages, so a visitor's
   // first question is "who is hosting this, and what do they get?" — answered
   // before the mechanics. Pages serves the files and sees those file requests;
@@ -68,8 +75,10 @@ const CUSTODY_COPY = [
   ],
   [
     t('Every Claude call goes straight from your browser to '), code('api.anthropic.com'),
-    t(' — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. '),
-    b('Forget my key'), t(' erases it instantly.'),
+    t(' — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With '),
+    b('keep it in this browser'),
+    t(' ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. '),
+    b('Forget my key'), t(' erases it from both, instantly.'),
   ],
   [
     t('This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that '),
@@ -81,8 +90,11 @@ const CUSTODY_COPY = [
   ],
 ];
 
-// What a reply spends. True on both surfaces, so both carry it: the landing
-// (before you pick a desk) and the desk itself (while you spend it).
+// What a reply spends. True on both surfaces, so both carry it — but neither
+// stands it up as prose any more: on the landing it is the "what a reply costs"
+// note, and on a desk it is the ⓘ beside a reply's "visible reason" button,
+// which is where the question is actually asked (after a reply exists, about
+// that reply). See USAGE_TITLE.
 const COST_COPY = [
   t('Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the '),
   b('frozen'), t(' tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.'),
@@ -99,18 +111,47 @@ const SCOPE_COPY = [
 // the custody card's promise ("this tab, until you close it") is only kept if the
 // visitor knows which of the two they chose.
 const KEY_TRAVEL_COPY = [
-  t('You’ll paste your key on the desk you open — this page never asks for one. Tick '),
-  b('remember'),
-  t(' there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.'),
+  t('You’ll add your key on the desk you open — this page never asks for one. Leave '),
+  b('keep it in this browser'),
+  t(' ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again.'),
 ];
 
-const CHECKBOX_LABEL = 'Remember my key in this tab (survives reload and the trip back to the gallery; forgotten when the tab closes)';
+// ─── THE KEY DIALOG'S FRONT LAYER ───────────────────────────────────────────
+// The dialog used to open with FIVE paragraphs of custody prose before the
+// visitor reached the field, and repeat the usage paragraph under the Save
+// button. A person who opens it has already decided to paste a key; what they
+// need first is the promise and the field, in that order.
+//
+// So: this one line, then the field. Everything else — the static-file argument,
+// the DevTools invitation, "not logged, not in any URL", and what ticking the
+// box actually does — is UNCHANGED and one click away, behind the dialog's own
+// disclosure row (KEY_MORE_LABEL). Nothing was dropped; the usage paragraph is
+// the single exception, and it did not vanish either: it is the ⓘ beside each
+// reply's "visible reason" button, which is where the question is asked.
+//
+// The words are the ones already checked: the promise sentence is the Key
+// control's own title, byte for byte, so the control and the dialog cannot come
+// to say different things.
+const KEY_LEAD = [
+  b('Your key stays in your browser.'),
+  t(' It goes only to api.anthropic.com, never to this site.'),
+];
+const KEY_MORE_LABEL = 'how this works — and how to check it';
+
+const CHECKBOX_LABEL = 'Keep it in this browser (saved on this machine — still here after a reload or a restart, until you press Forget)';
 const STOCK_NOTE = 'The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo.';
+
+// The header control's two states. The second is the one a demo lives in: the
+// key is already there, and the control is still the way to replace or clear it.
+const KEY_BTN_IDLE = 'Key';
+const KEY_BTN_SET = 'Key saved · change';
+const KEY_TITLE = 'Your Anthropic key';
+const USAGE_TITLE = 'What this reply cost';
 
 // Leaving a desk for the gallery is a page load: this page's memory — every turn,
 // every fork — goes with it. Asked, once there is something to lose. The key is
 // named in the same breath because it is the visitor's other live question.
-const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';
+const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “keep it in this browser” choice.';
 
 // The provenance verdicts a desk in THIS bundle can honestly produce. Every tool
 // here is a real browser fetcher, so `scripted` is absent — from the guide on
@@ -228,26 +269,16 @@ export function buildByokLanding({ apps, stock, model }) {
     lead: [tSeg('Three real chat desks share one machine; every reply can be re-run without a source, '
       + 'to see what that source really changed.')],
     sub: [tSeg('Two of them run right here in your browser, on your own Anthropic API key — '),
-      { em: 'the key never leaves this tab.' }],
+      // Not "this tab" any more: a kept key outlives the tab by design. What is
+      // still exactly true, and is the claim that matters, is that it never
+      // leaves the browser it was typed into.
+      { em: 'the key never leaves your browser.' }],
+    // ONE ROW ABOVE THE DESKS, and it is the only one that earns the position:
+    // a visitor is about to decide whether to bring a key here. The standing
+    // "what is visible reasoning?" block that used to sit beside it is gone —
+    // the desks are the demo, and the one sentence of what this is now reads
+    // under the listing, with the paper (lib/page.js's colophon()).
     topNotes: [
-      {
-        id: 'about',
-        label: 'what is visible reasoning?',
-        body: [
-          { p: [tSeg('Three chat desks that answer a question and then show why: the sources that '
-            + 'shaped the answer, ranked — each one droppable, so the same turn can be re-run without '
-            + 'it and compared. A working companion to a published paper, not a product.')] },
-          { p: [tSeg('None of them narrates its own reasoning. Each one records it: every source the '
-            + 'agent consults is a tool call, and the record of which tools ran, what came back and '
-            + 'what it changed survives the reply.')] },
-          { p: [tSeg('Two of the three run here, in your browser; the third needs a server, and its '
-            + 'row below says so. The paper and the method are under '), { em: 'program notes' },
-          tSeg(', below. Everything — the stock desk included — runs from '),
-          { href: 'https://github.com/footprintjs/visible-reasoning', label: 'source on GitHub' },
-          tSeg('. Every file here — this page, the desks, the vendored library bytes — is generated '
-            + 'from that repo and served as-is.')] },
-        ],
-      },
       {
         id: 'key',
         label: 'the key, in full',
@@ -268,6 +299,13 @@ export function buildByokLanding({ apps, stock, model }) {
             tSeg(' — a stylesheet and a few font files, no key, no data of yours, and if those '
               + 'requests fail you get your system fonts and the same page. Nothing else leaves it: '
               + 'this page takes no key at all.')] },
+          // Kept from the block that used to stand above the desks, because it
+          // belongs to THIS argument: a page you are asked to trust with a key
+          // should say where every byte of it came from.
+          { p: [tSeg('Every file here — this page, the desks, the vendored library bytes — is '
+            + 'generated from that repo and served as-is: '),
+          { href: 'https://github.com/footprintjs/visible-reasoning', label: 'source on GitHub' },
+          tSeg('.')] },
           { aside: CUSTODY_COPY[CUSTODY_COPY.length - 1] },
         ],
       },
@@ -293,8 +331,19 @@ export function buildByokLanding({ apps, stock, model }) {
 export function buildByokPage({ importMap, app, model }) {
   const DATA = JSON.stringify({
     app, model,
-    custody: CUSTODY_COPY, footer: [COST_COPY],
+    // The custody contract is rendered inside the key dialog — at the moment the
+    // visitor decides to paste, and reachable again at any later moment, instead
+    // of as a slab above a chat window that a returning visitor never re-reads.
+    // TWO LAYERS, ONE CONTRACT: `keyLead` is the promise, read before the field;
+    // `custody` is the whole of it, one click behind the dialog's own row. Every
+    // sentence still ships — see the note on KEY_LEAD.
+    keyLead: KEY_LEAD, custody: CUSTODY_COPY.slice(1), moreLabel: KEY_MORE_LABEL,
+    // Still carried, and still rendered — as the ⓘ on each reply, never again as
+    // a second paragraph under this dialog's Save button.
+    usage: [COST_COPY],
     checkboxLabel: CHECKBOX_LABEL, leaveConfirm: LEAVE_CONFIRM,
+    keyBtnIdle: KEY_BTN_IDLE, keyBtnSet: KEY_BTN_SET,
+    keyTitle: KEY_TITLE, usageTitle: USAGE_TITLE,
   });
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
@@ -317,17 +366,22 @@ ${importMap}
   .cd-app { position: fixed; inset: 0; background: var(--bg); }
   .cd-main { height: 100%; display: flex; flex-direction: column; transition: margin-right .28s ease; }
 
+  /* ── THE HEADER, MINIMAL. Left: the way back and the desk's name, with its
+     session tabs. Right: what answered (the model badge) and the Key control.
+     Nothing here teaches — the landing does that — and nothing here is per-turn:
+     the reply carries its own controls. ── */
   .cd-bar { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); }
   .cd-back { font-size: 12.5px; font-weight: 600; color: var(--muted); text-decoration: none; white-space: nowrap; }
   .cd-back:hover { color: var(--accent); }
   .cd-brand { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
   .cd-brand .cd-mark { color: var(--accent); font-weight: 700; }
-  .cd-tagline { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* model badge — names what actually answers */
+  /* model badge — names what actually answers, and nothing else. It used to
+     carry the provider sentence and the key's last four; both were custody copy
+     wearing a badge, and both now live in the key dialog where they are read. */
   .cd-model { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
     color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
   .cd-model.live { color: #2C6B22; }
-  .cd-tabs { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-self: center; }
+  .cd-tabs { display: flex; gap: 6px; flex-wrap: wrap; align-self: center; }
   .cd-tab { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; cursor: pointer;
     border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
   .cd-tab.on { background: var(--accent); border-color: var(--accent-dk); color: #fff; }
@@ -352,10 +406,6 @@ ${importMap}
   @keyframes cdpulse { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
   @media (prefers-reduced-motion: reduce) { .cd-status .cd-pulse { animation: none; } }
 
-  .cd-reasonbtn { align-self: flex-start; margin: 8px 0 2px; font-size: 12.5px; font-weight: 600; cursor: pointer;
-    background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); padding: 4px 13px; }
-  .cd-reasonbtn:hover { color: var(--accent); border-color: var(--accent); }
-
   .whatif { align-self: stretch; margin: 12px 0 6px; padding: 13px 15px; border-radius: 13px;
     border: 1px solid var(--line); border-left: 3px solid var(--whatif); background: var(--soft); }
   .whatif-lbl { font-size: 12px; font-weight: 700; color: #9A6C15; margin: 0 0 6px; }
@@ -377,6 +427,7 @@ ${importMap}
 ${PROVENANCE_CSS}
 ${DEBUG_CSS}
 ${STARTERS_CSS}
+${REPLY_ACTIONS_CSS}
 
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
@@ -417,28 +468,66 @@ ${STARTERS_CSS}
   .cd-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); opacity: 0; pointer-events: none;
     transition: opacity .28s ease; z-index: 45; }
 
-  /* ── BYOK-only chrome: the custody panel, the armed strip, the small print ── */
-  .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
-    background: var(--soft); padding: 15px 17px; margin: 0 0 16px; }
-  .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .by-copy p { font-size: 13px; line-height: 1.62; color: var(--ink); margin: 0 0 8px; }
+  /* ── BYOK-only chrome: the key control and the dialog behind it ─────────────
+     Everything about the key is now ONE control and ONE dialog. The custody
+     slab, the green armed strip and the small print under the transcript are
+     gone from the page body: they were three standing explanations of a thing
+     the visitor does once, and the page they stood on is a chat window. ── */
+  .by-keyzone { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; align-self: center; }
+  .by-keybtn { font: inherit; font-size: 11.5px; font-weight: 600; color: var(--muted);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .by-keybtn:hover, .by-keybtn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .by-keybtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* armed: the same chip, in the same green the model badge uses when it is live */
+  .by-keybtn.on { color: #2C6B22; border-color: #C6E0C0; background: #F3F8F1; }
+
+  /* the dialog's own form — the paste field, the checkbox, and the two verbs */
+  .by-copy p { font-size: 12.5px; line-height: 1.6; color: var(--ink); margin: 0 0 8px; }
   .by-copy p:last-child { margin-bottom: 0; }
-  .by-copy code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
-  .by-form { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin: 13px 0 0; }
-  .by-form input[type=password] { flex: 1 1 260px; min-width: 0; padding: 10px 14px; border-radius: 999px;
+  /* the promise, and only the promise, above the field */
+  .by-lead { font-size: 13px; line-height: 1.6; color: var(--ink); margin: 0; }
+
+  /* ── THE DIALOG'S ONE DISCLOSURE ────────────────────────────────────────────
+     The landing's note-row gesture, brought to the desk: a native
+     button[aria-expanded], a mono-ish label with a +/− at the far right, and the
+     same 0fr→1fr grid fold. It is the page's second use of ONE gesture, not a
+     second gesture — and the content is AUTHORED INTO THE DOM either way, hidden
+     by CSS from .is-open alone, so a fold that never animates still ends up
+     hidden and out of the tab order (there is no transitionend to miss). ── */
+  .by-more { margin: 14px 0 0; padding-top: 11px; border-top: 1px solid var(--line); }
+  .by-more-btn { display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    width: 100%; padding: 4px 0; margin: 0; background: transparent; border: none; cursor: pointer;
+    text-align: left; font: inherit; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .by-more-btn:hover { color: var(--accent); }
+  .by-more-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .by-more-mark { font-size: 15px; line-height: 1; color: var(--accent); flex: none; }
+  .by-more-fold { display: grid; grid-template-rows: 0fr;
+    transition: grid-template-rows .24s cubic-bezier(.4, 0, .2, 1); }
+  .by-more.is-open .by-more-fold { grid-template-rows: 1fr; }
+  .by-more-inner { overflow: hidden; min-height: 0; visibility: hidden; transition: visibility 0s .24s; }
+  .by-more.is-open .by-more-inner { visibility: visible; transition: visibility 0s 0s; }
+  .by-more .by-copy { padding-top: 9px; }
+  .by-more .by-copy p { color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) {
+    .by-more-fold { transition: none; }
+    .by-more-inner { transition: none; }
+  }
+
+  .by-keyform { margin: 14px 0 0; padding: 13px 0 0; border-top: 1px solid var(--line); }
+  .by-keyform input[type=password] { width: 100%; padding: 10px 14px; border-radius: 999px;
     border: 1px solid var(--line); background: #fff; font-size: 14px; color: var(--ink); outline: none; }
-  .by-form input[type=password]:focus { border-color: var(--accent); }
-  .by-form button { font-weight: 700; font-size: 13px; padding: 10px 18px; border-radius: 999px; border: none;
-    background: var(--accent); color: #fff; cursor: pointer; }
-  .by-form button:hover { background: var(--accent-dk); }
-  .by-remember { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); flex: 1 1 100%; }
-  .by-armed { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; padding: 9px 14px;
-    border-radius: 999px; background: #E9F3E7; border: 1px solid #C6E0C0; font-size: 12.5px; color: #2C6B22; font-weight: 600; }
-  .by-armed button { font-size: 12px; font-weight: 700; padding: 5px 13px; border-radius: 999px; cursor: pointer;
-    border: 1px solid #C6E0C0; background: #fff; color: #2C6B22; }
-  .by-armed .by-armed-note { font-weight: 500; color: #4B6B46; }
-  .by-foot { margin: 18px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
-  .by-foot p { margin: 0 0 7px; }
+  .by-keyform input[type=password]:focus { border-color: var(--accent); }
+  .by-remember { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.5;
+    color: var(--muted); margin: 11px 0 0; }
+  .by-remember input { margin-top: 2px; flex: 0 0 auto; }
+  .by-keyacts { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 13px 0 0; }
+  .by-keyacts button { font: inherit; font-weight: 700; font-size: 13px; padding: 9px 18px;
+    border-radius: 999px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  .by-keyacts button:hover { background: var(--accent-dk); }
+  .by-keyacts button.by-forget { background: var(--bg); color: var(--muted); border: 1px solid var(--line); font-weight: 600; }
+  .by-keyacts button.by-forget:hover { color: var(--accent); border-color: var(--accent); background: var(--bg); }
+  .by-keytail { font-size: 12px; color: #2C6B22; font-weight: 600; margin-left: auto; }
 
   @media (min-width: 721px) {
     .cd-app.panel-open .cd-main { margin-right: min(480px, 100%); }
@@ -447,14 +536,12 @@ ${STARTERS_CSS}
   @media (max-width: 720px) {
     .cd-panel { width: 100%; box-shadow: none; }
     .cd-backdrop.show { opacity: 1; pointer-events: auto; }
-    .cd-tagline { display: none; }
     .cd-tab { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* This bar carries one thing the desks' does not: a badge that names the
-       model AND the key's four characters. It cannot be dropped on a phone (it
-       is a custody signal) and it cannot be ellipsized without lying, so the bar
-       wraps instead — every control stays on screen and reachable. */
+    /* The bar wraps rather than dropping anything: the model badge is what
+       answered and the Key control is how you change it, and neither can be
+       hidden on the machine this demo is most often shown from. */
     .cd-bar { flex-wrap: wrap; row-gap: 8px; }
-    .cd-model { white-space: normal; }
+    .by-keyzone { margin-left: auto; }
   }
 </style></head>
 <body><div id="root"></div>
@@ -517,6 +604,7 @@ ${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
   provenanceHelpScript(BYOK_STATES, { defs: true })}
 ${debugModalScript()}
 ${startersScript()}
+${replyActionsScript()}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
@@ -542,7 +630,7 @@ function apiUrlOverride() {
 // Called fresh per agent construction (lib/chat-core.js's makeProvider seam):
 // swapping or forgetting a key takes effect on the very next send.
 function makeProvider() {
-  if (!apiKey) throw new Error('Paste your Anthropic key above to start.');
+  if (!apiKey) throw new Error('Add your Anthropic key first — the Key button in the top bar.');
   var url = apiUrlOverride();
   // parallelToolCalls: false — the browser half of the server desk's setting
   // (see lib/chat-core.js). One tool per reply, so each source lands on its own
@@ -552,15 +640,25 @@ function makeProvider() {
   return browserAnthropic(opts);
 }
 
+// WHERE A KEPT KEY RESTS: localStorage, on the visitor's own machine, and
+// nowhere else. It is a deliberate change from tab-scoped storage — a key that
+// evaporates on reload gets re-pasted in front of an audience, and a key typed
+// in front of an audience is the real hazard. What did NOT change is the only
+// thing that matters: no request carrying this key goes to any origin of ours,
+// so nothing of ours can read what is written here, whatever it survives.
+//
+// ONE PLACE, NOT TWO. This build writes localStorage only. A tab-scoped key left
+// by an older build is cleared on sight (see the auto-arm effect) rather than
+// read, so there is never a second copy of a key anywhere.
 function storedKey() {
-  try { return window.sessionStorage.getItem(STORE_KEY); } catch (e) { return null; }
+  try { return window.localStorage.getItem(STORE_KEY); } catch (e) { return null; }
 }
-function rememberKey(k) { try { window.sessionStorage.setItem(STORE_KEY, k); } catch (e) {} }
+function rememberKey(k) { try { window.localStorage.setItem(STORE_KEY, k); } catch (e) {} }
 function eraseStoredKey() {
-  // sessionStorage is the only place this page ever writes a key; localStorage
-  // is cleared too so "forget" is unconditional, whatever an older build did.
-  try { window.sessionStorage.removeItem(STORE_KEY); } catch (e) {}
+  // Unconditional, and BOTH storages: "Forget" must mean forgotten, including a
+  // key some older build of this page put in the other one.
   try { window.localStorage.removeItem(STORE_KEY); } catch (e) {}
+  try { window.sessionStorage.removeItem(STORE_KEY); } catch (e) {}
 }
 
 // ═══ The machine — identical wiring to the server demo ═════════════════════
@@ -763,14 +861,122 @@ function makeRerunSink(labels, show) {
   };
 }
 
-/** Render one rich-text line of the custody copy. */
-function richLine(segs, key) {
-  return e('p', { key: key }, segs.map(function (s, i) {
-    if (s.b !== undefined) return e('strong', { key: i }, s.b);
-    if (s.code !== undefined) return e('code', { key: i }, s.code);
-    if (s.em !== undefined) return e('em', { key: i }, s.em);
-    return s.t;
-  }));
+/** Render one rich-text line of the custody copy — lib/page.js's segment renderer. */
+function richLine(segs, key) { return e('p', { key: key }, infoSegs(segs)); }
+
+/**
+ * The dialog's own disclosure — the landing's note row, on the desk.
+ *
+ * The content is always in the DOM and hidden by the stylesheet from
+ * \`.is-open\` alone, exactly as the landing does it: scripting is what folds it,
+ * not what hides it, and a fold that never animates still ends up hidden. React
+ * owns only the boolean.
+ */
+function KeyMore(props) {
+  var o0 = React.useState(false); var open = o0[0], setOpen = o0[1];
+  return e('div', { className: 'by-more' + (open ? ' is-open' : ''), 'data-testid': 'key-more' },
+    e('button', { type: 'button', className: 'by-more-btn', 'data-testid': 'key-more-toggle',
+      'aria-expanded': open ? 'true' : 'false', 'aria-controls': 'by-key-more',
+      onClick: function () { setOpen(!open); } },
+      e('span', null, props.label),
+      e('span', { className: 'by-more-mark', 'aria-hidden': 'true' }, open ? '\\u2212' : '+')),
+    e('div', { className: 'by-more-fold' },
+      e('div', { className: 'by-more-inner', id: 'by-key-more' },
+        e('div', { className: 'by-copy', 'data-testid': 'key-more-body' },
+          (props.lines || []).map(function (line, i) { return richLine(line, 'm' + i); })))));
+}
+
+/**
+ * THE KEY DIALOG — the one place a key is entered, replaced or erased.
+ *
+ * TWO LAYERS, IN THE ORDER THE VISITOR NEEDS THEM. The promise first, in one
+ * line ("your key stays in your browser; it goes only to api.anthropic.com"),
+ * then the field, the checkbox and Save. Everything else that was standing prose
+ * above the field — the static-file argument, the DevTools invitation, "not
+ * logged, not in any URL", what ticking the box does — is the same sentences,
+ * one click behind this dialog's own disclosure row. Nothing was cut. The usage
+ * paragraph that used to repeat under the Save button is gone from here on
+ * purpose: it belongs to a reply, and it is the ⓘ on one.
+ *
+ * The dialog is reachable at any time from the header control, which is the
+ * whole point — a demo gets re-run, and re-running it must not mean re-typing a
+ * key on a projector.
+ *
+ * Everything about it is deliberately dumb: no <form> (so no submit default that
+ * could put a key in a URL), the field is cleared the instant the key is taken,
+ * and only the last four characters are ever shown back.
+ *
+ * Same chrome as every other dialog on the page (PROVENANCE_CSS's .cd-modal),
+ * with the same Escape / backdrop / × / focus-trap behaviour.
+ */
+function KeyModal(props) {
+  var boxRef = React.useRef(null);
+  var fieldRef = React.useRef(null);
+  var closeRef = React.useRef(props.onClose);
+  closeRef.current = props.onClose;
+
+  React.useEffect(function () {
+    var box = boxRef.current;
+    if (fieldRef.current) fieldRef.current.focus();
+    else if (box) box.focus();
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); closeRef.current(); return; }
+      if (ev.key !== 'Tab' || !box) return;
+      var items = Array.prototype.slice.call(box.querySelectorAll(PROV_FOCUSABLE))
+        .filter(function (el) { return !el.disabled && el.getClientRects().length > 0; });
+      if (!items.length) { ev.preventDefault(); box.focus(); return; }
+      var first = items[0];
+      var last = items[items.length - 1];
+      var here = document.activeElement;
+      var inside = box.contains(here) && here !== box;
+      if (ev.shiftKey) {
+        if (!inside || here === first) { ev.preventDefault(); last.focus(); }
+      } else if (!inside || here === last) { ev.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () { document.removeEventListener('keydown', onKey, true); };
+  }, []);
+
+  function save() { props.onSave(fieldRef.current); }
+
+  return e('div', { className: 'cd-modal-wrap' },
+    e('div', { className: 'cd-modal-backdrop', 'data-testid': 'key-backdrop',
+      onClick: function () { closeRef.current(); } }),
+    e('div', { className: 'cd-modal', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'by-key-title', id: 'by-key', 'data-testid': 'key-modal',
+        tabIndex: -1, ref: boxRef },
+      e('div', { className: 'cd-modal-head' },
+        e('h2', { className: 'cd-modal-title', id: 'by-key-title' }, DATA.keyTitle),
+        e('button', { type: 'button', className: 'cd-modal-close', 'data-testid': 'key-close',
+          'aria-label': 'close', onClick: function () { closeRef.current(); } }, '\\u00d7')),
+      e('div', { className: 'cd-modal-body' },
+        // THE PROMISE, and then the field. One line, because the person who
+        // opened this came to paste a key.
+        e('p', { className: 'by-lead', 'data-testid': 'key-lead' }, infoSegs(DATA.keyLead)),
+        // NO <form> element: no submit default, so nothing here can ever turn
+        // into a GET navigation that puts a key in a URL.
+        e('div', { className: 'by-keyform' },
+          e('input', { type: 'password', autoComplete: 'off', spellCheck: 'false', ref: fieldRef,
+            'data-testid': 'byok-key',
+            placeholder: props.armed ? 'sk-ant-\\u2026  (paste a new key to replace it)' : 'sk-ant-\\u2026',
+            onKeyDown: function (ev) { if (ev.key === 'Enter') save(); } }),
+          e('label', { className: 'by-remember' },
+            e('input', { type: 'checkbox', 'data-testid': 'byok-remember', checked: props.remember,
+              onChange: function (ev) { props.onRemember(ev.target.checked); } }),
+            DATA.checkboxLabel),
+          e('div', { className: 'by-keyacts' },
+            e('button', { type: 'button', 'data-testid': 'byok-arm', onClick: save }, 'Save'),
+            props.armed
+              ? e('button', { type: 'button', className: 'by-forget', 'data-testid': 'byok-forget',
+                  onClick: props.onForget }, 'Forget my key')
+              : null,
+            // The only echo of the key anywhere on this page — four characters,
+            // in the dialog the visitor opened, never in the page chrome.
+            props.armed
+              ? e('span', { className: 'by-keytail', 'data-testid': 'byok-keytail' }, 'key \\u2026' + props.tail)
+              : null)),
+        // …and the rest of the contract, whole, one click away.
+        e(KeyMore, { label: DATA.moreLabel, lines: DATA.custody }))));
 }
 
 /** Depth-safe stringify for the leak check — cycles become '[circular]'. */
@@ -791,7 +997,12 @@ function Byok() {
   var d0 = React.useState(INITIAL); var desk = d0[0], setDesk = d0[1];
   var a0 = React.useState(!!storedKey()); var armed = a0[0], setArmed = a0[1];
   var t0 = React.useState(''); var tail = t0[0], setTail = t0[1];
-  var r0 = React.useState(false); var remember = r0[0], setRemember = r0[1];
+  // DEFAULT ON. This desk is shown from a stage: the common case is the same
+  // person, the same machine, several runs, and a key they should type once.
+  var r0 = React.useState(true); var remember = r0[0], setRemember = r0[1];
+  // The key dialog's open state. It is also what a keyless Send opens — asking
+  // for the missing thing beats a lecture about it.
+  var k0 = React.useState(false); var keyOpen = k0[0], setKeyOpen = k0[1];
   var i0 = React.useState(''); var input = i0[0], setInput = i0[1];
   // The in-flight turn — user bubble at once, then the honest status row, then
   // the reply writing itself from Anthropic's own arrival cadence.
@@ -800,15 +1011,20 @@ function Byok() {
   // The in-flight re-run: which panel it belongs to, the sources it is removing,
   // the latest real status, and — if it failed — the honest note.
   var x0 = React.useState(null); var rerunLive = x0[0], setRerunLive = x0[1];
-  var keyRef = React.useRef(null);
   // Which turn the reason panel is showing, tracked in a ref as well as in
   // state: a re-run fired in the same tick as the reason that opened the panel
   // would otherwise read a render-old panelKey and silently do nothing.
   var panelRef = React.useRef(null);
 
-  // A key remembered for this tab auto-arms on load (that is the whole point of
-  // the checkbox: surviving an accidental mid-demo reload).
+  // A kept key arms itself on load — that is the whole point of the checkbox:
+  // surviving a reload, a restart, and the gap between two rehearsals.
+  //
+  // The sessionStorage sweep is not defensive noise: an older build of this page
+  // wrote the key there, and this build never reads that copy. Clearing it on
+  // sight means a browser that once ran the old page is not left holding a key
+  // nothing can see and nothing would erase.
   React.useEffect(function () {
+    try { window.sessionStorage.removeItem(STORE_KEY); } catch (err) {}
     var k = storedKey();
     if (k) { apiKey = k; keyTail = k.slice(-4); setArmed(true); setTail(keyTail); setRemember(true); }
   }, []);
@@ -870,34 +1086,50 @@ function Byok() {
   var fail = function (err) { window.alert(failMessage(err)); };
 
   // ═══ arming / forgetting ════════════════════════════════════════════════
-  function arm() {
-    var el = keyRef.current;
+  // The argument is the dialog's own field, handed in by KeyModal — this
+  // component never holds a reference to the input, so there is no path by which
+  // a key could be read back out of the DOM after it is taken.
+  function arm(el) {
     var k = el && el.value ? el.value.trim() : '';
-    if (!k) { window.alert('Paste your Anthropic API key first.'); return; }
+    // Re-saving with an empty field while a key is already armed is the visitor
+    // changing the checkbox, not a mistake: honour the choice for the key held.
+    if (!k) {
+      if (!apiKey) { window.alert('Paste your Anthropic API key first.'); return; }
+      if (remember) rememberKey(apiKey); else eraseStoredKey();
+      setKeyOpen(false);
+      return;
+    }
     apiKey = k;
     keyTail = k.slice(-4);
     if (remember) rememberKey(k); else eraseStoredKey();
     if (el) el.value = '';           // the key string leaves the DOM immediately
     setArmed(true);
     setTail(keyTail);
+    setKeyOpen(false);
   }
   function forget() {
     apiKey = null;
     keyTail = '';
     eraseStoredKey();
-    if (keyRef.current) keyRef.current.value = '';
     setArmed(false);
     setTail('');
-    setRemember(false);
+    setKeyOpen(false);
   }
 
   // ═══ the four calls — local functions, no HTTP, no server ═══════════════
   function send(explicit) {
     var msg = (typeof explicit === 'string' ? explicit : input).trim();
+    if (!msg) return;
     // Guard on the KEY, not on React's armed flag: apiKey is the module-scope
     // variable that actually enables a call, and unlike a rendered flag it is
-    // never one render behind. (armed still drives the disabled composer.)
-    if (!msg || !apiKey) return;
+    // never one render behind.
+    //
+    // NO KEY IS NOT AN ERROR, IT IS A MISSING STEP. The composer and the starter
+    // pills stay live without one, and asking for it here — the dialog, opened
+    // at the moment it is needed — beats a disabled box that explains itself in
+    // a placeholder. The message is put in the composer rather than dropped, so
+    // a tapped pill is still there to send once the key is in.
+    if (!apiKey) { setInput(msg); setKeyOpen(true); return; }
     if (LIVE) return;                    // one in-flight turn per page
     setInput('');
     LIVE = { userMessage: msg, status: null, text: '' };
@@ -1001,8 +1233,13 @@ function Byok() {
   // It exposes the key's LAST FOUR characters at most — never the key.
   window.__byok = {
     appId: APP.id,
+    // arm() takes the dialog's own field (KeyModal hands it in), so a drive
+    // gives it an { value } — the exact shape the real control passes.
     arm: arm, forget: forget,
+    openKey: function () { setKeyOpen(true); },
+    isKeyOpen: function () { return keyOpen; },
     isArmed: function () { return armed; },
+    remembers: function () { return remember; },
     keyTail: function () { return tail; },
     send: function (m) { setInput(m); return send(m); },
     reason: openReason, rerun: doRerun, fork: doFork,
@@ -1040,8 +1277,16 @@ function Byok() {
       thread.push(e('div', { key: 'u' + t.index, className: 'msg-user' }, t.userMessage));
       thread.push(e('div', { key: 'a' + t.index, className: 'msg-advisor', 'data-testid': 'reply-' + key,
         dangerouslySetInnerHTML: md(t.reply) }));
-      thread.push(e('button', { key: 'rb' + t.index, className: 'cd-reasonbtn', 'data-testid': 'reason-' + key,
-        onClick: function () { openReason(desk.active, t.index); } }, 'visible reason'));
+      // The reply's own controls: its visible reason, the ⓘ that says what this
+      // reply spent (the one page where that is the visitor's own money), and
+      // the debug dialog opened AT THIS TURN.
+      thread.push(e(ReplyActions, { key: 'rb' + t.index, turnKey: key, turnIndex: t.index,
+        onReason: function () { openReason(desk.active, t.index); },
+        usage: { title: DATA.usageTitle, lines: DATA.usage },
+        turns: (sess && sess.turns) || [],
+        loadArtifacts: sess ? function (k) { return getArtifacts(sess.id, k); } : null,
+        artifactsKey: (sess && sess.id) || 'none',
+        devViews: DEV_VIEWS, appName: APP.assistantLabel }));
       var wf = desk.reruns[key];
       if (wf) {
         var verdict = wf.result && wf.result.verdict;
@@ -1076,7 +1321,12 @@ function Byok() {
   // Session tabs — the original conversation and every fork of it. There are no
   // cross-desk tabs: the other desk is its own page, one click back through the
   // gallery.
-  var tabs = desk.order.map(function (id) {
+  //
+  // A one-tab strip is not a choice, it is a label — and it was printing the
+  // desk's own name a second time, right beside the brand that already says it.
+  // So the strip appears with the second session, which is the first moment
+  // there is anything to switch between.
+  var tabs = desk.order.length < 2 ? [] : desk.order.map(function (id) {
     return e('button', { key: id, className: 'cd-tab' + (id === desk.active ? ' on' : ''), 'data-testid': 'tab-' + id,
       onClick: function () { panelRef.current = null; patch(function (d) { d.active = id; d.panelKey = null; return d; }); } },
       desk.sessions[id] ? desk.sessions[id].label : id);
@@ -1105,36 +1355,25 @@ function Byok() {
     sourceLabels: lastLabels,
   });
 
-  // ═══ custody panel / armed strip ════════════════════════════════════════
-  var custody = armed
-    ? e('div', { className: 'by-armed', 'data-testid': 'byok-armed' },
-        e('span', null, 'key …' + tail + ' — in this tab'),
-        // The armed strip answers the same question the checkbox asked, now that
-        // the answer matters: this desk is one link away from the gallery.
-        e('span', { className: 'by-armed-note' },
-          remember
-            ? 'remembered until you close this tab — the gallery and the other desk keep it'
-            : 'kept in this page only — going back to the gallery clears it'),
-        e('button', { 'data-testid': 'byok-forget', onClick: forget }, 'Forget my key'))
-    : e('div', { className: 'by-custody', 'data-testid': 'byok-custody' },
-        e('h2', null, 'Bring your own key'),
-        e('div', { className: 'by-copy' }, DATA.custody.map(function (line, i) { return richLine(line, 'c' + i); })),
-        // NO <form> element: no submit default, so nothing here can ever turn
-        // into a GET navigation that puts a key in a URL.
-        e('div', { className: 'by-form' },
-          e('input', { type: 'password', autoComplete: 'off', spellCheck: 'false', ref: keyRef,
-            'data-testid': 'byok-key', placeholder: 'sk-ant-…  (stays in this tab)',
-            onKeyDown: function (ev) { if (ev.key === 'Enter') arm(); } }),
-          e('button', { 'data-testid': 'byok-arm', onClick: arm }, 'Start chatting'),
-          e('label', { className: 'by-remember' },
-            e('input', { type: 'checkbox', 'data-testid': 'byok-remember', checked: remember,
-              onChange: function (ev) { setRemember(ev.target.checked); } }),
-            DATA.checkboxLabel)));
+  // ═══ the key control, and the dialog behind it ══════════════════════════
+  // ONE control, two states, always in the same place — so replacing a key
+  // between two rehearsal runs is a click, not a scroll back through a page.
+  var keyControl = e('button', { type: 'button',
+    className: 'by-keybtn' + (armed ? ' on' : ''), 'data-testid': 'key-open',
+    'aria-haspopup': 'dialog', 'aria-controls': 'by-key',
+    'aria-expanded': keyOpen ? 'true' : 'false',
+    title: armed
+      ? 'Your Anthropic key — replace it, or erase it from this browser'
+      : 'Add your Anthropic key. It goes only to api.anthropic.com, never to this site.',
+    onClick: function () { setKeyOpen(true); } },
+    armed ? DATA.keyBtnSet : DATA.keyBtnIdle);
 
-  var badgeText = MODEL + ' — direct from your browser · ' + (armed ? 'key …' + tail + ' in this tab' : 'no key yet');
+  // The badge names what answered, and stops there. The provider sentence and
+  // the key's last four used to ride along here; both are custody copy, and
+  // custody copy belongs in the key dialog, where it is read.
   var badge = e('span', { className: 'cd-model' + (armed ? ' live' : ''), 'data-testid': 'model-badge',
     title: 'Every request from this page goes straight to api.anthropic.com with this model id' },
-    e('span', { className: 'cd-dot ' + (armed ? 'live' : 'scripted') }), badgeText);
+    e('span', { className: 'cd-dot ' + (armed ? 'live' : 'notconsulted') }), MODEL);
 
   var panelOpen = !!(desk.panelKey && desk.reason[desk.panelKey]);
   var panelInner = panelOpen
@@ -1173,11 +1412,12 @@ function Byok() {
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, armed
         ? 'Ask a question to begin. Every reply carries a “visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.'
-        : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.',
-        // Only once a key can actually send them: an offer that would fail on
-        // tap is worse than no offer. (The pack's own questions, one tap each —
-        // the same component the server desks render.)
-        armed ? e(Starters, { starters: APP.starters, variant: 'big', onPick: send }) : null);
+        : 'Ask a question to begin — the Key button, top right, is where your Anthropic key goes. Nothing is sent anywhere until it does.',
+        // Offered with or without a key. A tap without one is not a failure: it
+        // opens the key dialog and keeps the question in the composer, so the
+        // pill is still one press from sending. (The pack's own questions, one
+        // tap each — the same component the server desks render.)
+        e(Starters, { starters: APP.starters, variant: 'big', onPick: send }));
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : ''),
       style: { '--accent': APP.accent, '--accent-dk': APP.accentDark } },
@@ -1192,22 +1432,16 @@ function Byok() {
         e('a', { className: 'cd-back', href: './index.html', onClick: onLeave,
           'data-testid': 'back-to-gallery' }, '← gallery'),
         e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', APP.title),
-        e('span', { className: 'cd-tagline' }, APP.tagline),
-        badge,
-        // One small control; everything it opens lives inside the dialog.
-        e(DebugControl, { turns: (sess && sess.turns) || [],
-          loadArtifacts: sess ? function (k) { return getArtifacts(sess.id, k); } : null,
-          artifactsKey: (sess && sess.id) || 'none',
-          devViews: DEV_VIEWS, appName: APP.assistantLabel }),
-        e('div', { className: 'cd-tabs' }, tabs)),
+        // The tagline is off this bar. It reads the same before the first
+        // message and after the hundredth, which is the test for program notes
+        // — and the gallery's desk listing already carries it, verbatim.
+        e('div', { className: 'cd-tabs' }, tabs),
+        e('div', { className: 'by-keyzone' }, badge, keyControl)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
-          custody,
           legend,
           prov,
-          conversation,
-          e('div', { className: 'by-foot', 'data-testid': 'byok-footer' },
-            DATA.footer.map(function (line, i) { return richLine(line, 'f' + i); })))),
+          conversation)),
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
           // After the first turn the starters leave the transcript and live
@@ -1215,14 +1449,19 @@ function Byok() {
           // exactly the composer's own enabled/disabled state.
           hasContent
             ? e(Starters, { starters: APP.starters, variant: 'compact',
-                disabled: !armed || !!liveTurn, onPick: send })
+                disabled: !!liveTurn, onPick: send })
             : null,
           e('div', { className: 'cd-inputrow' },
-            e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed || !!liveTurn,
-              placeholder: armed ? APP.starters[0] : 'Paste your Anthropic key above to start',
+            e('input', { 'data-testid': 'chat-input', value: input, disabled: !!liveTurn,
+              placeholder: APP.starters[0],
               onChange: function (ev) { setInput(ev.target.value); },
               onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
-            e('button', { 'data-testid': 'chat-send', disabled: !armed || !!liveTurn, onClick: send }, 'Send'))))),
+            e('button', { 'data-testid': 'chat-send', disabled: !!liveTurn, onClick: send }, 'Send'))))),
+    keyOpen
+      ? e(KeyModal, { armed: armed, tail: tail, remember: remember,
+          onRemember: setRemember, onSave: arm, onForget: forget,
+          onClose: function () { setKeyOpen(false); } })
+      : null,
     e('div', { className: 'cd-panel' + (panelOpen ? ' open' : ''), 'data-testid': 'reason-panel' },
       e('div', { className: 'cd-panel-head' },
         e('span', { className: 'cd-panel-title' }, 'Visible reason'),

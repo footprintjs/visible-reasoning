@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
+import { Agent } from 'agentfootprint';
 import { buildDevViewsBundle, OUT_CSS, OUT_JS } from './dev-views/build.mjs';
 import { APPS, appById } from './apps/index.js';
 import { buildMockTools, decorateTools } from './lib/mcp.js';
@@ -110,6 +111,18 @@ for (const forbidden of ['api.anthropic.com', 'x-api-key', 'sk-ant-', 'ANTHROPIC
 ok(!/process\.env\.NODE_ENV/.test(js), 'process.env was compiled out — nothing reads an environment in a tab');
 
 // ═══ 2. the recording, and the blueprint stashed beside it ══════════════════
+// THE ATTACH TAP. One thing about the observability recorders cannot be read off
+// a finished snapshot: WHICH runs were given them. `Agent.prototype.attach` is
+// the seam chat-core calls, and this gate and chat-core share the one
+// 'agentfootprint' module instance — so watching it here watches the real thing.
+// It delegates to the real method, so nothing about the runs below changes.
+const attached = [];
+const realAttach = Agent.prototype.attach;
+Agent.prototype.attach = function tappedAttach(recorder) {
+  attached.push(recorder);
+  return realAttach.call(this, recorder);
+};
+
 const core = createChatCore({ live: false });
 const { tools } = await buildMockTools();
 const decorated = decorateTools(tools, core.getPending);
@@ -120,6 +133,7 @@ const session = core.newSession({
   pack, label: pack.title, chat: core.makeChat(pack), decoratedTools: subset,
 });
 const turn = await core.chatTurn(session, pack.story[0]);
+const recordedAttaches = attached.splice(0);
 const art = core.artifactsFor(session, 0);
 
 ok(art.snapshot === turn.artifacts.snapshot && art.events === turn.artifacts.events,
@@ -138,6 +152,8 @@ ok(core.artifactsFor(session, 7) === null, 'a turn that does not exist has no ar
 // and none of them may overwrite it.
 const before = art.blueprint;
 await core.rerunTurnK(session, 0, [pack.driver]);
+const rerunAttaches = attached.splice(0);
+Agent.prototype.attach = realAttach;
 ok(core.artifactsFor(session, 0).blueprint === before,
   'a what-if re-run does not overwrite the recorded turn\'s blueprint');
 
@@ -145,6 +161,96 @@ ok(core.artifactsFor(session, 0).blueprint === before,
 const dbg = core.debugFor(session, 0);
 ok(dbg && dbg.story && !('trace' in dbg),
   'the reply\'s debug payload is the story alone — the hand-rendered trace list is gone with its view');
+
+// ═══ 2b. the observability the two views read, recorded at RECORD time ══════
+// The inspector's Insights list and its Gantt bars are not derived from the
+// recording — they are read straight off `snapshot.recorders`, which is empty
+// unless somebody attaches a recorder while the turn RUNS. That is why the panel
+// used to say "No insights available. Attach recorders to see data." and every
+// bar read 0 ms. chat-core now attaches two of the libraries' own recorders on a
+// recorded turn, and these checks hold that to the standard the rest of this
+// gate uses: the real recording, and the VIEWS' own code reading it.
+const recorderEntries = art.snapshot.recorders ?? [];
+const named = (name) => recorderEntries.filter((r) => r.name === name);
+ok(named('Metrics').length === 1,
+  'the recording carries exactly one Metrics entry — footprintjs\'s own stage timings',
+  `${named('Metrics').length} of ${recorderEntries.length} entries`);
+ok(named('BoundaryEvents').length === 1,
+  'and exactly one BoundaryEvents entry — agentfootprint\'s own run/subflow boundaries',
+  `${named('BoundaryEvents').length} of ${recorderEntries.length} entries`);
+// The dedupe, asserted as the property it protects rather than as the bug it
+// works around: explainable-ui keys an Insights tab by `id`, so a repeated id is
+// a repeated tab AND a repeated React key. (footprintjs 9.11.0 collects the
+// Metrics recorder once per channel it lands on; see chat-core's note.)
+ok(new Set(recorderEntries.map((r) => r.id)).size === recorderEntries.length,
+  'every recorder entry has its own id — no duplicate tab, no repeated React key',
+  recorderEntries.map((r) => r.id).join(', '));
+
+// THE DURATIONS, through explainable-ui's OWN extraction. toVisualizationSnapshots
+// is the function the inspector builds its rail from; it calls extractStageTimings
+// over `snapshot.recorders` internally. Driving the installed package means this
+// check cannot pass by agreeing with a re-implementation of it.
+const eui = await import('footprint-explainable-ui');
+const railWithMetrics = eui.toVisualizationSnapshots(art.snapshot);
+const timed = railWithMetrics.filter((s) => s.durationMs > 0);
+ok(timed.length > 0,
+  'explainable-ui\'s own reader finds real stage durations in the recording',
+  `${timed.length} of ${railWithMetrics.length} steps timed · ${
+    [...new Set(timed.map((s) => `${s.stageName} ${s.durationMs}ms`))].slice(0, 3).join(', ')}`);
+// The before, measured rather than remembered: strip the recorders and the exact
+// same reader finds nothing. That IS the defect the owner reported.
+const withoutRecorders = { ...art.snapshot };
+delete withoutRecorders.recorders;
+ok(eui.toVisualizationSnapshots(withoutRecorders).every((s) => s.durationMs === 0),
+  'and with those entries removed it finds none — which is what every bar read before');
+// Nothing is padded or scaled: every duration the view shows is the Metrics
+// recorder's own number for that stage, and a stage that really took under a
+// millisecond stays at zero and is honestly dropped.
+const steps = Object.values(named('Metrics')[0].data.steps ?? {});
+const recorded = new Map();
+for (const s of steps) {
+  if (!s?.stageName || !(s.duration > 0)) continue;
+  recorded.set(s.stageName, Math.round((recorded.get(s.stageName) ?? 0) + s.duration));
+}
+ok(timed.every((s) => recorded.get(s.stageName) === s.durationMs),
+  'every bar is the recorder\'s own measurement for that stage — nothing scaled, nothing invented');
+ok(steps.length > timed.length,
+  'a stage too fast to measure stays at zero and is dropped, not padded',
+  `${steps.length} stages measured · ${timed.length} above 0 ms under the mock provider`);
+
+// THE BOUNDARY ENTRY, checked for the fields a step-strip rebuild consumes: the
+// commit index each boundary happened at, and a matched entry/exit per range.
+const boundary = named('BoundaryEvents')[0].data;
+const entryTypes = new Set(['run.entry', 'subflow.entry']);
+const exitTypes = new Set(['run.exit', 'subflow.exit']);
+const opens = boundary.filter((e) => entryTypes.has(e.type));
+const closes = boundary.filter((e) => exitTypes.has(e.type));
+ok(boundary.length > 0 && boundary.every((e) => typeof e.commitIdxBefore === 'number'),
+  'every boundary event is stamped with the commit index it happened at — the axis the step strip is built on',
+  `${boundary.length} events`);
+ok(opens.length > 1 && opens.length === closes.length,
+  'and every boundary that opened also closed — one range per run and per subflow',
+  `${opens.length} opened · ${closes.length} closed`);
+ok(opens.every((e) => typeof e.runtimeStageId === 'string' && e.runtimeStageId
+  && Array.isArray(e.subflowPath) && typeof e.depth === 'number'),
+  'each one names the runtime stage, its subflow path and its depth — enough to rebuild the range index');
+// It has to survive the wire: the modal reads this over HTTP (or through BYOK's
+// in-tab copy), never off the live object.
+const overWire = JSON.parse(JSON.stringify(core.artifactsFor(session, 0)));
+const wireNames = (overWire.snapshot.recorders ?? []).map((r) => r.name).sort();
+ok(JSON.stringify(wireNames) === JSON.stringify(['BoundaryEvents', 'Metrics']),
+  'both entries survive the round trip the modal actually receives them through', wireNames.join(', '));
+
+// RECORD MODE ONLY, read off the attach seam itself. A what-if re-run builds its
+// own agents; those are counterfactuals, nobody reads their snapshot, and a lean
+// probe is what keeps the comparison honest.
+ok(recordedAttaches.length === 2
+  && recordedAttaches.map((r) => r.toSnapshot().name).sort().join(',') === 'BoundaryEvents,Metrics',
+  'a recorded turn is given exactly those two recorders, and nothing else',
+  recordedAttaches.map((r) => r.id).join(', ') || 'none');
+ok(rerunAttaches.length === 0,
+  'a what-if re-run is given none — the counterfactual stays lean',
+  rerunAttaches.map((r) => r.id).join(', ') || 'none attached');
 
 // ═══ 3. the BYOK accessor — same bytes, no wire ═════════════════════════════
 const perApp = new Map(APPS.map((a) => [a.id, a.tools.map((t) => byName.get(t.name))]));
@@ -291,6 +397,83 @@ try { mixed = modal.dbgLensModel(views, recording([...art.events, CORRUPT])); } 
 ok(mixed && mixed.skipped === 1 && mixed.total === art.events.length + 1,
   'and it degrades to exactly that one event — the rest of the turn still replays',
   mixed instanceof Error ? `threw: ${mixed.message}` : `${mixed.skipped} of ${mixed.total} skipped`);
+
+// ═══ 6b. THE STEP STRIP'S AXIS, PUT BACK ════════════════════════════════════
+// The flowchart's prev/next transport, its step count and its moments rail are
+// all one array, and that array is derived from the recorder's commit-range
+// index — which run and which subflow was open across which commits. A replay
+// fires no footprintjs FlowRecorder hook, so the index used to stay EMPTY: zero
+// groups, zero positions, "1 step", buttons disabled. The ranges are in the
+// recording though (chat-core attaches agentfootprint's boundary recorder while
+// the turn runs), so the modal replays them into the recorder's own public
+// index. These checks hold that to "the index IS the recording", per range.
+const boundaryEvents = named('BoundaryEvents')[0].data;
+const openEvents = boundaryEvents.filter((e) => entryTypes.has(e.type));
+const closeEvents = boundaryEvents.filter((e) => exitTypes.has(e.type));
+ok(clean && clean.boundaryEvents === boundaryEvents.length && clean.boundaryRanges === openEvents.length,
+  'every recorded boundary became a range on the replayed recorder — the index the strip reads is populated',
+  clean instanceof Error ? clean.message : `${clean.boundaryRanges} ranges from ${clean.boundaryEvents} events`);
+const rebuilt = clean.recorder.boundary.boundaryIndex.overlapping(0, Number.MAX_SAFE_INTEGER);
+ok(rebuilt.length === openEvents.length && rebuilt.every((r) => typeof r.endIdx === 'number'),
+  'and every one of them is CLOSED — an open-ended range would stretch the strip past the run',
+  `${rebuilt.filter((r) => typeof r.endIdx === 'number').length} of ${rebuilt.length} closed`);
+// Per range, against the recorded pair it came from: same start, same end, same
+// runtime stage. Nothing is shifted, merged or invented.
+const closeAt = new Map(closeEvents.map((e) => [e.runtimeStageId, e.commitIdxBefore]));
+const byRid = new Map(rebuilt.map((r) => [r.label.runtimeStageId, r]));
+const mismatched = openEvents.filter((e) => {
+  const r = byRid.get(e.runtimeStageId);
+  return !r || r.startIdx !== e.commitIdxBefore || r.endIdx !== closeAt.get(e.runtimeStageId);
+});
+ok(mismatched.length === 0,
+  'each range spans exactly the commits its recorded entry/exit pair spanned — the recording, put back',
+  mismatched.length ? `off: ${mismatched.slice(0, 3).map((e) => e.runtimeStageId).join(', ')}` : `${rebuilt.length} ranges`);
+// The index is the SAFE projection: lens's own note says a chip rendered from it
+// cannot leak a tool argument or an LLM message, and that is only true if the
+// payload never rides along into the label.
+ok(rebuilt.every((r) => !('payload' in r.label)),
+  'no range label carries an event payload — the index stays the stripped projection lens documents');
+// The library's own query over it answers, at a commit in the middle of the run.
+const mid = Math.floor(art.snapshot.commitLog.length / 2);
+ok(clean.recorder.boundary.boundaryIndex.enclosing(mid).length > 0,
+  'and lens\'s own enclosing() query finds the boundaries open at a commit — the query the strip is built on',
+  `${clean.recorder.boundary.boundaryIndex.enclosing(mid).length} enclosing at commit ${mid}`);
+
+// THE HONEST LIMIT, run rather than promised. A turn recorded BEFORE the
+// boundary capture existed carries no such entry, and there is no second path:
+// deriving ranges from the commit log was measured at 20 stops where the run
+// really had 17 (phantom milestones, mis-anchored slots), because the moment a
+// fork's branches open is not a row in that log. So the pane degrades to a quiet
+// transport and says why — it never guesses.
+const oldShaped = { ...art.snapshot, recorders: (art.snapshot.recorders ?? []).filter((r) => r.name !== 'BoundaryEvents') };
+let older = null;
+try {
+  older = modal.dbgLensModel(views, { turnIndex: 0, snapshot: oldShaped, events: art.events, blueprint: art.blueprint });
+} catch (err) { older = err; }
+ok(older && older.recorder && older.boundaryEvents === 0 && older.boundaryRanges === 0,
+  'a recording made before the capture rebuilds nothing, and still builds a working model',
+  older instanceof Error ? `threw: ${older.message}` : `${older.skipped} events skipped`);
+ok(older && older.recorder.boundary.boundaryIndex.overlapping(0, Number.MAX_SAFE_INTEGER).length === 0,
+  '…with an empty index — nothing was derived from the commit log to fill it in');
+// A recording that carries the entry but whose events are unusable must not
+// half-fill the index either: a boundary with no commit index is not a range.
+const junk = { ...art.snapshot,
+  recorders: [{ id: 'b', name: 'BoundaryEvents', data: [{ type: 'subflow.entry', runtimeStageId: 'x#1' }] }] };
+const junkModel = modal.dbgLensModel(views, { turnIndex: 0, snapshot: junk, events: [], blueprint: art.blueprint });
+ok(junkModel.boundaryRanges === 0,
+  'a boundary event with no commit index opens no range — the axis is a number or it is nothing');
+
+// …and the pane says which of the two this turn is, in the page a visitor gets.
+ok(desk.includes('function dbgRebuildBoundaryIndex(rec, snapshot) {')
+  && desk.includes('boundary = dbgRebuildBoundaryIndex(rec, artifacts.snapshot);'),
+  'the desk page carries the rebuild, on the model the flowchart pane mounts');
+ok(desk.includes('The step scrubber and the moments rail run on the run\\u2019s own boundaries'),
+  'a turn WITH boundaries gets a note that says the scrubber is running, and on what');
+ok(desk.includes('this turn was recorded before that capture ')
+  && desk.includes('Nothing on this page reconstructs them from the commit log afterwards'),
+  'a turn WITHOUT them keeps the honest degraded note — quiet transport, and the reason');
+ok(!desk.includes('they need commit ranges that only a live attach records'),
+  'and the old blanket claim (no page can ever have them) is gone — it is no longer true');
 
 // The second guard, for the case the first cannot save: a model that cannot be
 // built at all becomes a VALUE the pane can render, never a throw during render.
