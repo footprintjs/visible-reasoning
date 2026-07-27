@@ -1401,39 +1401,22 @@
   /* the player owns its panel: it lays itself out to the height it is given */
   .cd-dbg-body.player { overflow: hidden; padding: 0; }
   .cd-dbg-player { height: 100%; min-height: 380px; }
+
+  /* ── the two library views (agentfootprint-lens · footprint-explainable-ui) ──
+     They own their panel exactly as the player does, and they must be given a
+     REAL height: the flowchart is a canvas, and a canvas in an auto-height box
+     measures zero and draws nothing. Both ship their own (dark) styling; the
+     one stylesheet either of them needs is @xyflow/react's, loaded beside the
+     bundle and scoped entirely under .react-flow. */
+  .cd-dbg-body.devview { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
+  .cd-dbg-dev { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .cd-dbg-devnote { flex: 0 0 auto; margin: 0; padding: 7px 16px 8px; font-size: 11px; line-height: 1.5;
+    color: var(--muted); background: var(--soft); border-bottom: 1px solid var(--line); }
+  .cd-dbg-devwait { padding: 26px 16px; font-size: 12.5px; line-height: 1.6; color: var(--muted); font-style: italic; }
   .cd-dbg-foot { flex: 0 0 auto; padding: 8px 16px 10px; border-top: 1px solid var(--line);
     font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 
-  /* the trace view */
-  .cd-tr-head { display: flex; flex-wrap: wrap; gap: 5px 8px; margin: 0 0 12px; }
-  .cd-tr-fact { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--soft);
-    border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
-  .cd-tr-sec { margin: 0 0 18px; }
-  .cd-tr-sec h3 { margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--ink); }
-  .cd-tr-sub { margin: 0 0 9px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
-  .cd-tr-step { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
-  .cd-tr-n { flex: 0 0 auto; width: 22px; font-size: 11px; font-weight: 700; color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding-top: 2px; }
-  .cd-tr-main { flex: 1 1 auto; min-width: 0; }
-  .cd-tr-what { font-size: 12.5px; font-weight: 700; color: var(--ink); margin: 0 0 3px; }
-  .cd-tr-meta { font-size: 11px; color: var(--muted); margin: 0 0 4px; overflow-wrap: anywhere; }
-  .cd-tr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
-    color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px;
-    padding: 5px 8px; margin: 0 0 5px; overflow-wrap: anywhere; white-space: pre-wrap; }
-  .cd-tr-said { font-size: 12.5px; line-height: 1.55; color: var(--ink); margin: 0 0 4px;
-    overflow-wrap: anywhere; }
-  .cd-tr-src { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .cd-tr-tool { display: flex; gap: 9px; padding: 9px 0; border-top: 1px solid var(--line); }
-  .cd-tr-tool .cd-dot { margin-top: 5px; }
-  .cd-tr-name { font-size: 12.5px; font-weight: 700; color: var(--ink); }
-  .cd-tr-state { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-    border-radius: 999px; padding: 2px 8px; margin-left: 7px; }
-  .cd-tr-state.used { background: #E3F1DE; color: #2C6B22; }
-  .cd-tr-state.offered { background: #EEE8DD; color: #6E5C49; }
-  .cd-tr-state.absent { background: #F6E5DA; color: #8A4A22; }
-  .cd-tr-why { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 3px 0 0; }
-  .cd-tr-notes { margin: 0; padding: 0 0 0 17px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
-  .cd-tr-notes li { margin: 0 0 5px; }
+  /* the only state the dialog draws itself: nothing to show, said plainly */
   .cd-tr-empty { font-size: 12.5px; line-height: 1.6; color: var(--muted); font-style: italic; }
 
   @media (max-width: 720px) {
@@ -1446,6 +1429,17 @@
     .cd-dbg-head .cd-modal-close { order: 2; }
     .cd-dbg-turn { order: 3; margin-left: 0; flex: 1 1 100%; }
     .cd-dbg-turn select { max-width: 100%; flex: 1 1 auto; }
+
+    /* THE FLOWCHART NEEDS ROOM, NOT A SMALLER SHARE OF NONE.
+       agentfootprint-lens lays itself out in two columns; on a phone the chart
+       column is squeezed to zero, and a canvas with no width draws nothing —
+       a visitor gets an empty box instead of the chart. So give the view the
+       width it was designed for and let the panel pan sideways: the chart is
+       there, in full, one drag away. The inspector lays out fine narrow and is
+       left alone. */
+    .cd-dbg-dev[data-testid="debug-view-flowchart"] { overflow-x: auto; overflow-y: hidden;
+      -webkit-overflow-scrolling: touch; }
+    .cd-dbg-dev[data-testid="debug-view-flowchart"] > * { min-width: 900px; min-height: 100%; }
   }
 
 
@@ -18907,140 +18901,278 @@ function ProvLegend(props) {
 
 // ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
 var DBG_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-var DBG_FOOT = 'Everything above is read from this turn\u2019s own recording. '
-  + 'Opening it called no model, ran no tool, made no request and stored nothing.';
+var DBG_FOOT = 'Everything here is read from this turn\u2019s own recording. Opening it called no model, '
+  + 'ran no tool and stored nothing \u2014 the only requests it can make go to this site, for the recording '
+  + 'it is showing you and the two view files that draw it.';
 
-function dbgMs(v) { return v == null ? null : v + ' ms'; }
+// ═══ THE TWO LIBRARY VIEWS ══════════════════════════════════════════════════
+// One vendored browser file (built by dev-views/build.mjs) carrying
+// agentfootprint-lens and footprint-explainable-ui, on the React instance this
+// page already registered. It is fetched the FIRST time a visitor opens a view
+// that needs it, once per page, and never on load.
+var DBG_VIEWS = null;
+var DBG_VIEWS_LOADING = null;
 
-/** "place: Mission Peak" — a tool call's arguments, as typed by the model. */
-function dbgArgs(args) {
-  var keys = Object.keys(args || {});
-  if (!keys.length) return '(no arguments)';
-  return keys.map(function (k) {
-    var v = args[k];
-    return k + ': ' + (typeof v === 'string' ? v : JSON.stringify(v));
-  }).join('  \u00b7  ');
+function dbgLoadViews(src) {
+  if (DBG_VIEWS) return Promise.resolve(DBG_VIEWS);
+  if (DBG_VIEWS_LOADING) return DBG_VIEWS_LOADING;
+  DBG_VIEWS_LOADING = new Promise(function (resolve, reject) {
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = src.css;
+    document.head.appendChild(css);
+    var js = document.createElement('script');
+    js.src = src.js;
+    js.async = true;
+    js.onload = function () {
+      if (!window.VRDevViews) { reject(new Error('the view file loaded but registered nothing')); return; }
+      DBG_VIEWS = window.VRDevViews;
+      resolve(DBG_VIEWS);
+    };
+    js.onerror = function () { reject(new Error('the view file could not be loaded from ' + src.js)); };
+    document.head.appendChild(js);
+  });
+  return DBG_VIEWS_LOADING;
 }
 
-/** One model call: what it was offered, what it asked for, what it cost. */
-function DbgLlmStep(props) {
-  var s = props.step;
-  var facts = [];
-  if (s.messagesCount != null) facts.push(s.messagesCount + ' messages in view');
-  if (s.systemPromptChars != null) facts.push(s.systemPromptChars + '-character system prompt');
-  if (s.tokensIn != null) facts.push(s.tokensIn + ' tokens in');
-  if (s.tokensOut != null) facts.push(s.tokensOut + ' tokens out');
-  if (s.ms != null) facts.push(dbgMs(s.ms));
-  if (s.atMs != null) facts.push('at ' + s.atMs + ' ms');
-  if (s.stopReason) facts.push('stop: ' + s.stopReason);
-  if (s.stage) facts.push(s.stage);
-  return React.createElement('div', { className: 'cd-tr-step', 'data-testid': 'dbg-step-' + s.n },
-    React.createElement('div', { className: 'cd-tr-n' }, s.n),
-    React.createElement('div', { className: 'cd-tr-main' },
-      React.createElement('p', { className: 'cd-tr-what' },
-        'model call' + (s.iteration ? ' ' + s.iteration : '') + ' \u2014 '
-        + (s.answered ? 'wrote the reply' : 'asked for ' + (s.asked.join(', ') || 'nothing'))),
-      React.createElement('p', { className: 'cd-tr-meta' },
-        'offered ' + s.offered.length + ' tool' + (s.offered.length === 1 ? '' : 's') + ': '
-        + (s.offered.join(', ') || 'none')),
-      facts.length ? React.createElement('p', { className: 'cd-tr-meta' }, facts.join(' \u00b7 ')) : null,
-      s.answered && s.content
-        ? React.createElement('p', { className: 'cd-tr-said' }, s.content)
-        : null));
-}
-
-/** One tool call: the arguments, the sentence it returned, its own source label. */
-function DbgToolStep(props) {
-  var s = props.step;
-  var facts = [];
-  if (s.ms != null) facts.push(dbgMs(s.ms));
-  if (s.atMs != null) facts.push('at ' + s.atMs + ' ms');
-  if (s.stage) facts.push(s.stage);
-  return React.createElement('div', { className: 'cd-tr-step', 'data-testid': 'dbg-step-' + s.n },
-    React.createElement('div', { className: 'cd-tr-n' }, s.n),
-    React.createElement('div', { className: 'cd-tr-main' },
-      React.createElement('p', { className: 'cd-tr-what' }, 'tool call \u2014 ' + s.name),
-      React.createElement('p', { className: 'cd-tr-mono' }, dbgArgs(s.args)),
-      s.result
-        ? React.createElement('p', { className: 'cd-tr-said', 'data-testid': 'dbg-result-' + s.name },
-            s.sentence || s.result)
-        : React.createElement('p', { className: 'cd-tr-meta' }, 'the recording carries no result for this call'),
-      s.sourceLabel
-        ? React.createElement('p', { className: 'cd-tr-src', 'data-testid': 'dbg-label-' + s.name },
-            '[source: ' + s.sourceLabel + ']')
-        : React.createElement('p', { className: 'cd-tr-meta' },
-            'this sentence carries no [source: \u2026] label \u2014 nothing here says where it came from'),
-      s.error ? React.createElement('p', { className: 'cd-tr-meta' }, 'error: ' + s.error) : null,
-      facts.length ? React.createElement('p', { className: 'cd-tr-meta' }, facts.join(' \u00b7 ')) : null));
+// The turn's recording, once per turn per page. A recording never changes, so
+// a second look at the same turn costs nothing; a failed read is not cached.
+var DBG_ART = {};
+function dbgArtifacts(key, k, load) {
+  var id = key + ':' + k;
+  if (!DBG_ART[id]) {
+    DBG_ART[id] = Promise.resolve().then(function () { return load(k); }).catch(function (err) {
+      delete DBG_ART[id];
+      throw err;
+    });
+  }
+  return DBG_ART[id];
 }
 
 /**
- * The trace view: the run's structure, and the per-tool verdict that answers
- * "why was this source used, and why wasn't that one?" — with the recording's
- * silence stated as silence, never filled in.
+ * A LensRecorder fed by REPLAY. The recorder is agentfootprint-lens's own,
+ * unmodified; it expects to observe a live runner, so it is given one whose
+ * only job is subscription plumbing — every byte it then reports comes from
+ * `artifacts.events` (the recorded log, in recorded order) and
+ * `artifacts.snapshot` (the frozen run). The blueprint, when the recording
+ * carries one, is the agent's own build-time structure, so the chart is the
+ * composition that actually ran rather than one inferred from what it did.
  */
-function DebugTraceView(props) {
-  var t = props.trace;
-  var facts = [];
-  facts.push(t.llmCalls + ' model call' + (t.llmCalls === 1 ? '' : 's'));
-  facts.push(t.toolCalls + ' tool call' + (t.toolCalls === 1 ? '' : 's'));
-  if (t.model) facts.push('model: ' + t.model);
-  if (t.provider) facts.push('provider: ' + t.provider);
-  facts.push(t.timingRecorded && t.wallMs != null ? 'run took ' + t.wallMs + ' ms' : 'no timing recorded');
-  if (t.runId) facts.push(t.runId);
-
-  return React.createElement('div', { 'data-testid': 'debug-trace' },
-    React.createElement('div', { className: 'cd-tr-head' },
-      facts.map(function (f, i) {
-        return React.createElement('span', { key: i, className: 'cd-tr-fact' }, f);
-      })),
-
-    React.createElement('section', { className: 'cd-tr-sec' },
-      React.createElement('h3', null, 'Step by step'),
-      React.createElement('p', { className: 'cd-tr-sub' },
-        'Every model call and every tool call this turn made, in the order the recording has them.'),
-      t.steps.length
-        ? t.steps.map(function (s) {
-            return s.kind === 'llm'
-              ? React.createElement(DbgLlmStep, { key: s.n, step: s })
-              : React.createElement(DbgToolStep, { key: s.n, step: s });
-          })
-        : React.createElement('p', { className: 'cd-tr-empty' }, 'the recording has no steps for this turn')),
-
-    React.createElement('section', { className: 'cd-tr-sec' },
-      React.createElement('h3', null, 'Every source, and whether it contributed'),
-      React.createElement('p', { className: 'cd-tr-sub' },
-        'One row per source this desk carries \u2014 asked for, offered and passed over, or not offered at all.'),
-      t.tools.map(function (tool) {
-        return React.createElement('div', { key: tool.name, className: 'cd-tr-tool',
-            'data-testid': 'dbg-tool-' + tool.name },
-          provDot(tool.provenance || 'not consulted'),
-          React.createElement('div', { className: 'cd-tr-main' },
-            React.createElement('p', { className: 'cd-tr-what' },
-              React.createElement('span', { className: 'cd-tr-name' }, tool.label),
-              React.createElement('span', { className: 'cd-tr-state ' + tool.state,
-                'data-testid': 'dbg-state-' + tool.name },
-                tool.state === 'used' ? 'used' : tool.state === 'offered' ? 'offered, not asked' : 'not offered')),
-            React.createElement('p', { className: 'cd-tr-meta' }, tool.name + ' \u2014 ' + tool.description),
-            React.createElement('p', { className: 'cd-tr-why' }, tool.why),
-            tool.result
-              ? React.createElement('p', { className: 'cd-tr-said' }, tool.sentence || tool.result)
-              : null,
-            tool.sourceLabel
-              ? React.createElement('p', { className: 'cd-tr-src' }, '[source: ' + tool.sourceLabel + ']')
-              : null));
-      })),
-
-    React.createElement('section', { className: 'cd-tr-sec' },
-      React.createElement('h3', null, 'What this view cannot tell you'),
-      React.createElement('ul', { className: 'cd-tr-notes', 'data-testid': 'debug-notes' },
-        t.notes.map(function (n, i) { return React.createElement('li', { key: i }, n); }))));
+function dbgLensModel(views, artifacts) {
+  var rec = new views.lens.LensRecorder();
+  var subs = [];
+  var runner = {
+    on: function (type, handler) { subs.push({ type: type, handler: handler }); return function () {}; },
+    attach: function () { return function () {}; },
+    enable: { flowchart: function () {
+      return { getSnapshot: function () { return undefined; }, unsubscribe: function () {} };
+    } },
+    getLastSnapshot: function () { return artifacts.snapshot; },
+    getSpec: function () { return { buildTimeStructure: artifacts.blueprint }; },
+  };
+  rec.observe(runner);
+  var events = artifacts.events || [];
+  var skipped = 0;
+  events.forEach(function (ev) {
+    var lost = false;
+    for (var i = 0; i < subs.length; i += 1) {
+      if (subs[i].type !== '*' && subs[i].type !== ev.type) continue;
+      // footprintjs's own invariant, kept on the replay rail: a recorder that
+      // throws never aborts the run feeding it. A replay IS that run played
+      // back, so one event this debugger cannot read costs that event and
+      // nothing else — it is skipped, counted, and the panel says how many.
+      try { subs[i].handler(ev); } catch (err) { lost = true; }
+    }
+    if (lost) skipped += 1;
+  });
+  var stepGraph = null;
+  try { stepGraph = views.lens.buildStepGraphFromSnapshot(artifacts.snapshot); } catch (err) { stepGraph = null; }
+  return { recorder: rec, stepGraph: stepGraph, runner: artifacts.blueprint ? runner : null,
+    skipped: skipped, total: events.length };
 }
 
 /**
- * The dialog. Two views over ONE recorded turn: the story (agentthinkingui's
+ * The same model, built where a failure is survivable.
+ *
+ * The model is BUILT during render, not rendered — so a throw from it lands
+ * ABOVE DbgBoundary (which only catches what a view throws while drawing), and
+ * in React 19 an uncaught error there unmounts the whole desk. A visitor who
+ * opens a view over an unreadable recording must lose the view, never the desk.
+ */
+function dbgLensSafe(views, artifacts) {
+  try { return { model: dbgLensModel(views, artifacts), error: null }; }
+  catch (err) { return { model: null, error: err }; }
+}
+
+/** The pane's one honest failure note, worded once and used wherever it is true. */
+function dbgUnreadable(err) {
+  return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-error' },
+    'The recording could not be read: '
+    + (err && err.message ? err.message : String(err))
+    + '. The story view reads the same turn and is unaffected.');
+}
+
+/** A view that throws must not take the desk with it. */
+function DbgBoundary(props) { React.Component.call(this, props); this.state = { error: null }; }
+DbgBoundary.prototype = Object.create(React.Component.prototype);
+DbgBoundary.prototype.constructor = DbgBoundary;
+DbgBoundary.getDerivedStateFromError = function (error) { return { error: error }; };
+DbgBoundary.prototype.render = function () {
+  if (this.state.error) {
+    return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-error' },
+      'This view could not render this recording: '
+      + (this.state.error && this.state.error.message ? this.state.error.message : String(this.state.error))
+      + '. The story view reads the same turn and is unaffected.');
+  }
+  return this.props.children;
+};
+
+/**
+ * One of the two library views, over one recorded turn.
+ *
+ * Both need the same two things — the view file and the turn's recording — so
+ * they share this component and switching tabs re-renders rather than re-loads.
+ * Every honest limit below is stated in the panel itself, not here.
+ */
+function DbgDevPane(props) {
+  var s0 = React.useState({ phase: 'loading', views: null, art: null, error: null });
+  var st = s0[0], setSt = s0[1];
+  var key = props.cacheKey;
+  var k = props.turnIndex;
+  var src = props.src;
+  var hasLoad = !!props.load;
+  // The desk re-renders on every keystroke of a live turn, and its transport
+  // closure is new each time. Held in a ref so identity churn cannot re-enter
+  // this effect and blank a view a visitor is reading; only WHICH turn (or
+  // whether a transport exists at all) does.
+  var loadRef = React.useRef(props.load);
+  loadRef.current = props.load;
+
+  React.useEffect(function () {
+    if (!hasLoad) { setSt({ phase: 'no-transport', views: null, art: null, error: null }); return undefined; }
+    var alive = true;
+    setSt({ phase: 'loading', views: null, art: null, error: null });
+    Promise.all([dbgLoadViews(src), dbgArtifacts(key, k, loadRef.current)]).then(function (both) {
+      if (!alive) return;
+      if (!both[1] || !both[1].snapshot) {
+        setSt({ phase: 'empty', views: null, art: null, error: null });
+        return;
+      }
+      setSt({ phase: 'ready', views: both[0], art: both[1], error: null });
+    }, function (err) {
+      if (!alive) return;
+      setSt({ phase: 'error', views: null, art: null, error: err });
+    });
+    return function () { alive = false; };
+  }, [hasLoad, key, k, src]);
+
+  var lens = React.useMemo(function () {
+    if (st.phase !== 'ready' || props.kind !== 'flowchart') return null;
+    return dbgLensSafe(st.views, st.art);
+  }, [st.phase, st.views, st.art, props.kind]);
+
+  // The inspector's chart, from the SAME recorded blueprint — lens owns the
+  // bridge between the two vocabularies, and `decorate: false` is its
+  // footprintjs-level view (plain stages and subflows, no agent semantics),
+  // which is what this shell is a renderer for. No runtime overlay is passed:
+  // the stage-by-stage colouring is recorded only by a live attach, so the
+  // chart shows the structure and the timeline beside it shows the execution.
+  var chart = React.useMemo(function () {
+    if (st.phase !== 'ready' || props.kind !== 'inspector' || !st.art.blueprint) return null;
+    // WHY the console is narrowed for exactly this call: the bridge walks lens's
+    // structure into explainable-ui's structure recorder, and the two disagree
+    // about when a subflow's MOUNT NODE is announced — so eui warns "unknown
+    // rootStageId" once per subflow and drops metadata this chart does not use.
+    // That is a library-level contract gap (agentfootprint-lens <-> footprint-
+    // explainable-ui) and the fix belongs there; until then this hides exactly
+    // that one message, for exactly this one synchronous call, and restores the
+    // console whatever happens. Every other warning still reaches the console.
+    var warn = console.warn;
+    var KNOWN = '[traceStructureRecorder] onSubflowMounted fired for unknown rootStageId';
+    console.warn = function (first) {
+      if (typeof first === 'string' && first.indexOf(KNOWN) === 0) return;
+      warn.apply(console, arguments);
+    };
+    try { return st.views.lens.structureGraphFromSpec(st.art.blueprint, { decorate: false }); }
+    catch (err) { return null; }
+    finally { console.warn = warn; }
+  }, [st.phase, st.views, st.art, props.kind]);
+
+  if (st.phase === 'no-transport') {
+    return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-noserver' },
+      'These two views read the turn\u2019s full recording, and this page has no way to reach it '
+      + '\u2014 it was opened as a file. Run the gallery locally and they work; the story view above '
+      + 'needs nothing, because its data arrived with the reply.');
+  }
+  if (st.phase === 'loading') {
+    return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-loading' },
+      'Loading this turn\u2019s recording and the view that draws it\u2026');
+  }
+  if (st.phase === 'empty') {
+    return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-empty' },
+      'This turn carries no run snapshot, so there is nothing for these views to read.');
+  }
+  if (st.phase === 'error') return dbgUnreadable(st.error);
+  // The recording arrived but this debugger could not be built from it. Same
+  // phase, same words: the view is gone, the desk and the story are not.
+  if (lens && lens.error) return dbgUnreadable(lens.error);
+
+  var V = st.views;
+  var note;
+  var body;
+  if (props.kind === 'flowchart') {
+    // Stated because it is true: the step strip and the moments rail are driven
+    // by boundary COMMIT RANGES, which only a live attach records. Everything
+    // else on this screen — chart, summary, event stream, commentary — is this
+    // turn's recording.
+    var m = lens.model;
+    note = 'agentfootprint-lens \u2014 the agent debugger its library ships, reading this turn\u2019s '
+      + 'recorded event log and run snapshot. The step scrubber and the moments rail stay quiet here: '
+      + 'they need commit ranges that only a live attach records, and nothing on this page invents them.';
+    // Said because it happened: a replayed event the debugger could not read is
+    // dropped, and a count is the honest way to show what is missing.
+    if (m.skipped) {
+      note += ' ' + m.skipped + ' of this turn\u2019s ' + m.total + ' recorded events could not be read '
+        + 'by it and were skipped \u2014 what is drawn here is the rest of them.';
+    }
+    var lensProps = {
+      recorder: m.recorder,
+      view: 'engineer',
+      appName: props.appName || 'This desk',
+    };
+    if (m.stepGraph) lensProps.stepGraph = m.stepGraph;
+    if (m.runner) lensProps.runner = m.runner;
+    body = React.createElement(V.lens.Lens, lensProps);
+  } else {
+    note = 'footprint-explainable-ui \u2014 footprintjs\u2019s own inspector, over the run snapshot '
+      + 'recordedChat froze on this turn: every stage in order, a transport to step through them, and the '
+      + 'state each one left behind (right panel \u2192 INSPECTOR). The chart is this agent\u2019s own '
+      + 'build-time structure; it is not lit stage by stage, because that colouring is recorded only while '
+      + 'a run is happening. \u201cInsights\u201d is empty for the same honest reason \u2014 this run '
+      + 'attached no extra recorders.';
+    body = React.createElement(V.eui.ExplainableShell, {
+      runtimeSnapshot: st.art.snapshot,
+      traceGraph: chart,
+      title: props.title || 'this turn',
+      // Narrative is honestly absent (this run attached no narrative recorder);
+      // naming it here keeps an empty tab from claiming otherwise.
+      hideTabs: ['narrative'],
+      defaultExpanded: { details: true, timeline: true },
+    });
+  }
+
+  return React.createElement(React.Fragment, null,
+    React.createElement('p', { className: 'cd-dbg-devnote', 'data-testid': 'debug-view-note-' + props.kind }, note),
+    React.createElement('div', { className: 'cd-dbg-dev', 'data-testid': 'debug-view-' + props.kind },
+      React.createElement(DbgBoundary, null, body)));
+}
+
+/**
+ * The dialog. THREE views over ONE recorded turn: the story (agentthinkingui's
  * player over the trace agentfootprint's own recorder built from this turn's
- * events) and the trace (the run's structure, above).
+ * events), the flowchart (agentfootprint-lens) and the inspector
+ * (footprint-explainable-ui). The first arrived with the reply; the other two
+ * load themselves, and the recording they read, on first open.
  *
  * Accessibility: role=dialog + aria-modal, focus moves in on open, Tab is
  * trapped, Escape / backdrop / \u00d7 all close, and the caller returns focus
@@ -19108,8 +19240,20 @@ function DebugModal(props) {
         style: { height: '100%' },
       }));
   } else {
-    body = React.createElement(DebugTraceView, { trace: dbg.trace });
+    // Same component for both library views: they need the same two loads, so
+    // switching between them re-renders instead of re-fetching, and React
+    // unmounts the view being left on its own.
+    body = React.createElement(DbgDevPane, {
+      kind: view,
+      turnIndex: turn.index,
+      load: props.loadArtifacts || null,
+      cacheKey: props.artifactsKey || 'turn',
+      src: props.devViews,
+      appName: props.appName,
+      title: 'turn ' + (turn.index + 1) + ' \u2014 ' + turn.userMessage,
+    });
   }
+  var devview = dbg && (view === 'flowchart' || view === 'inspector');
 
   return React.createElement('div', { className: 'cd-dbg-wrap' },
     React.createElement('div', { className: 'cd-modal-backdrop', 'data-testid': 'debug-backdrop',
@@ -19133,8 +19277,10 @@ function DebugModal(props) {
           'data-testid': 'debug-close', 'aria-label': 'close',
           onClick: function () { closeRef.current(); } }, '\u00d7')),
       React.createElement('div', { className: 'cd-dbg-tabs', role: 'tablist',
-        'aria-label': 'how to read this turn' }, tab('story', 'story'), tab('trace', 'trace')),
-      React.createElement('div', { className: 'cd-dbg-body' + (dbg && view === 'story' ? ' player' : ''),
+        'aria-label': 'how to read this turn' },
+        tab('story', 'story'), tab('flowchart', 'flowchart'), tab('inspector', 'inspector')),
+      React.createElement('div', {
+        className: 'cd-dbg-body' + (dbg && view === 'story' ? ' player' : '') + (devview ? ' devview' : ''),
         id: 'cd-dbg-panel', role: 'tabpanel', 'aria-labelledby': 'cd-dbg-tab-' + view,
         tabIndex: -1 }, body),
       React.createElement('p', { className: 'cd-dbg-foot', 'data-testid': 'debug-foot' }, DBG_FOOT)));
@@ -19143,6 +19289,11 @@ function DebugModal(props) {
 /**
  * The control in the top bar. Owns the open state and gives focus back to
  * itself on close. Disabled (and honest about it) until a turn exists.
+ *
+ * The transport props are the page shell's, not this component's business:
+ * loadArtifacts(turnIndex) returns the turn's recording (an HTTP GET on the
+ * desks, a function call in the tab on BYOK) and devViews says where the two
+ * view files live. Both are only ever used inside the dialog.
  */
 function DebugControl(props) {
   var o0 = React.useState(false); var open = o0[0], setOpen = o0[1];
@@ -19159,10 +19310,14 @@ function DebugControl(props) {
       'data-testid': 'debug-open', 'aria-haspopup': 'dialog', 'aria-controls': 'cd-debug',
       'aria-expanded': open ? 'true' : 'false', disabled: !turns.length,
       title: turns.length
-        ? 'Look inside the last reply: the story it played out, and the trace it ran'
+        ? 'Look inside the last reply: the story it played out, and the two developer views of the run it made'
         : 'Nothing has been asked yet',
       onClick: function () { setOpen(true); } }, 'debug'),
-    open ? React.createElement(DebugModal, { turns: turns, narrow: narrow, onClose: close }) : null);
+    open ? React.createElement(DebugModal, {
+      turns: turns, narrow: narrow, onClose: close,
+      loadArtifacts: props.loadArtifacts, artifactsKey: props.artifactsKey,
+      devViews: props.devViews, appName: props.appName,
+    }) : null);
 }
 
 
@@ -19237,6 +19392,18 @@ var ctx = makeBrowserCtx();
 var core = createChatCore({ live: true, model: MODEL, makeProvider: makeProvider });
 var built = browserToolsFor(PACKS, ctx, core.getPending);
 var api = createLocalApi({ core: core, packs: PACKS, perApp: built.perApp });
+
+// ── the debug modal's two library views, and the recording they read ────────
+// The views are one built file beside this page — the only thing this desk ever
+// asks its own host for after load, and it asks only when a visitor opens the
+// flowchart or inspector tab. The RECORDING those views read never travels at
+// all: the turn is already in this tab, so api.artifacts is a read, not a
+// request. Relative paths, like everything else here, so the bundle works at a
+// subpath, at a root and off file://.
+var DEV_VIEWS = { js: './vendor/vr-dev-views.iife.js', css: './vendor/vr-dev-views.iife.css' };
+function getArtifacts(sessionId, k) {
+  return Promise.resolve(api.artifacts({ appId: APP.id, sessionId: sessionId, turnIndex: k }));
+}
 
 // The desk's whole state: the first session, plus whatever forks it grows.
 var FIRST = api.startSession(PACK);
@@ -19743,7 +19910,10 @@ function Byok() {
         e('span', { className: 'cd-tagline' }, APP.tagline),
         badge,
         // One small control; everything it opens lives inside the dialog.
-        e(DebugControl, { turns: (sess && sess.turns) || [] }),
+        e(DebugControl, { turns: (sess && sess.turns) || [],
+          loadArtifacts: sess ? function (k) { return getArtifacts(sess.id, k); } : null,
+          artifactsKey: (sess && sess.id) || 'none',
+          devViews: DEV_VIEWS, appName: APP.assistantLabel }),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
