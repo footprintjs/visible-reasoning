@@ -32,7 +32,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.114.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "agentfootprint": "^7.6.0",
+    "agentfootprint": "^7.7.0",
     "agentthinkingui": "^0.25.0",
     "footprintjs": "^9.11.0"
   },
