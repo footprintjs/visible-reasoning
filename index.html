@@ -3,14 +3,151 @@
 <title>Bring your own key — the app gallery</title>
 <meta name="description" content="Two small advisors you can chat with on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23C0531F%22%2F%3E%3Ccircle%20cx%3D%2212.5%22%20cy%3D%2212.5%22%20r%3D%225%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%2F%3E%3Cpath%20d%3D%22M16.2%2016.2%20L24%2024%20M20.5%2020.5%20l3.2%20-3.2%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <style>
   :root {
-    --bg: #FFFFFF; --panel-bg: #FFFFFF; --soft: #F6F4F0; --ink: #1E1A15; --muted: #786D5E;
-    --line: #E9E3DA; --accent: #C0531F; --accent-dk: #95380F; --user: #EFEAE1; --whatif: #C9932B;
+    --paper: #FAF7F2; --ink: #211E19; --body: #3A352C; --muted: #57503F; --faint: #8A8274;
+    --hair: #DCD5C9; --hair-soft: #EFE9DD; --rule: #C3BBAA;
+    --terra: #A8461F; --terra-edge: #C77B52; --terra-hover: #9C4423;
+    --green: #3F6B4E; --green-dk: #2E523B; --green-soft: #A9C2AF;
+    --serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); }
+  body { font-family: var(--serif); font-size: 17px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  a { color: var(--green); }
+  a:hover { color: var(--green-dk); }
+  ::selection { background: #EAD9CB; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--terra); outline-offset: 3px; border-radius: 1px; }
+  a:focus:not(:focus-visible), button:focus:not(:focus-visible) { outline: none; }
+
+  .vr-page { min-height: 100dvh; padding: 0 clamp(20px, 5.5vw, 72px) 56px; }
+  .vr-col { max-width: 768px; }
+
+  /* header — the demo's own label, the way to the code, the venue */
+  .vr-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
+    gap: 4px 16px; padding: 16px 2px 10px; border-bottom: 1px solid var(--hair);
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; color: var(--faint); }
+  .vr-top-right { display: flex; gap: 20px; align-items: baseline; }
+  .vr-top-right > * { white-space: nowrap; }
+  .vr-top a { color: var(--green); text-decoration: none; }
+  .vr-top a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .vr-h1 { margin: clamp(30px, 6vh, 54px) 0 0; font-size: clamp(27px, 4.8vw, 38px);
+    font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; }
+  .vr-lead { margin: 14px 0 0; font-size: clamp(17.5px, 2.2vw, 19.5px); line-height: 1.6;
+    max-width: 56ch; color: var(--body); }
+  .vr-sub { margin: 16px 0 22px; font-size: 16.5px; max-width: 56ch; color: var(--muted); }
+
+  /* THE ONE GESTURE — a note row between hairlines */
+  .vr-notes { border-bottom: 1px solid var(--hair); }
+  .vr-note { border-top: 1px solid var(--hair); scroll-margin-top: 18px; }
+  .vr-note.is-open { border-top-color: var(--terra-edge); }
+  .vr-note-btn { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    width: 100%; min-height: 46px; padding: 11px 2px; margin: 0; background: transparent; border: none;
+    cursor: pointer; text-align: left; font-family: var(--mono); font-size: 13.5px;
+    letter-spacing: 0.01em; color: #6E675C; }
+  .vr-note-btn:hover { color: var(--ink); }
+  .vr-mark { font-size: 16px; line-height: 1; color: var(--terra); flex: none; }
+  /* Authored open, folded by script: with no script every note is simply read. */
+  .vr-fold { display: grid; grid-template-rows: 1fr; }
+  .vr-fold-inner { overflow: hidden; min-height: 0; }
+  [data-fold="on"] .vr-fold { grid-template-rows: 0fr; }
+  [data-fold="on"] .vr-fold-inner { visibility: hidden; }
+  [data-fold="on"] .vr-note.is-open .vr-fold { grid-template-rows: 1fr; }
+  /* CLOSED CONTENT IS HIDDEN BY CSS, NOT BY THE SCRIPT. The script only sets
+     .is-open; visibility follows from it, so a fold that never animates (a
+     double-click, or Enter twice inside one style recalc) still ends hidden and
+     out of the tab order. Closing waits out the fold with a pure delay (the
+     0.28s below) instead of a transitionend the browser may never fire; opening
+     cancels that delay (0s 0s, higher specificity), so the content appears the
+     moment the row opens. */
+  [data-fold="on"] .vr-note.is-open .vr-fold-inner { visibility: visible; transition: visibility 0s 0s; }
+  [data-fold="on"][data-motion="on"] .vr-fold { transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+  [data-fold="on"][data-motion="on"] .vr-fold-inner { transition: visibility 0s 0.28s; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-fold="on"][data-motion="on"] .vr-fold { transition: none; }
+    [data-fold="on"][data-motion="on"] .vr-fold-inner { transition: none; }
+  }
+
+  .vr-body { padding: 4px 2px 30px; max-width: 62ch; font-size: 16.5px; line-height: 1.62;
+    color: var(--body); overflow-wrap: anywhere; }
+  .vr-body p { margin: 0 0 12px; }
+  .vr-body p:last-child { margin-bottom: 0; }
+  .vr-body code { font-family: var(--mono); font-size: 0.85em; color: var(--ink); }
+  .vr-aside { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--hair-soft); font-style: italic; }
+  .vr-aside code { font-style: normal; }
+  .vr-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--faint);
+    margin: 20px 0 8px; }
+  .vr-body > .vr-kicker:first-child { margin-top: 4px; }
+  .vr-q { margin: 0 0 6px; font-style: italic; font-size: 17.5px; }
+  .vr-lines { display: grid; gap: 6px; font-size: 15.5px; color: var(--muted); margin: 0 0 12px; }
+  .vr-cite { margin: 0 0 6px; font-style: italic; font-size: 18px; }
+  .vr-meta { margin: 0 0 6px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .vr-defrow { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 4px 14px;
+    align-items: start; padding: 8px 0; border-top: 1px solid var(--hair-soft); font-size: 15.5px; }
+  .vr-defrow + p { margin-top: 12px; }
+  .vr-defname { display: inline-flex; align-items: flex-start; gap: 7px; font-family: var(--mono);
+    font-size: 12.5px; color: var(--ink); }
+  .vr-defname .cd-dot { margin-top: 4px; }
+  .vr-rowname { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+  @media (max-width: 460px) { .vr-defrow { grid-template-columns: minmax(0, 1fr); } }
+  /* a phone: the header rail is three mono labels, so it gets a tighter track
+     rather than a broken word */
+  @media (max-width: 520px) {
+    .vr-top { font-size: 10.5px; letter-spacing: 0.09em; gap: 10px; }
+    .vr-top-right { gap: 12px; }
+  }
+
+  /* the section labels */
+  .vr-seckick { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.16em;
+    color: var(--faint); margin: 0 0 10px; }
+
+  /* THE ONE BOLD MOMENT — the desk listing */
+  .vr-desks { margin-top: clamp(44px, 8vh, 80px); }
+  .vr-listing { border-top: 4px double var(--rule); border-bottom: 1px solid var(--hair); }
+  .vr-desk { display: grid; grid-template-columns: clamp(44px, 7vw, 84px) minmax(0, 1fr);
+    column-gap: clamp(10px, 2vw, 18px); padding-top: clamp(20px, 3.5vw, 30px); }
+  .vr-desk + .vr-desk { border-top: 1px solid var(--hair); }
+  .vr-num { font-family: var(--mono); font-size: 13px; color: var(--faint); padding-top: 12px; }
+  .vr-deskmain { min-width: 0; }
+  .vr-deskname { margin: 0; font-size: clamp(30px, 6.5vw, 52px); font-weight: 500;
+    line-height: 1.04; letter-spacing: -0.015em; }
+  a.vr-desklink { color: inherit; text-decoration: none; display: inline-block; }
+  a.vr-desklink:hover .vr-deskname { color: var(--terra-hover); }
+  .vr-deskone { margin: 10px 0 2px; font-style: italic; font-size: clamp(17.5px, 2.4vw, 19.5px);
+    color: var(--muted); }
+  .vr-enter { display: inline-block; padding: 10px 0; font-family: var(--mono); font-size: 13.5px;
+    color: var(--green); text-decoration: underline; text-underline-offset: 5px;
+    text-decoration-thickness: 1px; text-decoration-color: var(--green-soft); }
+  .vr-enter:hover { color: var(--green-dk); text-decoration-color: var(--green-dk); }
+  .vr-badgerow { margin: 8px 0 0; }
+  .vr-badge { display: inline-block; padding: 6px 10px; border: 1px dashed #C4BCAD; border-radius: 2px;
+    font-family: var(--mono); font-size: 12.5px; color: #7A7265; }
+  .vr-desk.is-off .vr-deskname { color: #6F6A60; }
+  .vr-desk.is-off .vr-deskone { color: #7A7265; }
+  /* a desk's own note: the same row, no bottom rule of its own */
+  .vr-desknote { margin-top: 12px; }
+  .vr-desknote .vr-notes { border-bottom: none; }
+
+  .vr-program { margin-top: clamp(48px, 8vh, 88px); }
+
+  .vr-foot { margin-top: clamp(56px, 10vh, 96px); border-top: 1px solid var(--hair);
+    padding: 16px 2px 8px; display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: space-between;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  .vr-foot a { color: var(--green); text-decoration: none; }
+  .vr-foot a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  /* A DELIBERATE DEPARTURE FROM THE DESIGN, recorded so it is not "restored":
+     the design paints the provenance vocabulary as bordered pill badges and
+     gives the synthetic verdict a purple (#5D4E8C). Both are dropped here. A
+     definition on this page must be THE SAME ELEMENT as the dot on a desk —
+     that is the whole point of one shared DOT_CSS — so the definitions wear the
+     desks' dots, and the desks' amber dashed synthetic comes with them. Purple
+     is therefore absent from the home on purpose; there is no --purple token to
+     find, and adding one would re-open the drift DOT_CSS exists to close. */
 
   /* provenance dots — one style per honest verdict */
   .cd-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
@@ -22,459 +159,363 @@
   .cd-dot.notconsulted { background: #fff; border: 1.5px solid #CDBFA9; }
   .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
 
-  .ag-wrap { max-width: 1040px; margin: 0 auto; padding: 46px 22px 60px; }
-
-  /* the header rail — quiet text links out of the demo, not buttons and not
-     chips: the apps are the page, these are just the ways off it */
-  .ag-rail { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 18px;
-    margin: -16px 0 24px; font-size: 12.5px; line-height: 1.6; }
-  .ag-rail a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
-  .ag-rail a:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  .ag-rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
-  @media (max-width: 560px) { .ag-rail { justify-content: flex-start; gap: 4px 14px; } }
-
-  .ag-head { text-align: center; margin: 0 0 34px; }
-  .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
-  .ag-head p { font-size: 15px; line-height: 1.65; color: var(--muted); margin: 0 auto; max-width: 640px; }
-  .ag-cost { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 12px auto 0; max-width: 640px; }
-  .ag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
-  .ag-card { display: flex; flex-direction: column; text-decoration: none; color: inherit;
-    border: 1px solid var(--line); border-radius: 14px; padding: 0 18px 18px; background: var(--bg);
-    overflow: hidden; transition: box-shadow .18s ease, transform .18s ease; }
-  a.ag-card:hover { box-shadow: 0 8px 26px rgba(40,30,20,.10); transform: translateY(-2px); }
-  .ag-rule { display: block; height: 4px; margin: 0 -18px 16px; background: var(--accent); }
-  .ag-title { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
-  .ag-tag { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
-  .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 12px; }
-  .ag-tool { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
-  /* the capability strip — one icon+line per thing this build can actually do */
-  .ag-caps { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px;
-    padding: 10px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
-  .ag-cap { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
-  .ag-cap svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
-  .ag-chips { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
-  .ag-chip { font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line);
-    border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
-  .ag-cta { margin-top: auto; align-self: flex-start; font-size: 13px; font-weight: 700;
-    color: #fff; background: var(--accent); border-radius: 999px; padding: 8px 16px; }
-  a.ag-card:hover .ag-cta { background: var(--accent-dk); }
-
-  /* the program notes: how to read the demo, what the buttons do, take-it-home */
-  .ag-sec { margin: 34px auto 0; max-width: 760px; }
-  #guide, #about, #buttons, #byok { scroll-margin-top: 18px; }
-  .ag-sec h2 { font-size: 16px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .ag-sec p { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 10px; }
-  .ag-defs { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
-  .ag-defs .cd-help-item { margin-bottom: 8px; }
-  .ag-note { font-size: 12.5px; line-height: 1.65; color: var(--muted); margin: 0 0 8px; }
-  .ag-btn-strip { display: flex; flex-wrap: wrap; gap: 10px; }
-  .ag-btn-item { flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px;
-    padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-  .ag-btn-head { display: flex; align-items: center; gap: 8px; }
-  .ag-btn-head svg { flex: 0 0 auto; color: var(--accent); }
-  .ag-btn-what { font-size: 12px; line-height: 1.55; color: var(--muted); }
-  .ag-fakebtn { font-size: 11.5px; font-weight: 600; color: var(--muted); background: none;
-    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
-  .ag-fakebtn.solid { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
-  .ag-byok { padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--whatif, #C9932B);
-    border-radius: 11px; background: var(--soft); }
-  .ag-byok p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
-  .ag-byok strong { color: var(--ink); }
-  .ag-byok a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
-  .ag-byok a:hover { text-decoration: underline; }
-
-  .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
-  .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  /* the body's own way to the source — both landings carry one, styled once */
-  .ag-src { margin-top: 26px; }
-  .ag-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
-  .ag-src a:hover { text-decoration: underline; }
-
-  /* ── the about deck: index cards you turn over ─────────────────────────────
-     Deliberately quieter than an app card — hairline border, one accent hairline
-     on the front edge, no fill, no resting shadow. The apps are the stars; this
-     is the program note you pick up on the way past. */
-  .ab-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 14px; }
-  .ab-head h2 { margin: 0; }
-  .ab-hint { font-size: 12.5px; color: var(--muted); margin: 0; }
-  /* Two up, in the program-notes column — narrower than the app grid on purpose,
-     and wide enough that a card's back is a few lines rather than a column of
-     text taller than its own front. The last card takes the full row. */
-  .ab-deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
-  .ab-card:last-child { grid-column: 1 / -1; }
-  .ab-card { border-radius: 12px; }
-  .ab-flip { display: block; width: 100%; text-align: left; font: inherit; color: inherit;
-    background: none; border: 0; padding: 0; border-radius: 12px; }
-  .ab-inner { display: grid; gap: 10px; border-radius: 12px; }
-  .ab-face { display: flex; flex-direction: column; gap: 7px; padding: 14px 15px 12px;
-    border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
-  .ab-front { border-left: 2px solid var(--ab-accent, var(--accent)); }
-  .ab-title { font-size: 14.5px; font-weight: 700; letter-spacing: -0.005em; margin: 0; line-height: 1.4; }
-  .ab-teaser { font-size: 12.5px; line-height: 1.55; color: var(--muted); margin: 0; }
-  .ab-body { font-size: 12.5px; line-height: 1.62; color: var(--muted); margin: 0; }
-  .ab-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
-  .ab-body a:hover { border-bottom-color: var(--accent); }
-  .ab-body a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-  .ab-turn { margin-top: auto; padding-top: 4px; font-size: 11.5px; color: var(--muted); }
-
-  /* Script on: the two faces stack in one grid cell and the card turns.
-     Script off: they stay in flow, one above the other — the note still reads. */
-  .ab-deck[data-flip="on"] .ab-flip { cursor: pointer; }
-  .ab-deck[data-flip="on"] .ab-flip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .ab-deck[data-flip="on"] .ab-flip:hover .ab-turn { color: var(--accent); }
-  .ab-deck[data-flip="on"] .ab-inner { gap: 0; transform-style: preserve-3d;
-    transition: transform 450ms cubic-bezier(.22,.61,.36,1); }
-  .ab-deck[data-flip="on"] .ab-face { grid-area: 1 / 1; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-  .ab-deck[data-flip="on"] .ab-back { transform: rotateY(180deg); }
-  .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: rotateY(180deg); }
-  /* the paper-card lift: the shadow rises at the halfway point and settles back.
-     It lives on the un-rotated shell, so it stays under the card, not on it. */
-  .ab-deck[data-flip="on"] .ab-card { perspective: 1200px; }
-  .ab-deck[data-flip="on"] .ab-card.is-turning { animation: ab-lift 450ms ease-out; }
-  @keyframes ab-lift {
-    0%   { box-shadow: 0 0 0 rgba(40,30,20,0); }
-    45%  { box-shadow: 0 9px 20px rgba(40,30,20,.13); }
-    100% { box-shadow: 0 0 0 rgba(40,30,20,0); }
-  }
-
-  /* Reduced motion: nothing rotates and nothing lifts — the back simply takes
-     the front's place. Same control, same content, no movement. */
-  @media (prefers-reduced-motion: reduce) {
-    .ab-deck[data-flip="on"] .ab-inner { transition: none; transform: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: none; }
-    .ab-deck[data-flip="on"] .ab-face { backface-visibility: visible; -webkit-backface-visibility: visible; }
-    .ab-deck[data-flip="on"] .ab-back { transform: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="false"] .ab-back { display: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-front { display: none; }
-    .ab-deck[data-flip="on"] .ab-card.is-turning { animation: none; }
-  }
-
-  /* legend — active entity + per-tool provenance dots */
-  .cd-legend { margin: 0 0 12px; padding: 8px 13px; border-radius: 9px;
-    background: var(--soft); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-  .cd-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-  .cd-legend .cd-entity { font-weight: 700; color: var(--accent); }
-  .cd-legend .cd-leg-item { display: inline-flex; align-items: center; gap: 5px; }
-
-  /* "ⓘ what do these mean?" — the only always-visible explanation control.
-     There is no glyph key row: the dots explain themselves in the dialog. */
-  .cd-help-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px;
-    font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
-    border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
-  .cd-help-btn:hover, .cd-help-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-  .cd-help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-  /* the explanation dialog — quiet, light, same skin as the desk */
-  .cd-modal-backdrop { position: fixed; inset: 0; background: rgba(30,22,14,.34); z-index: 60; }
-  .cd-modal { position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    width: min(520px, calc(100vw - 32px)); max-height: min(80vh, 660px);
-    display: flex; flex-direction: column; overflow: hidden;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
-    box-shadow: 0 18px 48px rgba(40,30,20,.18); }
-  .cd-modal:focus { outline: none; }
-  .cd-modal-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 12px 10px 11px 16px; border-bottom: 1px solid var(--line); }
-  .cd-modal-title { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
-    text-transform: uppercase; color: var(--accent); }
-  .cd-modal-close { background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1;
-    color: var(--muted); padding: 3px 9px; border-radius: 7px; }
-  .cd-modal-close:hover { background: var(--soft); color: var(--ink); }
-  .cd-modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .cd-modal-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 13px 16px 16px;
-    font-size: 12.5px; line-height: 1.55; color: var(--muted); }
-  .cd-modal-sec + .cd-modal-sec { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
-  .cd-modal-sec h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--ink);
-    letter-spacing: .01em; }
-  .cd-help-item { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 7px;
-    overflow-wrap: anywhere; }
-  .cd-help-item .cd-dot { margin-top: 5px; }
-  .cd-help-item b { color: var(--ink); }
-  .cd-help-none { margin: 0; font-style: italic; }
-  .cd-help-foot { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--line); }
-  /* desk mode: the vocabulary is not in the dialog — this is the way to it */
-  a.cd-help-guide { display: block; color: var(--muted); font-weight: 600; text-decoration: none; }
-  a.cd-help-guide:hover { color: var(--accent); }
-  a.cd-help-guide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-
-  /* narrow screens: the dialog becomes a bottom sheet, full width, no overflow */
-  @media (max-width: 520px) {
-    .cd-modal { top: auto; bottom: 0; left: 0; transform: none; width: 100%; max-width: 100%;
-      max-height: 86vh; border-radius: 14px 14px 0 0; border-left: 0; border-right: 0; border-bottom: 0; }
-  }
-
-  .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
-    background: var(--soft); padding: 15px 17px; }
-  .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .by-copy p { font-size: 13px; line-height: 1.62; color: var(--ink); margin: 0 0 8px; }
-  .by-copy p:last-child { margin-bottom: 0; }
-  .by-copy code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
-  .by-travel { margin: 12px 0 0; padding-top: 11px; border-top: 1px solid var(--line); }
-  /* a desk this build honestly cannot run: readable, not a link, and it says why */
-  .ag-card.off { opacity: .72; background: var(--soft); }
-  .ag-card.off .ag-cta { background: none; color: var(--muted); border: 1px dashed var(--line); }
-  .ag-cardnote { font-size: 12.5px; line-height: 1.55; color: #8A4A22; margin: 0 0 14px; }
-
 </style></head>
 <body>
-<div class="ag-wrap">
+<div class="vr-page">
+  <div class="vr-col">
 
-  <nav class="ag-rail" aria-label="Project links">
-      <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener" title="The repository these pages are generated from"
-        >source <span aria-hidden="true">↗</span></a>
-      <a href="https://footprintjs.github.io/agentfootprint/" target="_blank" rel="noopener" title="The library these demos run on"
-        >agentfootprint <span aria-hidden="true">↗</span></a>
-      <a href="https://footprintjs.github.io/" target="_blank" rel="noopener" title="The rest of the ecosystem"
-        >footprintjs <span aria-hidden="true">↗</span></a>
-  </nav>
-  <header class="ag-head">
-    <h1>Bring your own key · the app gallery</h1>
-    <p>Two real chat desks share one machine: every context source is a tool the agent calls, and
-    every reply can be re-run without a source to see what that source really changed. They run
-    entirely in your browser, on your own Anthropic key — pick a desk to start.</p>
-  </header>
-
-  <section class="ag-sec" id="custody">
-    <div class="by-custody" data-testid="landing-custody">
-      <h2>Where your key goes</h2>
-      <div class="by-copy"><p><strong>Your key stays in this tab.</strong></p>
-      <p>This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.</p>
-      <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. <strong>Forget my key</strong> erases it instantly.</p>
-      <p>This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that <em>could</em> see your key.</p>
-      <p><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to <code>api.anthropic.com</code>. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
-        <div class="by-travel" data-testid="landing-key-travel"><p>You’ll paste your key on the desk you open — this page never asks for one. Tick <strong>remember</strong> there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.</p></div>
+    <header>
+      <div class="vr-top">
+        <span>DEMO · BRING YOUR OWN KEY</span>
+        <span class="vr-top-right"><a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener"
+          title="The repository these pages are generated from">GITHUB <span aria-hidden="true">↗</span></a><span>HCII 2026</span></span>
       </div>
-    </div>
-  </section>
+      <h1 class="vr-h1">Visible Reasoning — the app gallery</h1>
+      <p class="vr-lead">Three real chat desks share one machine; every reply can be re-run without a source, to see what that source really changed.</p>
+      <p class="vr-sub">Two of them run right here in your browser, on your own Anthropic API key — <em>the key never leaves this tab.</em></p>
+    </header>
 
-  <div class="ag-grid" data-testid="landing-cards">
-    <a class="ag-card" href="./trip.html" style="--accent: #2E7D4F; --accent-dk: #1E5C38">
-      <span class="ag-rule"></span>
-      <h2 class="ag-title">The trip advisor</h2>
-      <p class="ag-tag">should I hike it? — with visible reasons</p>
-      <div class="ag-tools">
-        <span class="ag-tool" title="Saturday's forecast for a place — condition, high temperature and rain chance (Open-Meteo, keyless).">
-          <span class="cd-dot live"></span>weather
-        </span>
-        <span class="ag-tool" title="What a place is — a one-paragraph description (Wikipedia, keyless).">
-          <span class="cd-dot live"></span>place
-        </span>
-        <span class="ag-tool" title="How busy a trail tends to be on a Saturday morning — a MODELED estimate, not measured data.">
-          <span class="cd-dot synthetic"></span>crowd
-        </span></div>
-      <div class="ag-caps">
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/></svg><span>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/><path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/></svg><span>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/><path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/><path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/></svg><span>statuses and reply arrive as they happen</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/><path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/></svg><span>every reply: visible reason → re-run without a source → fork</span></span></div>
-      <div class="ag-chips"><span class="ag-chip">Should I hike Mission Peak on Saturday?</span><span class="ag-chip">What about &quot;Mount Tamalpais&quot;?</span></div>
-      <span class="ag-cta">Open the desk →</span>
-    </a>
-    <a class="ag-card" href="./movies.html" style="--accent: #7A4CBF; --accent-dk: #5A3395">
-      <span class="ag-rule"></span>
-      <h2 class="ag-title">The movie desk</h2>
-      <p class="ag-tag">should I watch it? — with visible reasons</p>
-      <div class="ag-tools">
-        <span class="ag-tool" title="Price, availability and advisory rating for a movie (iTunes Search, keyless).">
-          <span class="cd-dot live"></span>itunes
-        </span>
-        <span class="ag-tool" title="One-paragraph plot / overview for a movie (Wikipedia, keyless).">
-          <span class="cd-dot live"></span>plot
-        </span>
-        <span class="ag-tool" title="What critics said about a movie — its critical reception (Wikipedia, keyless).">
-          <span class="cd-dot live"></span>reception
-        </span></div>
-      <div class="ag-caps">
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/></svg><span>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/><path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/></svg><span>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/><path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/><path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/></svg><span>statuses and reply arrive as they happen</span></span>
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/><path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/></svg><span>every reply: visible reason → re-run without a source → fork</span></span></div>
-      <div class="ag-chips"><span class="ag-chip">Should I watch &quot;Heat&quot; tonight?</span><span class="ag-chip">Is &quot;Dune&quot; worth renting?</span></div>
-      <span class="ag-cta">Open the desk →</span>
-    </a>
-    <div class="ag-card off" style="--accent: #C0531F; --accent-dk: #95380F">
-      <span class="ag-rule"></span>
-      <h2 class="ag-title">The stock desk</h2>
-      <p class="ag-tag">buy or hold? — with visible reasons</p>
-      <p class="ag-cardnote">The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Run it yourself with npm run gallery:live.</p>
-      <div class="ag-caps">
-        <span class="ag-cap"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2v4.3"/></svg><span>runs in the server demo only — SEC EDGAR + Reddit over MCP</span></span></div>
-      <span class="ag-cta">Server-only — run it locally</span>
-    </div></div>
-
-  <section class="ag-sec ag-about" id="about">
-    <div class="ab-head">
-      <h2>About this demo</h2>
-      <p class="ab-hint">Five cards — turn one over to read the rest.</p>
-    </div>
-    <div class="ab-deck" data-about-deck>
-      <div class="ab-card" style="--ab-accent: #C0531F">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">What you’re looking at</h3>
-              <p class="ab-teaser">Real chat apps sharing one machine that records why each answer happened.</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">Two desks run in your browser — a trip advisor and a movie desk — over one machine; the third gets a card that says why it can’t run here. None of them narrates its own reasoning. Each one records it: every source the agent consults is a tool call, and the record of which tools ran, what came back and what it changed survives the reply.</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
+    <div class="vr-notes" data-note-group>
+      <div class="vr-note" id="about" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-about">
+          <span>what is visible reasoning?</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-about" data-note-pane>
+            <div class="vr-body">
+            <p>Three chat desks that answer a question and then show why: the sources that shaped the answer, ranked — each one droppable, so the same turn can be re-run without it and compared. A working companion to a published paper, not a product.</p>
+            <p>None of them narrates its own reasoning. Each one records it: every source the agent consults is a tool call, and the record of which tools ran, what came back and what it changed survives the reply.</p>
+            <p>Two of the three run here, in your browser; the third needs a server, and its row below says so. The paper and the method are under <em>program notes</em>, below. Everything — the stock desk included — runs from <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>. Every file here — this page, the desks, the vendored library bytes — is generated from that repo and served as-is.</p>
             </div>
           </div>
         </div>
       </div>
-      <div class="ab-card" style="--ab-accent: #7A4CBF">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">Why this isn’t the model explaining itself</h3>
-              <p class="ab-teaser">The framework owns the trace; the model is never asked to narrate its reasons.</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">The paper calls this a third paradigm. Instead of asking the model to narrate its reasons — which cannot be checked — or asking a second model to judge it, the substrate that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed events captured as the run happens, not a story told afterwards.</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="ab-card" style="--ab-accent: #2E7D4F">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">What the scores mean (and don’t)</h3>
-              <p class="ab-teaser">A ranking is a lead, not a verdict.</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">The visible-reason panel ranks each source by semantic alignment: a deterministic score comparing what that source said with what the answer said. It is a proxy for influence, not a proof — a high score means “this reads like it mattered”. Only the re-run convicts: drop a source, answer again over the frozen tool results, and see whether the decision actually changes.</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="ab-card" style="--ab-accent: #C0531F">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">Where the data comes from</h3>
-              <p class="ab-teaser">Every sentence carries the label of where it came from.</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from iTunes — keyless public APIs, called straight from your tab. Every tool sentence carries its own [source: …] label, and the dot beside a tool names what really happened on the latest reply. The trip advisor’s crowd estimate is invented by design — modeled, never measured — and always says so.</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="ab-card" style="--ab-accent: #7A4CBF">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">The paper and the libraries</h3>
-              <p class="ab-teaser">Where this comes from, and what it is built on.</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems — HCII 2026, LNCS volume 16745, pages 3–21 (<a href="https://doi.org/10.1007/978-3-032-30849-8_1" target="_blank" rel="noopener">doi.org/10.1007/978-3-032-30849-8_1</a>). The machinery is three MIT-licensed libraries: <a href="https://www.npmjs.com/package/footprintjs" target="_blank" rel="noopener">footprintjs</a> records the run, <a href="https://www.npmjs.com/package/agentfootprint" target="_blank" rel="noopener">agentfootprint</a> turns that recording into agents, influence rankings and re-runs, and <a href="https://www.npmjs.com/package/agentthinkingui" target="_blank" rel="noopener">agentthinkingui</a> draws the panels you are clicking.</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
+      <div class="vr-note" id="key" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-key">
+          <span>the key, in full</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-key" data-note-pane>
+            <div class="vr-body">
+            <p><strong>Your key stays in this tab.</strong></p>
+            <p>This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.</p>
+            <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, not put in any URL, and not stored unless you tick “remember”, which keeps it in this tab only until you close it. <strong>Forget my key</strong> erases it instantly.</p>
+            <p>This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that <em>could</em> see your key.</p>
+            <p>You’ll paste your key on the desk you open — this page never asks for one. Tick <strong>remember</strong> there and the key rides with you in this tab: back to this gallery, into the other desk, and across a reload, until you close the tab. Leave it unticked and the key lives in that one page only, so coming back here clears it and the next desk asks again.</p>
+            <p>The one thing this page fetches is its web fonts, from <code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code> — a stylesheet and a few font files, no key, no data of yours, and if those requests fail you get your system fonts and the same page. Nothing else leaves it: this page takes no key at all.</p>
+            <p class="vr-aside"><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to <code>api.anthropic.com</code>. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
             </div>
           </div>
         </div>
       </div>
     </div>
-  </section>
+
+    <section class="vr-desks" aria-label="The desks">
+      <div class="vr-seckick">THE DESKS</div>
+      <div class="vr-listing">
+        <article class="vr-desk">
+          <div class="vr-num">01</div>
+          <div class="vr-deskmain">
+            <a class="vr-desklink" href="./trip.html"><h2 class="vr-deskname">The trip advisor</h2></a>
+            <p class="vr-deskone">“Should I hike it?”</p>
+            <a class="vr-enter" href="./trip.html">enter →</a>
+            <div class="vr-desknote">
+    <div class="vr-notes" data-note-group>
+      <div class="vr-note" id="desk-trip" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-desk-trip">
+          <span>starter questions · what this desk runs on</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-desk-trip" data-note-pane>
+            <div class="vr-body">
+            <div class="vr-kicker">STARTER QUESTIONS</div>
+            <p class="vr-q">“Should I hike Mission Peak on Saturday?”</p>
+            <p class="vr-q">“What about &quot;Mount Tamalpais&quot;?”</p>
+            <div class="vr-kicker">SOURCES — AND THE VERDICT THIS BUILD CAN REPORT</div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>weather</span>
+              <span>Saturday's forecast for a place — condition, high temperature and rain chance (Open-Meteo, keyless).</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>place</span>
+              <span>What a place is — a one-paragraph description (Wikipedia, keyless).</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot synthetic"></span>crowd</span>
+              <span>How busy a trail tends to be on a Saturday morning — a MODELED estimate, not measured data.</span>
+            </div>
+            <div class="vr-kicker">THIS DESK</div>
+            <div class="vr-lines">
+              <div>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</div>
+              <div>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</div>
+              <div>statuses and reply arrive as they happen</div>
+              <div>every reply: visible reason → re-run without a source → fork</div>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+            </div>
+          </div>
+        </article>
+        <article class="vr-desk">
+          <div class="vr-num">02</div>
+          <div class="vr-deskmain">
+            <a class="vr-desklink" href="./movies.html"><h2 class="vr-deskname">The movie desk</h2></a>
+            <p class="vr-deskone">“Should I watch it?”</p>
+            <a class="vr-enter" href="./movies.html">enter →</a>
+            <div class="vr-desknote">
+    <div class="vr-notes" data-note-group>
+      <div class="vr-note" id="desk-movies" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-desk-movies">
+          <span>starter questions · what this desk runs on</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-desk-movies" data-note-pane>
+            <div class="vr-body">
+            <div class="vr-kicker">STARTER QUESTIONS</div>
+            <p class="vr-q">“Should I watch &quot;Heat&quot; tonight?”</p>
+            <p class="vr-q">“Is &quot;Dune&quot; worth renting?”</p>
+            <div class="vr-kicker">SOURCES — AND THE VERDICT THIS BUILD CAN REPORT</div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>itunes</span>
+              <span>Price, availability and advisory rating for a movie (iTunes Search, keyless).</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>plot</span>
+              <span>One-paragraph plot / overview for a movie (Wikipedia, keyless).</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>reception</span>
+              <span>What critics said about a movie — its critical reception (Wikipedia, keyless).</span>
+            </div>
+            <div class="vr-kicker">THIS DESK</div>
+            <div class="vr-lines">
+              <div>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</div>
+              <div>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</div>
+              <div>statuses and reply arrive as they happen</div>
+              <div>every reply: visible reason → re-run without a source → fork</div>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+            </div>
+          </div>
+        </article>
+        <article class="vr-desk is-off">
+          <div class="vr-num">03</div>
+          <div class="vr-deskmain">
+            <h2 class="vr-deskname">The stock desk</h2>
+            <p class="vr-deskone">“Buy or hold?”</p>
+            <p class="vr-badgerow"><span class="vr-badge">runs locally only · needs a server</span></p>
+            <div class="vr-desknote">
+    <div class="vr-notes" data-note-group>
+      <div class="vr-note" id="desk-stocks" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-desk-stocks">
+          <span>why it isn’t here · how to run it</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-desk-stocks" data-note-pane>
+            <div class="vr-body">
+            <p>The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. A browser cannot fetch a filing from EDGAR, and this page has no server of ours behind it to fetch one on your behalf — so the desk is not here, and it will not pretend.</p>
+            <p>Where it does run, it runs <strong>server-side</strong> — which is the honest difference from the two desks above. In the local demo a local MCP server calls SEC EDGAR and Reddit over the real protocol, and that server, not your browser, calls the model.</p>
+            <p>Run it yourself with <code>npm run gallery:live</code>, then open <code>http://localhost:4175</code>.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="vr-program" aria-label="Program notes">
+      <div class="vr-seckick">PROGRAM NOTES</div>
+    <div class="vr-notes" data-note-group>
+      <div class="vr-note" id="guide" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-guide">
+          <span>how to read the demo</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-guide" data-note-pane>
+            <div class="vr-body">
+            <p>Next to each desk’s sources you’ll see a dot. The dot is the demo’s honest core — it names where that source’s data actually came from on the latest reply:</p>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot live"></span>live</span>
+              <span>real data fetched from the internet just now (this source really answered)</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot fallback"></span>fallback</span>
+              <span>we tried the real source but couldn’t reach it, so the demo used realistic stand-in data — and says so</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot synthetic"></span>synthetic (never measured)</span>
+              <span>data that is invented by design (like the crowd estimate); it is always labeled, never passed off as real</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-defname"><span class="cd-dot notconsulted"></span>not consulted</span>
+              <span>the assistant didn’t use this source for this reply</span>
+            </div>
+            <p>Every tool sentence carries its own [source: …] label — the map never hides where data came from.</p>
+            <p>The rule everywhere: the label names what actually happened. A desk that can't reach a source says so, and data that was invented is never passed off as real.</p>
+            <p>The trip advisor's crowd estimate is always synthetic — modeled, never measured — and always says so.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="buttons" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-buttons">
+          <span>what the buttons do</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-buttons" data-note-pane>
+            <div class="vr-body">
+            <div class="vr-defrow">
+              <span class="vr-rowname">visible reason</span>
+              <span>opens a ranked list of exactly which sources shaped that reply</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-rowname">ignore a source</span>
+              <span>inside that panel, pick a source to leave out</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-rowname">re-run</span>
+              <span>answers the same question again without it — over the frozen tool results of the original turn, zero new fetches</span>
+            </div>
+            <div class="vr-defrow">
+              <span class="vr-rowname">Continue from this version</span>
+              <span>forks a new session from the what-if reply; the ignored source stays ignored for every later turn</span>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="cost" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-cost">
+          <span>what a reply costs</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-cost" data-note-pane>
+            <div class="vr-body">
+            <p>Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the <strong>frozen</strong> tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.</p>
+            <p>Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="why" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-why">
+          <span>why this isn’t the model explaining itself</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-why" data-note-pane>
+            <div class="vr-body">
+            <p>Ask a model why it said something and you get a story about itself — fluent, plausible, unverified. Here the why is established outside the model: remove a source, run the same turn again, read what changed.</p>
+            <p>The paper calls this a third paradigm. Instead of asking the model to narrate its reasons — which cannot be checked — or asking a second model to judge it, the substrate that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed events captured as the run happens, not a story told afterwards.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="scores" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-scores">
+          <span>what the scores mean — and don’t</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-scores" data-note-pane>
+            <div class="vr-body">
+            <p>The visible-reason panel ranks each source by semantic alignment: a deterministic score comparing what that source said with what the answer said. It is a proxy for influence, not a proof — a high score means “this reads like it mattered”.</p>
+            <p>Only the re-run convicts: drop a source, answer again over the frozen tool results, and see whether the decision actually changes.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="data" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-data">
+          <span>where the data comes from</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-data" data-note-pane>
+            <div class="vr-body">
+            <p>Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from iTunes — keyless public APIs, called straight from your tab.</p>
+            <p>Every tool sentence carries its own <code>[source: …]</code> label, and the dot beside a source names what really happened on the latest reply. The 4 labels are spelled out in <em>how to read the demo</em>, above.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="vr-note" id="paper" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-paper">
+          <span>the paper &amp; the libraries</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-paper" data-note-pane>
+            <div class="vr-body">
+            <p class="vr-cite">Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems</p>
+            <p class="vr-meta">HCII 2026 · LNCS 16745 · pp. 3–21 · <a href="https://doi.org/10.1007/978-3-032-30849-8_1" target="_blank" rel="noopener">doi.org/10.1007/978-3-032-30849-8_1</a></p>
+            <p class="vr-meta">Anbalagan, Nie, Kommalapati, Kanamarlapudi, Radhakrishnan, Zhao, Mohan</p>
+            <p>The machinery is three MIT-licensed libraries: <a href="https://www.npmjs.com/package/footprintjs" target="_blank" rel="noopener">footprintjs</a> records the run, <a href="https://www.npmjs.com/package/agentfootprint" target="_blank" rel="noopener">agentfootprint</a> turns that recording into agents, influence rankings and re-runs, and <a href="https://www.npmjs.com/package/agentthinkingui" target="_blank" rel="noopener">agentthinkingui</a> draws the panels you are clicking. The whole site is open: <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </section>
+
+    <footer class="vr-foot">
+      <span id="vr-foot-note">a plain static page — it takes no key and stores nothing</span>
+      <span><a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener"
+      title="The repository these pages are generated from">source</a> · <a href="https://footprintjs.github.io/agentfootprint/" target="_blank" rel="noopener"
+      title="The library these demos run on">agentfootprint</a> · <a href="https://footprintjs.github.io/" target="_blank" rel="noopener"
+      title="The rest of the ecosystem">footprintjs</a></span>
+    </footer>
+
+  </div>
+</div>
 <script>
 (function () {
-  var deck = document.querySelector('[data-about-deck]');
-  if (!deck) return;
-  deck.setAttribute('data-flip', 'on');
-  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-
-  Array.prototype.forEach.call(deck.querySelectorAll('.ab-flip'), function (card) {
-    var shell = card.parentNode;
-    var front = card.querySelector('.ab-front');
-    var back = card.querySelector('.ab-back');
-    var timer = 0;
-
-    // The hidden face is not just invisible: it is out of the tab order and out
-    // of the accessibility tree, so a link on the back of a card you can't see
-    // can't be tabbed into. inert does it where it exists; the tabindex sweep is
-    // the fallback that works everywhere.
-    function conceal(face, hidden) {
-      if (hidden) { face.setAttribute('inert', ''); face.setAttribute('aria-hidden', 'true'); }
-      else { face.removeAttribute('inert'); face.removeAttribute('aria-hidden'); }
-      Array.prototype.forEach.call(face.querySelectorAll('a'), function (a) {
-        if (hidden) a.setAttribute('tabindex', '-1'); else a.removeAttribute('tabindex');
+  var groups = document.querySelectorAll('[data-note-group]');
+  if (!groups.length) return;
+  Array.prototype.forEach.call(groups, function (group) {
+    group.setAttribute('data-fold', 'on');
+    Array.prototype.forEach.call(group.querySelectorAll('[data-note-row]'), function (row) {
+      var btn = row.querySelector('[data-note-toggle]');
+      // The fold and its pane are not touched — the stylesheet drives both from
+      // .is-open. They are looked up only to leave a malformed row alone.
+      var fold = row.querySelector('[data-note-fold]');
+      var pane = row.querySelector('[data-note-pane]');
+      var mark = row.querySelector('[data-note-mark]');
+      if (!btn || !fold || !pane || !mark) return;
+      function paint(open) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        mark.textContent = open ? '\u2212' : '+';
+        row.classList.toggle('is-open', open);
+      }
+      btn.addEventListener('click', function () {
+        paint(btn.getAttribute('aria-expanded') !== 'true');
       });
-    }
-    function show(flipped) {
-      card.setAttribute('aria-pressed', flipped ? 'true' : 'false');
-      conceal(front, flipped);
-      conceal(back, !flipped);
-    }
-    function turn() {
-      show(card.getAttribute('aria-pressed') !== 'true');
-      if (reduce && reduce.matches) return;
-      shell.classList.remove('is-turning');
-      void shell.offsetWidth;              // restart the lift on a fast re-flip
-      shell.classList.add('is-turning');
-      window.clearTimeout(timer);
-      timer = window.setTimeout(function () { shell.classList.remove('is-turning'); }, 460);
-    }
-
-    show(false);
-    card.addEventListener('click', function (ev) {
-      // A link on the back stays a link — clicking it must not also turn the card.
-      if (ev.target.closest && ev.target.closest('a')) return;
-      turn();
-    });
-    card.addEventListener('keydown', function (ev) {
-      if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
-      if (ev.target !== card) return;      // Enter on a link inside is that link's
-      ev.preventDefault();                 // Space must not scroll the page
-      turn();
+      paint(false);
     });
   });
+  var arm = function () {
+    Array.prototype.forEach.call(groups, function (g) { g.setAttribute('data-motion', 'on'); });
+  };
+  if (window.requestAnimationFrame) window.requestAnimationFrame(arm); else arm();
 }());
 </script>
-
-  <section class="ag-sec" id="guide">
-    <h2>How to read the demo</h2>
-    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
-    that tool's data actually came from on the latest reply:</p>
-    <div class="ag-defs">
-      <div class="cd-help-item">
-        <span class="cd-dot live"></span>
-        <span><b>live</b> — real data fetched from the internet just now (this source really answered)</span>
-      </div>
-      <div class="cd-help-item">
-        <span class="cd-dot fallback"></span>
-        <span><b>fallback</b> — we tried the real source but couldn’t reach it, so the demo used realistic stand-in data — and says so</span>
-      </div>
-      <div class="cd-help-item">
-        <span class="cd-dot synthetic"></span>
-        <span><b>synthetic (never measured)</b> — data that is invented by design (like the crowd estimate); it is always labeled, never passed off as real</span>
-      </div>
-      <div class="cd-help-item">
-        <span class="cd-dot notconsulted"></span>
-        <span><b>not consulted</b> — the assistant didn’t use this source for this reply</span>
-      </div>
-    </div>
-    <p class="ag-note">Every tool sentence carries its own [source: …] label — the map never hides where data came from.</p>
-    <p class="ag-note">The rule everywhere: the label names what actually happened. A desk that can't reach a source says so, and data that was invented is never passed off as real.</p>
-    <p class="ag-note">The trip advisor's crowd estimate is always synthetic — modeled, never measured — and always says so.</p>
-  </section>
-
-  <section class="ag-sec" id="notes">
-    <h2>What a reply costs</h2>
-    <div class="by-copy"><p>Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the <strong>frozen</strong> tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.</p>
-      <p>Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.</p>
-    </div>
-  </section>
-
-  <p class="ag-foot ag-src">Every file here — this page, the desks, the vendored library bytes — is
-  generated from the repo and served as-is.
-  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener noreferrer">github.com/footprintjs/visible-reasoning</a></p>
-</div>
 </body></html>
