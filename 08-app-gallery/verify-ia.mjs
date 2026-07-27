@@ -26,8 +26,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BUTTON_HELP, HEADER_LINKS, LIVE_COST_LINE, PAPER_AUTHORS, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE,
-  PROVENANCE_HELP, PROVENANCE_PHILOSOPHY, buildAppPage, buildGalleryPage, provenanceHelpScript,
-  question, statesForBuild,
+  PROVENANCE_HELP, PROVENANCE_PHILOSOPHY, STARTERS_CSS, buildAppPage, buildGalleryPage,
+  provenanceHelpScript, question, startersScript, statesForBuild,
 } from './lib/page.js';
 import { APPS } from './apps/index.js';
 import { provenanceFromToolLog, sourceLabelsFromToolLog } from './lib/mcp.js';
@@ -247,7 +247,7 @@ ok((byokHome.match(/<script\b/g) || []).length === 1
   `${(byokHome.match(/<script\b/g) || []).length} vs ${(mockGallery.match(/<script\b/g) || []).length}`);
 
 // ═══ A2. every desk is a stage ══════════════════════════════════════════════
-const EMPTY_HINT = 'Ask a question to begin — or send the starter already in the box.';
+const EMPTY_HINT = 'Ask a question to begin — or tap one of these.';
 for (const app of APPS) {
   const mockDesk = buildAppPage(app, deskData(null));
   const liveDesk = buildAppPage(app, deskData(MODEL));
@@ -272,6 +272,29 @@ for (const app of APPS) {
   ok(!mockDesk.includes("e('span', { className: 'cd-tagline' }"), `[${app.id}] the tagline is off the desk bar`);
   ok(mockDesk.includes(EMPTY_HINT), `[${app.id}] the empty hint is the one runtime sentence`);
   ok(!mockDesk.includes('“visible reason” button — tap it to see'), `[${app.id}] the teaching sentence retired to #buttons`);
+
+  // ── the starter pills ────────────────────────────────────────────────────
+  // Tappable starters are a CONTROL, not copy: they are the composer's own job
+  // (send this message) in a second shape, so they are not counted as static
+  // chrome below — see the note on PROBES. What has to stay true is that they
+  // are the pack's own questions, that there is only ever one set on screen,
+  // and that tapping one is the same send() a typed message goes through.
+  ok(mockDesk.includes("e(Starters, { starters: DATA.app.starters, variant: 'big'"),
+    `[${app.id}] the empty state offers the pack's OWN starters, never page copy`);
+  ok(mockDesk.includes("e(Starters, { starters: DATA.app.starters, variant: 'compact'"),
+    `[${app.id}] …and they stay one tap away in the composer once the conversation starts`);
+  ok(/hasContent\s*\n?\s*\?\s*e\(Starters, \{ starters: DATA\.app\.starters, variant: 'compact'/.test(mockDesk)
+    && mockDesk.includes("e('div', { className: 'cd-empty-hint' },\n        'Ask a question to begin"),
+    `[${app.id}] exactly one set is mounted at a time — big only when empty, compact only when not`);
+  ok(mockDesk.indexOf("variant: 'compact'") > mockDesk.indexOf("e('div', { className: 'cd-composer' }")
+    && mockDesk.indexOf("variant: 'compact'") < mockDesk.indexOf("'data-testid': 'chat-input'"),
+    `[${app.id}] the compact row is part of the COMPOSER, above the box — not a line in the transcript`);
+  ok(mockDesk.includes('onPick: send') && !/onPick: function/.test(mockDesk),
+    `[${app.id}] a tapped pill goes through the desk's own send() — no shortcut path`);
+  for (const s of app.starters) {
+    ok(mockDesk.includes(JSON.stringify(s).slice(1, -1)),
+      `[${app.id}] the desk carries the pack's starter “${s.slice(0, 34)}…” verbatim`);
+  }
   ok(!liveDesk.includes("className: 'cd-banner'"), `[${app.id}] live build: the cost banner is gone`);
   ok(liveDesk.includes("' · ' + DATA.costNote"), `[${app.id}] live build: the cost fact is one hover away on the model badge`);
 }
@@ -287,6 +310,37 @@ ok(!byok.includes('legend-help-guide-link'),
   'BYOK does not send a live conversation away to read a definition');
 ok(byok.includes(PROVENANCE_CLOSING), 'BYOK keeps the closing line');
 ok(byok.includes("e('span', { className: 'cd-tagline' }"), 'BYOK keeps its tagline — one desk, named in its own bar');
+// The starters are the SAME control on both builds — one generator, one set of
+// classes, one send path — offered only where a message can actually be sent.
+ok(byok.includes("e(Starters, { starters: APP.starters, variant: 'big'")
+  && byok.includes("e(Starters, { starters: APP.starters, variant: 'compact'"),
+  'BYOK offers the same starter pills, from its pack’s own starters');
+ok(byok.includes("armed ? e(Starters, { starters: APP.starters, variant: 'big'"),
+  'BYOK offers them only once a key can send them — no button that would fail on tap');
+ok(byok.indexOf("variant: 'compact'") > byok.indexOf("e('div', { className: 'cd-composer' }")
+  && byok.indexOf("variant: 'compact'") < byok.indexOf("'data-testid': 'chat-input'"),
+  'BYOK’s compact row is part of the composer too');
+
+// ═══ B2. the starter pills, as a control ════════════════════════════════════
+// One generator (lib/page.js startersScript) for both page shells, so these run
+// once over the emitted component and hold on every desk of both builds.
+const startersSrc = startersScript();
+for (const [html, name] of [[byok, 'BYOK'], [buildAppPage(APPS[0], deskData(null)), 'desk']]) {
+  ok(html.includes(startersSrc), `[${name}] renders the shared Starters component, byte for byte`);
+}
+ok(startersSrc.includes("type: 'button'"), 'the pills are real buttons (type=button — no form, no submit)');
+ok(startersSrc.includes("role: 'group', 'aria-label': 'Starter questions'"),
+  'the set is one labelled group, so a screen reader announces what these buttons are');
+ok(startersSrc.includes('props.onPick(q)') && startersSrc.includes('disabled: disabled'),
+  'a pill sends the question it shows, and goes dead exactly when the composer does');
+ok(!startersSrc.includes('starters ||') || startersSrc.includes('var list = props.starters || [];'),
+  'the component has no starter list of its own — no page copy can leak in through it');
+ok(STARTERS_CSS.includes('.cd-starters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'),
+  'keyboard focus is visible, in the accent — the same ring every other control uses');
+ok(STARTERS_CSS.includes('flex-wrap: wrap') && STARTERS_CSS.includes('max-width: 100%'),
+  'the pills wrap and never exceed the column — no horizontal overflow at 390px');
+ok(/@media \(prefers-reduced-motion: reduce\) \{ \.cd-starters button \{ transition: none; \} \}/.test(STARTERS_CSS),
+  'reduced motion switches the pills’ only transition off');
 
 // ═══ C. noise metrics — the counts, not the direction ═══════════════════════
 // "desk static element" = chrome whose content reads the same before the first
@@ -299,6 +353,13 @@ ok(byok.includes("e('span', { className: 'cd-tagline' }"), 'BYOK keeps its tagli
 // to measure a real element must still match on a page that really renders it,
 // and the BYOK page is exactly that page: it deliberately kept every static
 // element the desks shed, so it is the living "before" picture.
+//
+// NOT COUNTED, on purpose: the compact starter row. Every probe below is
+// EXPLANATION — prose that teaches something the desk could instead show. The
+// starter row is the composer's own control in a second shape (it does what the
+// input + Send do, with the pack's own questions as its labels), which is the
+// same reason the input, the Send button, the session tabs and the debug control
+// have never been counted either. It is asserted as a control in section B2.
 const PROBES = [
   { id: 'tagline', weight: 1, alive: true, match: (h) => h.includes("className: 'cd-tagline'") },
   { id: 'dot definition rows', weight: PROVENANCE_HELP.length, alive: true, match: (h) => h.includes('legend-help-defs') },

@@ -310,6 +310,41 @@ Live sources are all keyless: iTunes Search and Wikipedia (movies), Open-Meteo a
 
 **Code:** [08-app-gallery/run.js](08-app-gallery/run.js)
 
+## Running the demo live
+
+The **movie desk on the local server build** is the one to present. Its three sources — iTunes Search, Wikipedia plot, Wikipedia reception — are all real, all keyless, all CORS-free, and all reachable without a contact header, so a good turn shows three genuinely live sources and a three-row influence map.
+
+```sh
+npm run gallery:live      # needs .env with ANTHROPIC_API_KEY
+```
+
+Then open **http://localhost:4175/app/movies** (the cards page at `/` links to it).
+
+Nothing has to be typed on stage: the desk's own starter questions are buttons. They sit under the empty state as large pills, and once the conversation has started the same two stay as a quiet row just above the box. They are the pack's `starters` — both films resolve on all three sources:
+
+- `Should I watch "Interstellar" tonight?`
+- `Is "Dune" worth renting?`
+
+### What to click, in order
+
+| # | Click | What it demonstrates |
+|---|---|---|
+| 1 | **a starter pill** (or type and **Send** — same path) | The agent picks its own sources. Watch the status line name each tool as it is consulted; the legend under the reply shows one dot per source with its verbatim `[source: …]` tail. Three green "live" dots = three real APIs answered. |
+| 2 | **Visible reason** | The influence map: three rows, one per source, ranked by semantic alignment. This is read off the run's own recording, not asked of the model. |
+| 3 | **Ignore this source** on the top row | States the counterfactual: "what would it have said without the source it leaned on most?" |
+| 4 | **Re-run without …** | Re-runs the same turn over the *frozen* tool results, minus that one. The server log prints `MCP tool dispatches during re-run = 0` — the world did not move, only the context changed. Whether the verdict flips is the honest part: `confirmed` means the source caused the answer, `not-confirmed` means it did not. |
+| 5 | **Continue from this version** | Forks the conversation at that turn with the source permanently removed. The original is untouched; the two branches diverge from here. |
+| 6 | **debug** (bottom-right) | "What actually happened" — the step-by-step story and the raw trace of the last reply, derived from the same frozen recording. It costs no model call and no fetch; the data already rode in with the reply. |
+
+Step 4 is the claim the whole repo exists to support, and step 6 is the receipt.
+
+### Honest caveats
+
+- **If a source falls back on venue wifi.** A fallback is not a failure — it is the exhibit. The dot turns hollow and the legend says exactly why (`synthetic fallback — HTTP 404`, `— fetch failed`), and the reply is still made from what *did* arrive. Say that out loud and carry on; the influence map still ranks the sources that answered. If you would rather rehearse it deliberately, `GALLERY_FORCE_FALLBACK=1 npm run gallery:live` makes every fetcher fail, labeled.
+- **Pick a film the iTunes catalog actually has.** Apple's public Search API covers movies unevenly — `media=movie` returns nothing at all today, and the unfiltered search misses plenty of major titles (`Blade Runner 2049`, `The Matrix`, `Top Gun: Maverick` all come back empty). When it has no match, `itunes_lookup` says so and falls back rather than substituting a lookalike. `Interstellar`, `Dune`, `Dune: Part Two`, `Jaws`, `Barbie` and `Nope` were all verified live on all three sources; a title you have not rehearsed may not be.
+- **The BYOK build has no MCP.** `npm run byok` produces a static browser bundle where the tools are called directly from the tab — same tool sentences, same provenance labels, but no MCP server and no stdio protocol, because a browser cannot spawn a subprocess. Only `npm run gallery:live` is the real-MCP demo. The BYOK bundle also carries two desks, not three (the SEC blocks browser calls, so the stock desk is server-only).
+- **The trip advisor's `crowd_level` is synthetic on purpose** and says so in every mode. If someone asks whether any source is fake, that one is — by construction, and it is labeled `synthetic — modeled crowd estimate, not measured` rather than dressed up as real.
+
 ## The libraries
 
 | Library | One job | npm |

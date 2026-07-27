@@ -400,6 +400,29 @@ for (const page of [{ id: 'home', html: landing }, ...deskPages]) {
 ok(Object.values(imports).every((t) => t.startsWith('./')),
   'every import-map target is relative', `${Object.keys(imports).length} specifiers`);
 
+// ═══ the starter pills, on the pages a visitor is actually served ═══════════
+// The questions on a BYOK desk are its PACK's, verbatim — the same strings the
+// home's note row lists, in the same order — and they are offered only when a
+// key is armed. A pill's click is the page's own send(), so a tapped question is
+// a typed turn: recorded, explainable, re-runnable.
+for (const d of deskPages) {
+  const app = APPS.find((a) => a.id === d.id);
+  const bootD = bootOf(d.html);
+  ok(bootD.includes("armed ? e(Starters, { starters: APP.starters, variant: 'big'"),
+    `[${d.id}] the empty desk offers the pack’s starters — and only once a key is armed`);
+  ok(bootD.includes("e(Starters, { starters: APP.starters, variant: 'compact'")
+    && bootD.indexOf("variant: 'compact'") > bootD.indexOf("e('div', { className: 'cd-composer' }")
+    && bootD.indexOf("variant: 'compact'") < bootD.indexOf("'data-testid': 'chat-input'"),
+    `[${d.id}] after the first turn they live in the composer, above the box`);
+  ok(bootD.includes('onPick: send'), `[${d.id}] a tapped pill goes through the page’s own send()`);
+  ok(bootD.includes("role: 'group', 'aria-label': 'Starter questions'"),
+    `[${d.id}] the set is one labelled group of real buttons`);
+  for (const s of app.starters) {
+    ok(bootD.includes(JSON.stringify(s).slice(1, -1)),
+      `[${d.id}] the page carries the pack’s starter “${s.slice(0, 34)}…” verbatim`);
+  }
+}
+
 // ═══ the desk pages' badge, both modes (no live run needed) ═════════════════
 const deskData = (model) => ({
   order: ['s1'], active: 's1', live: !!model, model, costNote: '',

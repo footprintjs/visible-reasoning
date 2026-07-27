@@ -744,6 +744,78 @@ function DebugControl(props) {
 `;
 
 /**
+ * The starter questions, as a control. ONE copy, worn by the desk pages and the
+ * BYOK page — same markup, same classes, same behaviour on both transports.
+ *
+ * TWO SIZES, AND ONLY EVER ONE ON SCREEN. Before the first message the desk has
+ * nothing to say except "ask something", so the questions ARE the empty state:
+ * big, centered, tappable. From the first turn on they leave the transcript
+ * entirely and reappear as a quiet row inside the composer — the chat window
+ * keeps carrying runtime information only, and the questions stay one tap away
+ * without ever competing with a reply.
+ *
+ * The compact row is deliberately the muted-chip treatment already used by the
+ * ⓘ and debug controls (var(--muted) on var(--bg), 1px --line, no fill), so it
+ * reads as composer furniture rather than as a second conversation.
+ */
+export const STARTERS_CSS = `
+  .cd-starters { display: flex; flex-wrap: wrap; }
+  .cd-starters button { font: inherit; cursor: pointer; border-radius: 999px; text-align: left;
+    max-width: 100%; transition: color .18s ease, border-color .18s ease, background-color .18s ease; }
+  .cd-starters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-starters button:disabled { opacity: .5; cursor: not-allowed; }
+  @media (prefers-reduced-motion: reduce) { .cd-starters button { transition: none; } }
+
+  /* the empty desk: the one thing to do, in the size of a thing to do */
+  .cd-starters.big { gap: 10px; justify-content: center; margin: 20px 0 0; }
+  .cd-starters.big button { font-size: 15px; font-weight: 600; line-height: 1.35; padding: 12px 20px;
+    color: var(--ink); background: var(--bg); border: 1.5px solid var(--line); }
+  .cd-starters.big button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--soft); }
+
+  /* the composer row: quiet, and never wider than the column */
+  .cd-starters.compact { gap: 7px; margin: 0 0 9px; }
+  .cd-starters.compact button { font-size: 12px; font-weight: 600; padding: 5px 12px;
+    color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cd-starters.compact button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+`;
+
+/**
+ * The starter pills, as a browser component — generated ONCE here and embedded
+ * by both page shells.
+ *
+ * The questions are the PACK's own (`app.starters`, carried in the page data by
+ * both shells); this component writes no copy of its own and has no fallback
+ * list — a pack with no starters renders nothing at all.
+ *
+ * `onPick` is the shell's own `send()`: the identical function the Send button
+ * calls, given the identical argument a typed message produces. A tapped pill is
+ * therefore a typed turn in every way that is recorded — it streams, it commits,
+ * it gets a visible reason and it can be re-run. There is no second send path.
+ */
+export const startersScript = () => `
+// ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
+function Starters(props) {
+  var list = props.starters || [];
+  if (!list.length) return null;
+  var variant = props.variant === 'compact' ? 'compact' : 'big';
+  var disabled = !!props.disabled;
+  return React.createElement('div', {
+      className: 'cd-starters ' + variant, 'data-testid': 'starters-' + variant,
+      role: 'group', 'aria-label': 'Starter questions' },
+    list.map(function (q, i) {
+      return React.createElement('button', {
+        key: q, type: 'button', 'data-testid': 'starter-' + variant + '-' + i,
+        disabled: disabled,
+        // The compact chip may ellipsize on a phone; the full question stays
+        // readable on hover and is the button's accessible name either way.
+        title: variant === 'compact' ? q : null,
+        onClick: function () { props.onPick(q); } }, q);
+    }));
+}
+`;
+
+/**
  * The paints for a provenance verdict. ONE copy, shared by the desks' skin
  * (below) and the home's (HOME_CSS): a definition dot on the home is literally
  * the same element, with the same paint, as the dot on a desk.
@@ -1619,6 +1691,7 @@ export function buildAppPage(app, data) {
 
 ${PROVENANCE_CSS}
 ${DEBUG_CSS}
+${STARTERS_CSS}
 
   /* the "visible reason" panel — slides in from the right */
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
@@ -1697,6 +1770,7 @@ ${/* A desk's dialog is runtime-only: this reply's sources, then the way to the
   provenanceHelpScript(statesForBuild(data.live),
     { defs: false, guideHref: "GALLERY_HREF + '#guide'" })}
 ${debugModalScript()}
+${startersScript()}
 function parseSeed(lines) {
   var uP = 'User: ', aP = DATA.app.assistantLabel + ': ';
   return lines.map(function (l) {
@@ -2184,11 +2258,14 @@ function AppDesk() {
 
   var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
   // What the buttons do is taught on the gallery (#buttons). The desk says only
-  // what is true right now: nothing has been asked yet.
+  // what is true right now: nothing has been asked yet — and the fastest way out
+  // of that state, which is this pack's own starter questions, one tap each.
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' },
-        'Ask a question to begin — or send the starter already in the box.');
+        'Ask a question to begin — or tap one of these.',
+        e(Starters, { starters: DATA.app.starters, variant: 'big',
+          disabled: !HAS_SERVER, onPick: send }));
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : '') },
     e('div', { className: 'cd-main' },
@@ -2216,6 +2293,14 @@ function AppDesk() {
           conversation)),
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
+          // Once the conversation exists it owns the transcript alone, so the
+          // starters move HERE — part of the composer, above the box that does
+          // the same job, in the muted chip treatment the desk's other small
+          // controls already use.
+          hasContent
+            ? e(Starters, { starters: DATA.app.starters, variant: 'compact',
+                disabled: !HAS_SERVER || !!liveTurn, onPick: send })
+            : null,
           e('div', { className: 'cd-inputrow' },
             e('input', { 'data-testid': 'chat-input', value: input, disabled: !HAS_SERVER || !!liveTurn,
               placeholder: HAS_SERVER ? DATA.app.starters[0] : 'Chatting needs the local server',

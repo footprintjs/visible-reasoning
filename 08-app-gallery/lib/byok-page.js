@@ -37,8 +37,8 @@ import { dirname, join } from 'node:path';
 // imported, never re-authored, so a card here and a card in the local gallery
 // are the same element with different truths in it.
 import {
-  DEBUG_CSS, PROVENANCE_CSS, buildHome, codeSeg, debugModalScript, deskNote, orderForHome,
-  programNotes, provenanceHelpScript, question, t as tSeg,
+  DEBUG_CSS, PROVENANCE_CSS, STARTERS_CSS, buildHome, codeSeg, debugModalScript, deskNote,
+  orderForHome, programNotes, provenanceHelpScript, question, startersScript, t as tSeg,
 } from './page.js';
 
 const require = createRequire(import.meta.url);
@@ -376,6 +376,7 @@ ${importMap}
 
 ${PROVENANCE_CSS}
 ${DEBUG_CSS}
+${STARTERS_CSS}
 
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
@@ -503,6 +504,7 @@ ${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
       so the vocabulary still has to be readable without leaving the desk. */
   provenanceHelpScript(BYOK_STATES, { defs: true })}
 ${debugModalScript()}
+${startersScript()}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
@@ -530,7 +532,10 @@ function apiUrlOverride() {
 function makeProvider() {
   if (!apiKey) throw new Error('Paste your Anthropic key above to start.');
   var url = apiUrlOverride();
-  var opts = { apiKey: apiKey, defaultModel: MODEL };
+  // parallelToolCalls: false — the browser half of the server desk's setting
+  // (see lib/chat-core.js). One tool per reply, so each source lands on its own
+  // agent iteration and the influence panel can name all three.
+  var opts = { apiKey: apiKey, defaultModel: MODEL, parallelToolCalls: false };
   if (url) opts.apiUrl = url;
   return browserAnthropic(opts);
 }
@@ -1035,7 +1040,11 @@ function Byok() {
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, armed
         ? 'Ask a question to begin. Every reply carries a “visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.'
-        : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.');
+        : 'Paste your Anthropic key above to start. Nothing is sent anywhere until you do.',
+        // Only once a key can actually send them: an offer that would fail on
+        // tap is worse than no offer. (The pack's own questions, one tap each —
+        // the same component the server desks render.)
+        armed ? e(Starters, { starters: APP.starters, variant: 'big', onPick: send }) : null);
 
   return e('div', { className: 'cd-app' + (panelOpen ? ' panel-open' : ''),
       style: { '--accent': APP.accent, '--accent-dk': APP.accentDark } },
@@ -1065,6 +1074,13 @@ function Byok() {
             DATA.footer.map(function (line, i) { return richLine(line, 'f' + i); })))),
       e('div', { className: 'cd-composer' },
         e('div', { className: 'cd-composer-col' },
+          // After the first turn the starters leave the transcript and live
+          // here, in the composer, quietly — same component, compact size, and
+          // exactly the composer's own enabled/disabled state.
+          hasContent
+            ? e(Starters, { starters: APP.starters, variant: 'compact',
+                disabled: !armed || !!liveTurn, onPick: send })
+            : null,
           e('div', { className: 'cd-inputrow' },
             e('input', { 'data-testid': 'chat-input', value: input, disabled: !armed || !!liveTurn,
               placeholder: armed ? APP.starters[0] : 'Paste your Anthropic key above to start',
