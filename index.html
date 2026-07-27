@@ -1,7 +1,7 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bring your own key — the app gallery</title>
-<meta name="description" content="Two small advisors you can chat with on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
+<meta name="description" content="Two small advisors you can chat with on your own API key — Anthropic, OpenAI or Azure OpenAI — visible reasons, verified what-if re-runs, all in your browser.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23C0531F%22%2F%3E%3Ccircle%20cx%3D%2212.5%22%20cy%3D%2212.5%22%20r%3D%225%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%2F%3E%3Cpath%20d%3D%22M16.2%2016.2%20L24%2024%20M20.5%2020.5%20l3.2%20-3.2%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -202,7 +202,7 @@
       </div>
       <h1 class="vr-h1">Visible Reasoning — the app gallery</h1>
       <p class="vr-lead">Three real chat desks share one machine; every reply can be re-run without a source, to see what that source really changed.</p>
-      <p class="vr-sub">Two of them run right here in your browser, on your own Anthropic API key — <em>the key never leaves your browser.</em></p>
+      <p class="vr-sub">Two of them run right here in your browser, on your own API key — Anthropic, OpenAI or Azure OpenAI — <em>the key never leaves your browser.</em></p>
     </header>
 
     <div class="vr-notes" data-note-group>
@@ -215,13 +215,14 @@
           <div class="vr-fold-inner" id="note-key" data-note-pane>
             <div class="vr-body">
             <p><strong>Your key stays in your browser.</strong></p>
-            <p>This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.</p>
-            <p>Every Claude call goes straight from your browser to <code>api.anthropic.com</code> — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With <strong>keep it in this browser</strong> ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. <strong>Forget my key</strong> erases it from both, instantly.</p>
+            <p>This is a live public demo — it runs entirely in your browser. Your key goes only to the provider you pick; this site’s host (GitHub Pages) never receives it.</p>
+            <p>Every model call goes straight from your browser to that provider’s own API — <code>api.anthropic.com</code>, <code>api.openai.com</code>, or your own <code>*.openai.azure.com</code> resource — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With <strong>keep it in this browser</strong> ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. <strong>Forget my key</strong> erases every provider’s key from both, instantly.</p>
+            <p>Each provider gets its own slot: an OpenAI key is used for OpenAI calls and nothing else, and switching provider never sends one provider’s key to another.</p>
             <p>This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that <em>could</em> see your key.</p>
-            <p>You’ll add your key on the desk you open — this page never asks for one. Leave <strong>keep it in this browser</strong> ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again.</p>
+            <p>You’ll pick your provider and add your key on the desk you open — this page never asks for either. Leave <strong>keep it in this browser</strong> ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again. Keys are kept one slot per provider, so bringing an OpenAI key never disturbs an Anthropic one.</p>
             <p>The one thing this page fetches is its web fonts, from <code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code> — a stylesheet and a few font files, no key, no data of yours, and if those requests fail you get your system fonts and the same page. Nothing else leaves it: this page takes no key at all.</p>
             <p>Every file here — this page, the desks, the vendored library bytes — is generated from that repo and served as-is: <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">source on GitHub</a>.</p>
-            <p class="vr-aside"><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to <code>api.anthropic.com</code>. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
+            <p class="vr-aside"><strong>Don’t take our word for it</strong> — open DevTools → Network and watch: the only requests that carry your key go to the provider you picked. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.</p>
             </div>
           </div>
         </div>
@@ -265,8 +266,8 @@
             </div>
             <div class="vr-kicker">THIS DESK</div>
             <div class="vr-lines">
-              <div>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</div>
-              <div>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</div>
+              <div>your key, your provider — Anthropic (claude-haiku-4-5-20251001), OpenAI (gpt-4o-mini) or your own Azure OpenAI deployment</div>
+              <div>browser-direct: every model call goes from your tab to that provider’s own API — no server in between</div>
               <div>statuses and reply arrive as they happen</div>
               <div>every reply: visible reason → re-run without a source → fork</div>
             </div>
@@ -312,8 +313,8 @@
             </div>
             <div class="vr-kicker">THIS DESK</div>
             <div class="vr-lines">
-              <div>model: claude-haiku-4-5-20251001 — on your key, streamed token by token</div>
-              <div>browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between</div>
+              <div>your key, your provider — Anthropic (claude-haiku-4-5-20251001), OpenAI (gpt-4o-mini) or your own Azure OpenAI deployment</div>
+              <div>browser-direct: every model call goes from your tab to that provider’s own API — no server in between</div>
               <div>statuses and reply arrive as they happen</div>
               <div>every reply: visible reason → re-run without a source → fork</div>
             </div>
@@ -448,7 +449,7 @@
         <div class="vr-fold" data-note-fold>
           <div class="vr-fold-inner" id="note-cost" data-note-pane>
             <div class="vr-body">
-            <p>Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the <strong>frozen</strong> tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.</p>
+            <p>Runs on your key: each reply is a handful of small model calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the <strong>frozen</strong> tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your own provider’s console like any other API traffic.</p>
             <p>Two desks are here, not three: the SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Fewer desks, honestly labeled, beats a desk that pretends.</p>
             </div>
           </div>

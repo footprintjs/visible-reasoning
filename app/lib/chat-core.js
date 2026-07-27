@@ -24,11 +24,38 @@ import { metrics, provenanceFromToolLog, sourceLabelsFromToolLog } from './mcp.j
 import { debugForTurn } from './debug-view.js';
 
 // `makeProvider` is the browser seam: the BYOK page (08-app-gallery/byok/) hands
-// in a factory that returns a fresh `browserAnthropic({ apiKey })` reading the
-// visitor's CURRENT in-tab key. Omitted (every server path), the core behaves
-// exactly as before — node `anthropic()` live, `mock()` otherwise — so the frozen
-// byte gate is untouched.
-export function createChatCore({ live = false, model = 'claude-haiku-4-5-20251001', makeProvider = null } = {}) {
+// in a factory that returns a fresh browser provider — `browserAnthropic`,
+// `browserOpenai` or `browserAzureOpenai`. It is called with the STAMP of the
+// turn being run (below), never left to read "whichever key is armed right now".
+// Omitted (every server path), the core behaves exactly as before — node
+// `anthropic()` live, `mock()` otherwise — so the frozen byte gate is untouched.
+//
+// `model` is the second half of that seam. A STRING is what every server path
+// passes and nothing about it changed. A FUNCTION is what the BYOK page passes,
+// and it is handed the same stamp, because the model id a re-run must send is
+// the one the reply was made with — not the one the top bar shows now.
+//
+// `currentProvider` is the third half, and the reason the other two changed. It
+// is a host getter — "which provider is armed at this instant" — read ONCE per
+// recorded turn and stamped onto it as `session.meta[k].provider`. Everything
+// that runs turn K again is then built from THAT stamp.
+//
+// WHY IT HAS TO WORK THIS WAY. A visitor can chat on Anthropic, switch the
+// picker to OpenAI, and press Re-run. With a late-bound read, af's probes would
+// be built with the model armed at that moment, and the panel would present a
+// DIFFERENT MODEL'S answer as this reply's what-if — a cross-model comparison
+// wearing a counterfactual's clothes, which is the one claim these desks exist
+// to make honestly. Absent `currentProvider` (every server path) the stamp is
+// null and nothing about this file's behaviour changes.
+export function createChatCore({
+  live = false, model = 'claude-haiku-4-5-20251001', makeProvider = null, currentProvider = null,
+} = {}) {
+  const stampNow = () => (currentProvider ? currentProvider() : null);
+  const modelId = (stamp) => (typeof model === 'function' ? model(stamp) : model);
+  // The model id the agent is REALLY built with. One expression, used both to
+  // build the agent and to stamp the turn, so what is recorded cannot drift from
+  // what ran.
+  const modelUsed = (stamp) => (live ? modelId(stamp) : 'mock-1');
   // ═══ The ONE turn factory ═════════════════════════════════════════════════
   // Live turns, rerun probes, baseline probes and fork turns ALL go through this
   // single factory. recordedChat calls it with the union of the session's
@@ -42,7 +69,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   // this host-side `pending` closure.
   let pending = {
     system: '', tools: [], scriptedRespond: () => '', mode: 'record',
-    toolLog: new Map(), maxIterations: 2,
+    toolLog: new Map(), maxIterations: 2, provider: null,
   };
   let probeEventSink = null; // set during a live re-run to count real LLM calls
   // The LIVE event sink — the one seam the streaming UI rides. It is set ONLY
@@ -74,11 +101,17 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   function makeAgent({ specs }) {
     const { tools } = applyAblations([...specs], { tools: pending.tools });
     const toolNames = tools.map((t) => t.schema.name);
+    // WHICH PROVIDER THIS AGENT IS FOR — the stamp of the turn in `pending`, and
+    // `replay` so the host can tell a fresh send (arm a key) from a re-run of a
+    // recorded reply (arm THAT key, or be refused). The host is never left to
+    // read a global: the stamp of a re-run is turn K's own.
+    //
     // FRESH per call — and for BYOK that is load-bearing twice: it keeps the
     // counterfactual discipline AND means swapping or forgetting a key takes
     // effect on the very next send with no re-wiring.
+    const stamp = pending.provider ?? null;
     const provider = makeProvider
-      ? makeProvider()
+      ? makeProvider({ provider: stamp, replay: pending.mode === 'replay' })
       : live
         // `parallelToolCalls: false` ENFORCES the house rule every pack already
         // states in prose ("Call ONE tool, wait for its result … never request
@@ -96,7 +129,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         ? anthropic({ parallelToolCalls: false })
         : mock({ respond: (req) => pending.scriptedRespond(req, { toolNames }) });
     const agent = Agent.create({
-      provider, model: live ? model : 'mock-1', maxIterations: pending.maxIterations,
+      provider, model: modelUsed(stamp), maxIterations: pending.maxIterations,
     }).system(pending.system).tools(tools).build();
     // THE BLUEPRINT — the one thing the debug views need that a recording does
     // not carry. `getSpec()` is a pure read of the chart this agent already IS
@@ -259,6 +292,10 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       session.entity = entity;
       const toolLog = new Map();
       const system = systemFor(pack, entity);
+      // WHO IS ABOUT TO ANSWER, decided once — before the agent exists, so the
+      // stamp cannot describe a provider other than the one that ran. `null` on
+      // every server path (there is one provider there, and it is not a choice).
+      const provider = stampNow();
       // Held by name as well as by `pending`: makeAgent writes this turn's
       // blueprint onto it while the turn runs, and reading it back off the
       // object (rather than off `pending`) keeps that read pinned to THIS turn.
@@ -271,6 +308,7 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         // one LLM call per tool the agent consults, plus one to answer.
         maxIterations: session.decoratedTools.length + 2,
         blueprint: null,
+        provider,
       };
       pending = world;
       liveEventSink = opts.onEvent ?? null;
@@ -284,12 +322,23 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         const sourceLabels = sourceLabelsFromToolLog(toolLog, names);
         session.meta[turn.index] = {
           toolLog, provenance, sourceLabels, system, entity, blueprint: world.blueprint,
+          // THE STAMP: which provider answered this turn, and the model id it
+          // was sent. Everything that runs turn K again reads these two — see
+          // rerunTurnK. They are ids and names, never a key: the key lives in
+          // the page's own closure and no part of it reaches this object.
+          provider, model: modelUsed(provider),
         };
         if (live) {
           console.log(`[live][${pack.id}] ${entity}: `
             + Object.entries(provenance).map(([k, v]) => `${k}=${v}`).join(' '));
         }
         return turn;
+      } catch (err) {
+        // The same stamp on the way out as on the way in: whoever narrates this
+        // failure should name the provider that was asked, and a queue can put
+        // several seconds between the click and the call.
+        try { if (err && typeof err === 'object' && provider) err.providerId = provider.id; } catch (e) {}
+        throw err;
       } finally { liveEventSink = null; }
     });
   }
@@ -428,6 +477,13 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         mode: 'replay',
         toolLog: meta.toolLog ?? new Map(),
         maxIterations: session.decoratedTools.length + 2,
+        // THE TURN'S OWN PROVIDER, never the one armed now. A what-if is only a
+        // what-if of THIS reply if the same model answers it; a probe run on
+        // whatever key happens to be in the page would be a different model's
+        // answer presented as this reply's counterfactual. When that provider
+        // can no longer be reached the host REFUSES here (it is handed the stamp
+        // and `replay: true`) — this file never silently substitutes another.
+        provider: meta.provider ?? null,
       };
       const samples = live ? 2 : 3;   // live cost control (af's floor is 2)
       const dispatchesBefore = metrics.toolDispatches;
@@ -442,6 +498,14 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
           checkBaseline: true,        // unlocks the causal verdict
           samples,
         });
+      } catch (err) {
+        // WHOSE FAILURE THIS IS. The probes ran on the TURN'S provider, which is
+        // not necessarily the one armed now — so the host, which has no other way
+        // to know, is told on the error itself. Without it a 401 from the
+        // recorded provider would be narrated against the selected one, which is
+        // the same untruth as a custody line naming the wrong host.
+        try { if (err && typeof err === 'object' && meta.provider) err.providerId = meta.provider.id; } catch (e) {}
+        throw err;
       } finally { probeEventSink = null; rerunEventSink = null; }
       if (live) {
         const rerunLlmCalls = sink.reduce((n, evs) => n + llmCallIdsFromEvents(evs).length, 0);
@@ -462,6 +526,12 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   // recordedChat.fork owns the transcript seeding + removal merge, identity-
   // checking the re-run result (a fabricated fork throws). The host keeps only
   // the wire id, the label and the excluded ids. The original is untouched.
+  //
+  // NO MODEL RUNS HERE, which is why there is no provider stamp to honour: a
+  // fork copies the re-run's answer into a new transcript and stops. The child's
+  // LATER turns are ordinary turns and stamp themselves with the provider armed
+  // when they are sent — which is right, because they are new replies, not
+  // re-runs of an old one.
   function forkFrom(session, k, rerunId) {
     const hit = session.reruns.get(rerunId);
     if (!hit) throw new Error('unknown rerunId — re-run first, then fork');
