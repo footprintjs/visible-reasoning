@@ -4,7 +4,7 @@
 
 **→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
 
-Two of the desks — trip advisor and movie desk — running on real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own Anthropic key: **it runs entirely in your browser.** Your key goes only to `api.anthropic.com`; the site's host (GitHub Pages) serves static files and has no backend that *could* receive it. Open DevTools → Network and check. (The stock desk gets a card too, disabled — the SEC's servers don't allow browser calls, and the card says so rather than pretending.)
+Two of the desks — trip advisor and movie desk — running on real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own API key — Anthropic, OpenAI or your own Azure OpenAI resource: **it runs entirely in your browser.** Your key goes only to that provider's own API (`api.anthropic.com`, `api.openai.com`, or your `*.openai.azure.com` resource), one slot per provider and never crossed; the site's host (GitHub Pages) serves static files and has no backend that *could* receive it. Open DevTools → Network and check. (The stock desk gets a card too, disabled — the SEC's servers don't allow browser calls, and the card says so rather than pretending.)
 
 ## The libraries it runs on
 
@@ -366,7 +366,7 @@ Step 4 is the claim the whole repo exists to support, and step 6 is the receipt.
 
 ## Bring your own key (hosted or local)
 
-The app gallery has a bring-your-own-key bundle: a gallery home (`index.html`) whose cards open one page per desk (`trip.html`, `movies.html`). Paste your Anthropic key on the desk you picked and chat — visible reasons, verified what-if re-runs and forks included — with everything running in your browser. Every link is relative, so the same folder is correct at `/visible-reasoning/`, at a domain root, or off a local file server.
+The app gallery has a bring-your-own-key bundle: a gallery home (`index.html`) whose cards open one page per desk (`trip.html`, `movies.html`). Pick your provider — Anthropic, OpenAI or Azure OpenAI — paste that provider's key on the desk you opened, and chat: visible reasons, verified what-if re-runs and forks included, with everything running in your browser. Every link is relative, so the same folder is correct at `/visible-reasoning/`, at a domain root, or off a local file server.
 
 ```sh
 npm run byok         # generate 08-app-gallery/out/byok/ and serve it on :4176
@@ -376,9 +376,13 @@ python3 -m http.server 4176 -d 08-app-gallery/out/byok
 
 (A double-clicked `file://` page won't load ES modules — that's a browser platform rule; use any dumb file server, including GitHub Pages.)
 
-**Your key stays in your browser.**  Every Claude call goes straight from your browser to `api.anthropic.com` (agentfootprint's browser provider); the tools are keyless public APIs called from your browser too. There is no backend, so there is no server code that *could* see your key. You add it through the **Key** button in the desk's top bar, which opens the one dialog that ever takes, replaces or erases it. "Keep it in this browser" is ticked by default and puts it in `localStorage`, on your own machine, so it survives a reload, a restart and the trip between desks — a demo whose key evaporates gets re-typed in front of an audience, which is the real hazard. Untick it and the key is held in memory only and is gone on reload. "Forget my key" erases it from `localStorage` *and* `sessionStorage`, instantly. It is never sent to us, never logged, never in a URL — `npm run verify:byok` re-generates the bundle and asserts all of that, on every page that can hold a key.
+**Your key stays in your browser.**  Every model call goes straight from your browser to the API of the provider you picked — `api.anthropic.com`, `api.openai.com`, or your own Azure resource — through agentfootprint's browser providers (`browserAnthropic`, `browserOpenai`, `browserAzureOpenai`); the tools are keyless public APIs called from your browser too. There is no backend, so there is no server code that *could* see your key. You choose the provider and add its key through the **Key** button in the desk's top bar, which opens the one dialog that ever takes, replaces or erases either. Keys are kept **one slot per provider**, so an OpenAI key is used for OpenAI calls and nothing else, and switching provider never sends one provider's key to another. "Keep it in this browser" is ticked by default and puts it in `localStorage`, on your own machine, so it survives a reload, a restart and the trip between desks — a demo whose key evaporates gets re-typed in front of an audience, which is the real hazard. Untick it and the key is held in memory only and is gone on reload. "Forget my key" erases **every** provider's key from `localStorage` *and* `sessionStorage`, instantly. Nothing is ever sent to us, logged, or put in a URL — `npm run verify:byok` re-generates the bundle and asserts all of that, per provider, on every page that can hold a key.
 
-Honest scope: two desks, not three. The SEC's servers don't allow browser calls, so the stock desk runs only in the server demo (`npm run gallery:live`). Each reply spends a handful of small Haiku calls on your key; re-runs replay the original turn's frozen tool results — zero new fetches.
+The models: Anthropic sends `claude-haiku-4-5-20251001`, OpenAI sends `gpt-4o-mini`, and Azure sends your deployment (Azure's "model" *is* the deployment, so the dialog asks for the resource endpoint and the deployment name — only when Azure is chosen; the endpoint is always called over `https`, because an Azure key travels as a request header). Amazon Bedrock and Ollama are not offered in the browser: agentfootprint has no browser Bedrock provider at all — and one would have to sign every request with long-lived AWS credentials living in a stranger's tab — while Ollama listens on `http://localhost`, which an https page may not call.
+
+**A what-if is re-run by the provider that made the reply.** Each turn is stamped with the provider and model id that answered it, and the counterfactual probes are built from that stamp — so switching the picker between a reply and its "re-run without this source" cannot quietly turn the demo's headline proof into a comparison between two different models. If that provider's key is no longer armed, the panel says so and refuses, rather than substituting another one.
+
+Honest scope: two desks, not three. The SEC's servers don't allow browser calls, so the stock desk runs only in the server demo (`npm run gallery:live`). Each reply spends a handful of small model calls on your key; re-runs replay the original turn's frozen tool results — zero new fetches.
 
 ### Publishing the hosted copy
 

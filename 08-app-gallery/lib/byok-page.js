@@ -1,14 +1,15 @@
 // The bring-your-own-key bundle — out/byok/{index,trip,movies}.html.
 //
-//   buildByokLanding({ apps, stock, model })     → index.html, the gallery home
-//   buildByokPage({ importMap, app, model })     → one desk per app page
+//   buildByokLanding({ apps, stock, providers })          → index.html, the home
+//   buildByokPage({ importMap, app, providers })           → one desk per app page
 //
-// Fully static pages where a conference visitor pastes THEIR OWN Anthropic key
-// and gets the same desk experience as the gallery (chat → visible reason →
-// verified what-if re-run → fork), with every byte of agent machinery running in
-// the tab: agentfootprint's browserAnthropic calls api.anthropic.com directly,
-// the tools are client-side fetchers against keyless public APIs, and the
-// influence graph is the same recordedChat wiring lib/chat-core.js already uses.
+// Fully static pages where a conference visitor pastes THEIR OWN API key —
+// Anthropic's, OpenAI's, or their own Azure OpenAI resource's — and gets the
+// same desk experience as the gallery (chat → visible reason → verified what-if
+// re-run → fork), with every byte of agent machinery running in the tab:
+// agentfootprint's browser providers call that provider's API directly, the
+// tools are client-side fetchers against keyless public APIs, and the influence
+// graph is the same recordedChat wiring lib/chat-core.js already uses.
 //
 // The home is a GALLERY, not a desk: cards → click → the app. It teaches (the
 // custody contract, the provenance vocabulary) and takes no key input at all —
@@ -19,10 +20,11 @@
 // THE ARCHITECTURAL GUARANTEE the page exists to make true: the key is
 // UNRECORDABLE BY US. There is no server in the key path — not "we promise not
 // to log it", but "there is no code of ours that could". The page is a plain
-// static file; the only requests carrying the key go to api.anthropic.com; the
-// key lives in a module-scoped variable and reaches storage only behind an
-// explicit checkbox. Every one of those is asserted in verify-byok.mjs and
-// driven in a headless browser with a fake key.
+// static file; the only requests carrying a key go to THAT key's own provider —
+// api.anthropic.com, api.openai.com, or the visitor's own Azure resource, one
+// slot each and never crossed; the keys live in a module-scoped object and
+// reach storage only behind an explicit checkbox. Every one of those is
+// asserted in verify-byok.mjs and driven in a headless browser with fake keys.
 //
 // The skin tokens and the React/atui module shim are duplicated from
 // lib/page.js per the repo's freeze-and-copy convention (07 is the paper's
@@ -58,37 +60,214 @@ const b = (s) => ({ b: s });
 const code = (s) => ({ code: s });
 const em = (s) => ({ em: s });
 
-// WHAT CHANGED, AND WHAT DID NOT. The key is now kept in localStorage — on the
+// ─── THE PROVIDERS A VISITOR MAY BRING A KEY FOR ────────────────────────────
+// Three, and each is here on evidence read out of the agentfootprint bytes this
+// bundle vendors — a browser factory, a real tool-call path (these desks are a
+// three-source comparison; a provider that cannot call tools cannot run one),
+// real streaming, and a destination host the custody sentence can NAME.
+//
+//   Anthropic     browserAnthropic({ apiKey, defaultModel, parallelToolCalls })
+//                 → api.anthropic.com. One tool per reply is enforced ON THE
+//                 WIRE: `parallelToolCalls: false` puts
+//                 `tool_choice.disable_parallel_tool_use` in the body
+//                 (BrowserAnthropicProvider.js buildBody).
+//   OpenAI        browserOpenai({ apiKey, defaultModel })
+//                 → api.openai.com. Tools are real in both directions —
+//                 `req.tools` becomes `body.tools`, and the SSE reader
+//                 accumulates `delta.tool_calls` and hands them back on the
+//                 terminal chunk (BrowserOpenAIProvider.js). It has NO
+//                 parallel-tool-call option, so the page enforces the same rule
+//                 on the response — see `oneToolPerStep` in the boot script.
+//   Azure OpenAI  browserAzureOpenai({ endpoint, apiKey, apiVersion, deployment })
+//                 → the visitor's OWN resource host. It wraps browserOpenai, so
+//                 the body, streaming and tool logic are literally the same
+//                 code; what it adds is the deployment-scoped URL and the
+//                 `api-key` header. Azure's "model" IS the deployment name,
+//                 which is why the dialog asks for one.
+//
+// NOT OFFERED HERE, and the dialog says so rather than leaving a visitor to
+// wonder:
+//   Amazon Bedrock  there is no browser Bedrock provider in agentfootprint —
+//                   `browserBedrock` does not exist and BedrockProvider.js is
+//                   the server adapter, on @aws-sdk/client-bedrock-runtime. So
+//                   it is not a choice that was weighed and declined; there is
+//                   nothing here to choose. Were one written, SigV4 would need
+//                   long-lived AWS credentials living in a stranger's tab — a
+//                   worse trade than an API key, not a better one. (The absence
+//                   is asserted against the vendored bytes in verify-byok.mjs,
+//                   so the copy cannot outlive the fact.)
+//   Ollama          it listens on http://localhost, which an https page may not
+//                   call.
+// Both are ordinary options for agentfootprint on a server.
+const AZURE_API_VERSION = '2024-12-01-preview';
+// Azure's destination is the visitor's own resource, so no build-time string can
+// name it. The copy carries this slot and the page fills it from the endpoint
+// they typed — a custody sentence names the real host or it names nothing.
+const AZURE_HOST_SLOT = '{azure-host}';
+// …and until they name one there is no host to print, so the copy names the
+// FIELD instead. TWO FORMS FROM ONE NOUN, because the same sentence is read in
+// two places: inside the key dialog the endpoint field really is below it, and
+// in the top bar (the model badge's hover, the Key button's title, an error) it
+// is not — a sentence there that says "below" points at nothing.
+const AZURE_RESOURCE_NOUN = 'the Azure resource you name';
+const AZURE_HOST_FALLBACK = {
+  dialog: `${AZURE_RESOURCE_NOUN} below`,
+  elsewhere: `${AZURE_RESOURCE_NOUN} in the Key dialog`,
+};
+
+const PROVIDERS = [
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    // The compile-time destination inside agentfootprint's browser provider.
+    host: 'api.anthropic.com',
+    // UNCHANGED: the model this demo has always sent.
+    model: 'claude-haiku-4-5-20251001',
+    keyTitle: 'Your Anthropic key',
+    keyPlaceholder: 'sk-ant-…',
+    goesTo: 'Anthropic',
+    console: 'Anthropic console',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    host: 'api.openai.com',
+    // WHY THIS MODEL: the cheapest OpenAI model that does BOTH things these
+    // desks depend on — function calling and token streaming — and the exact id
+    // agentfootprint's own browser provider falls back to when a request names
+    // no model (`defaultModel ?? 'gpt-4o-mini'`), so what this page sends and
+    // what the vendored library would have chosen are the same thing.
+    model: 'gpt-4o-mini',
+    keyTitle: 'Your OpenAI key',
+    keyPlaceholder: 'sk-…',
+    goesTo: 'OpenAI',
+    console: 'OpenAI usage dashboard',
+  },
+  {
+    id: 'azure',
+    label: 'Azure OpenAI',
+    host: AZURE_HOST_SLOT,
+    // Azure has no model of ours to name: the deployment IS the model, and it
+    // is the visitor's. The badge shows the deployment they typed.
+    model: null,
+    keyTitle: 'Your Azure OpenAI key',
+    keyPlaceholder: 'your Azure OpenAI key',
+    goesTo: 'your own Azure resource',
+    console: 'Azure portal',
+  },
+];
+const providerById = (id) => PROVIDERS.find((p) => p.id === id);
+
+// The promise, authored ONCE. The Key control's title and the dialog's front
+// line are both built from it in the page (see `promiseLine`), so the control
+// and the dialog cannot come to say different things about where a key goes.
+const KEY_PROMISE = 'Your key stays in your browser.';
+
+// WHAT CHANGED, AND WHAT DID NOT. The key is kept in localStorage — on the
 // visitor's own machine, surviving a reload and a restart, because a demo whose
-// key has to be re-pasted between runs gets re-pasted on a projector. The
-// custody guarantee is untouched by that, and it is the only thing this copy is
-// for: the key goes to api.anthropic.com and to no origin of ours, ever. Where
-// it rests is the visitor's disk; where it travels is Anthropic. Both are said.
+// key has to be re-pasted between runs gets re-pasted on a projector. There are
+// now three possible keys, one slot each. The custody guarantee is untouched by
+// both facts, and it is the only thing this copy is for: a key goes to ITS OWN
+// provider and to no origin of ours, ever. Where it rests is the visitor's disk;
+// where it travels is the provider they picked. Both are said.
+//
+// THIS array is the GALLERY HOME's version — the home takes no key and knows no
+// provider, so it names all three destinations. A desk knows exactly which key
+// it is holding, and its dialog renders `custodyFor(provider)` instead: the same
+// contract with that provider's own host in it.
 const CUSTODY_COPY = [
-  [b('Your key stays in your browser.')],
+  [b(KEY_PROMISE)],
   // The hosted line. This page is published to GitHub Pages, so a visitor's
   // first question is "who is hosting this, and what do they get?" — answered
   // before the mechanics. Pages serves the files and sees those file requests;
   // it never sees the key, because no request carrying the key goes to it.
   [
-    t('This is a live public demo — it runs entirely in your browser. Your key goes only to Anthropic; this site’s host (GitHub Pages) never receives it.'),
+    t('This is a live public demo — it runs entirely in your browser. Your key goes only to the provider you pick; this site’s host (GitHub Pages) never receives it.'),
   ],
   [
-    t('Every Claude call goes straight from your browser to '), code('api.anthropic.com'),
-    t(' — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With '),
+    t('Every model call goes straight from your browser to that provider’s own API — '),
+    code('api.anthropic.com'), t(', '), code('api.openai.com'), t(', or your own '),
+    code('*.openai.azure.com'),
+    t(' resource — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With '),
     b('keep it in this browser'),
     t(' ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. '),
-    b('Forget my key'), t(' erases it from both, instantly.'),
+    b('Forget my key'), t(' erases every provider’s key from both, instantly.'),
+  ],
+  [
+    t('Each provider gets its own slot: an OpenAI key is used for OpenAI calls and nothing else, and switching provider never sends one provider’s key to another.'),
   ],
   [
     t('This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that '),
     em('could'), t(' see your key.'),
   ],
   [
-    b('Don’t take our word for it'), t(' — open DevTools → Network and watch: the only requests that carry your key go to '),
-    code('api.anthropic.com'), t('. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.'),
+    b('Don’t take our word for it'), t(' — open DevTools → Network and watch: the only requests that carry your key go to the provider you picked. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.'),
   ],
 ];
+
+/**
+ * THE SAME CONTRACT, FOR ONE PROVIDER — what a desk's dialog holds behind its
+ * disclosure. Every sentence names THAT provider's destination, so a visitor
+ * reading the fold with OpenAI selected is never shown Anthropic's promise, and
+ * the "open DevTools and check" invitation is true for whichever key they hold.
+ */
+const custodyFor = (p) => {
+  const dest = p.host;                       // the slot, for Azure; the host otherwise
+  const lines = [
+    [t(`This is a live public demo — it runs entirely in your browser. Your key goes only to ${p.goesTo}; this site’s host (GitHub Pages) never receives it.`)],
+    [
+      t('Every model call goes straight from your browser to '), code(dest),
+      t(' — our demo server never sees your key. It is not sent to us, not logged, and not put in any URL. With '),
+      b('keep it in this browser'),
+      t(' ticked it is saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget; untick it and the key is held in memory only and is gone the moment you reload. '),
+      b('Forget my key'), t(' erases every provider’s key from both, instantly.'),
+    ],
+    [t(`Each provider gets its own slot: your ${p.label} key is used for ${p.label} calls and nothing else, and switching provider never sends one provider’s key to another. Switch whenever you like — the next reply uses whichever provider is armed then, and the replies already on screen do not change.`)],
+    [
+      t('This page doesn’t even need our server: it is a plain static file — any dumb file host can serve it, and it chats just the same. That is the guarantee: there is no server code that '),
+      em('could'), t(' see your key.'),
+    ],
+    p.id === 'azure'
+      ? [t('What this desk sends is your deployment, by name — the top bar shows which — at api-version '),
+        code(AZURE_API_VERSION), t('. Azure’s “model” is the deployment, so the deployment you name is the model you get.')]
+      : [t('What this desk sends is '), code(p.model),
+        t(` — the small, cheap model of that family, and the id in the top bar. Usage shows up in your ${p.console} like any other API traffic.`)],
+  ];
+  // ONE HONEST WART PER PROVIDER, where there is one — said here rather than
+  // discovered as a red console line during a demo.
+  //
+  // OpenAI's is small but confusing: measured live from a browser origin, its
+  // 401 for a WRONG key is the one response it serves without an allow-origin
+  // header (a no-key or junk-bearer 401 has one, and so does the preflight), so
+  // the browser refuses to show that reply and a typo arrives looking like a
+  // dropped network. The page's own error message says the same thing.
+  if (p.id === 'openai') {
+    lines.push([
+      t('One quirk worth knowing: if the key is wrong, a browser cannot show you OpenAI’s “incorrect API key” reply — that one response comes back without the header a browser needs, so a typo looks like a network failure. This page says so when it happens, rather than sending you to check your wifi.'),
+    ]);
+  }
+  // The one provider whose door may be shut from the inside.
+  if (p.id === 'azure') {
+    lines.push([
+      t('Azure is the one provider that may refuse this page: plenty of '), code('*.openai.azure.com'),
+      t(' resources do not allow direct browser calls (CORS). That is your resource’s own setting, not this page’s — if the call cannot be made you are told exactly that, and your key still went nowhere.'),
+    ]);
+  }
+  // WHAT IS NOT HERE, and the true reason first. Bedrock is not a choice this
+  // page turned down — agentfootprint ships no browser Bedrock provider at all
+  // (its Bedrock adapter is server-side, on the AWS SDK), so there is nothing to
+  // offer. The custody argument is the answer to "then add one", and it comes
+  // second because it is the weaker of the two facts, not the stronger.
+  lines.push([
+    t('Two more providers agentfootprint can drive on a server are not on this list. Amazon Bedrock is not offered because there is nothing to offer: the library has no browser Bedrock provider — and one would have to sign every request with long-lived AWS credentials living in your tab, which is a worse trade than an API key rather than a better one. Ollama listens on '),
+    code('http://localhost'), t(', which an https page is not allowed to call. Both are ordinary options on a server.'),
+  ]);
+  lines.push([
+    b('Don’t take our word for it'), t(' — open DevTools → Network and watch: the only requests that carry your key go to '),
+    code(dest), t('. Everything else is weather, Wikipedia and iTunes, called keylessly from your browser.'),
+  ]);
+  return lines;
+};
 
 // What a reply spends. True on both surfaces, so both carry it — but neither
 // stands it up as prose any more: on the landing it is the "what a reply costs"
@@ -96,8 +275,8 @@ const CUSTODY_COPY = [
 // which is where the question is actually asked (after a reply exists, about
 // that reply). See USAGE_TITLE.
 const COST_COPY = [
-  t('Runs on your key: each reply is a handful of small Haiku calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the '),
-  b('frozen'), t(' tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your Anthropic console like any other API traffic.'),
+  t('Runs on your key: each reply is a handful of small model calls (one per source the agent consults, plus one to answer); a verified what-if re-run is a few more, replayed over the '),
+  b('frozen'), t(' tool results of the original turn — zero new fetches, and the counter on the re-run card proves it. Usage appears in your own provider’s console like any other API traffic.'),
 ];
 
 // Why the gallery has two cards and a disabled third — a fact about the GALLERY,
@@ -111,9 +290,9 @@ const SCOPE_COPY = [
 // the custody card's promise ("this tab, until you close it") is only kept if the
 // visitor knows which of the two they chose.
 const KEY_TRAVEL_COPY = [
-  t('You’ll add your key on the desk you open — this page never asks for one. Leave '),
+  t('You’ll pick your provider and add your key on the desk you open — this page never asks for either. Leave '),
   b('keep it in this browser'),
-  t(' ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again.'),
+  t(' ticked, as it is by default, and the key is saved on your own machine: it rides with you back to this gallery, into the other desk, across a reload and across a restart, until you press Forget. Untick it and the key is held in memory only, so a reload clears it and the next desk asks again. Keys are kept one slot per provider, so bringing an OpenAI key never disturbs an Anthropic one.'),
 ];
 
 // ─── THE KEY DIALOG'S FRONT LAYER ───────────────────────────────────────────
@@ -122,21 +301,22 @@ const KEY_TRAVEL_COPY = [
 // button. A person who opens it has already decided to paste a key; what they
 // need first is the promise and the field, in that order.
 //
-// So: this one line, then the field. Everything else — the static-file argument,
-// the DevTools invitation, "not logged, not in any URL", and what ticking the
-// box actually does — is UNCHANGED and one click away, behind the dialog's own
-// disclosure row (KEY_MORE_LABEL). Nothing was dropped; the usage paragraph is
-// the single exception, and it did not vanish either: it is the ⓘ beside each
-// reply's "visible reason" button, which is where the question is asked.
+// So: WHOSE key (the three-way choice), the promise, then the field. Everything
+// else — the static-file argument, the DevTools invitation, "not logged, not in
+// any URL", what ticking the box actually does, and what is NOT offered — is one
+// click away, behind the dialog's own disclosure row (KEY_MORE_LABEL). Nothing
+// was dropped; the usage paragraph is the single exception, and it did not
+// vanish either: it is the ⓘ beside each reply's "visible reason" button, which
+// is where the question is asked.
 //
-// The words are the ones already checked: the promise sentence is the Key
-// control's own title, byte for byte, so the control and the dialog cannot come
-// to say different things.
-const KEY_LEAD = [
-  b('Your key stays in your browser.'),
-  t(' It goes only to api.anthropic.com, never to this site.'),
-];
+// The promise line is NOT authored here as a fixed string any more, because it
+// names a destination and the destination is now the visitor's choice: the page
+// builds it from KEY_PROMISE + that provider's host (`promiseLine`), and the Key
+// control's title is the very same call — so the control and the dialog cannot
+// come to say different things about where a key goes.
 const KEY_MORE_LABEL = 'how this works — and how to check it';
+// The picker's own label — what the three buttons are asking.
+const PICKER_LABEL = 'Whose key are you bringing?';
 
 const CHECKBOX_LABEL = 'Keep it in this browser (saved on this machine — still here after a reload or a restart, until you press Forget)';
 const STOCK_NOTE = 'The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo.';
@@ -145,7 +325,6 @@ const STOCK_NOTE = 'The SEC’s servers don’t allow browser calls, so the stoc
 // key is already there, and the control is still the way to replace or clear it.
 const KEY_BTN_IDLE = 'Key';
 const KEY_BTN_SET = 'Key saved · change';
-const KEY_TITLE = 'Your Anthropic key';
 const USAGE_TITLE = 'What this reply cost';
 
 // Leaving a desk for the gallery is a page load: this page's memory — every turn,
@@ -209,15 +388,19 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
  * @param opts.stock  the page-safe slice of the desk that CANNOT run here; it is
  *   listed anyway, not enterable, saying why — the alternative is pretending the
  *   third desk never existed
- * @param opts.model  the model id every desk in this bundle will send
+ * @param opts.providers  the provider table every desk in this bundle offers —
+ *   the one place the model ids and the destination hosts are written down
  */
-export function buildByokLanding({ apps, stock, model }) {
+export function buildByokLanding({ apps, stock, providers = PROVIDERS }) {
+  const named = (id) => providers.find((p) => p.id === id);
   // Four capability lines, all true of THIS bundle: a real model on the
-  // visitor's key, a key path with no server of ours in it, real arrival
-  // streaming, and the re-run/fork machinery every reply carries.
+  // visitor's key — theirs, from whichever of the three providers they bring —
+  // a key path with no server of ours in it, real arrival streaming, and the
+  // re-run/fork machinery every reply carries.
   const facts = [
-    [tSeg(`model: ${model} — on your key, streamed token by token`)],
-    [tSeg('browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between')],
+    [tSeg(`your key, your provider — Anthropic (${named('anthropic').model}), `
+      + `OpenAI (${named('openai').model}) or your own Azure OpenAI deployment`)],
+    [tSeg('browser-direct: every model call goes from your tab to that provider’s own API — no server in between')],
     [tSeg('statuses and reply arrive as they happen')],
     [tSeg('every reply: visible reason → re-run without a source → fork')],
   ];
@@ -261,14 +444,14 @@ export function buildByokLanding({ apps, stock, model }) {
 
   return buildHome({
     docTitle: 'Bring your own key — the app gallery',
-    description: 'Two small advisors you can chat with on your own Anthropic key — visible reasons, '
-      + 'verified what-if re-runs, all in your browser.',
+    description: 'Two small advisors you can chat with on your own API key — Anthropic, OpenAI or '
+      + 'Azure OpenAI — visible reasons, verified what-if re-runs, all in your browser.',
     favicon: FAVICON,
     kicker: 'DEMO · BRING YOUR OWN KEY',
     heading: 'Visible Reasoning — the app gallery',
     lead: [tSeg('Three real chat desks share one machine; every reply can be re-run without a source, '
       + 'to see what that source really changed.')],
-    sub: [tSeg('Two of them run right here in your browser, on your own Anthropic API key — '),
+    sub: [tSeg('Two of them run right here in your browser, on your own API key — Anthropic, OpenAI or Azure OpenAI — '),
       // Not "this tab" any more: a kept key outlives the tab by design. What is
       // still exactly true, and is the claim that matters, is that it never
       // leaves the browser it was typed into.
@@ -326,30 +509,41 @@ export function buildByokLanding({ apps, stock, model }) {
  *
  * @param opts.importMap  the generated, resolution-verified import map (JSON string)
  * @param opts.app        the page-safe slice of the ONE pack this page carries
- * @param opts.model      the model id every request from this page will send
+ * @param opts.providers  the provider table — id, label, destination host, model
+ *   id and dialog copy for every provider this desk will accept a key for
  */
-export function buildByokPage({ importMap, app, model }) {
+export function buildByokPage({ importMap, app, providers = PROVIDERS }) {
   const DATA = JSON.stringify({
-    app, model,
+    app,
+    // THE PROVIDER TABLE, shipped as data so the page never invents one: an id,
+    // the label a visitor reads, the DESTINATION HOST its custody sentence
+    // names, and the model id its requests carry.
+    providers,
+    azureApiVersion: AZURE_API_VERSION,
+    azureHostSlot: AZURE_HOST_SLOT, azureHostFallback: AZURE_HOST_FALLBACK,
     // The custody contract is rendered inside the key dialog — at the moment the
     // visitor decides to paste, and reachable again at any later moment, instead
     // of as a slab above a chat window that a returning visitor never re-reads.
-    // TWO LAYERS, ONE CONTRACT: `keyLead` is the promise, read before the field;
-    // `custody` is the whole of it, one click behind the dialog's own row. Every
-    // sentence still ships — see the note on KEY_LEAD.
-    keyLead: KEY_LEAD, custody: CUSTODY_COPY.slice(1), moreLabel: KEY_MORE_LABEL,
+    // TWO LAYERS, ONE CONTRACT: the promise is built in the page from
+    // `keyPromise` + the chosen provider's host (so the front line and the Key
+    // control's title are one call, not two strings); `custody` is the whole of
+    // it, one click behind the dialog's own row — one array per provider, each
+    // naming that provider's own destination.
+    keyPromise: KEY_PROMISE,
+    custody: Object.fromEntries(providers.map((p) => [p.id, custodyFor(p)])),
+    moreLabel: KEY_MORE_LABEL, pickerLabel: PICKER_LABEL,
     // Still carried, and still rendered — as the ⓘ on each reply, never again as
     // a second paragraph under this dialog's Save button.
     usage: [COST_COPY],
     checkboxLabel: CHECKBOX_LABEL, leaveConfirm: LEAVE_CONFIRM,
     keyBtnIdle: KEY_BTN_IDLE, keyBtnSet: KEY_BTN_SET,
-    keyTitle: KEY_TITLE, usageTitle: USAGE_TITLE,
+    usageTitle: USAGE_TITLE,
   });
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(app.title)} — bring your own key</title>
-<meta name="description" content="${esc(app.tagline)} — on your own Anthropic key, with visible reasons and verified what-if re-runs, all in your browser.">
+<meta name="description" content="${esc(app.tagline)} — on your own API key (Anthropic, OpenAI or Azure OpenAI), with visible reasons and verified what-if re-runs, all in your browser.">
 ${/* An inline data: icon, not a file. The custody copy tells visitors to open
      DevTools → Network and read every request; the browser's automatic
      /favicon.ico probe would put a 404 in that list and make them wonder. This
@@ -514,10 +708,38 @@ ${REPLY_ACTIONS_CSS}
     .by-more-inner { transition: none; }
   }
 
+  /* ── THE PROVIDER PICKER ────────────────────────────────────────────────────
+     Three real radios in one group, wearing the page's pill. Native on purpose:
+     arrow keys move between them, Space picks, a screen reader announces "1 of
+     3", and the whole behaviour is the browser's rather than ours. The label
+     they carry is the provider's name and nothing else — the destination is one
+     line above, in the promise, where it belongs. ── */
+  .by-picker { margin: 12px 0 0; }
+  .by-picklbl { font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 7px; }
+  .by-picks { display: flex; flex-wrap: wrap; gap: 7px; }
+  .by-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
+    color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 13px; cursor: pointer; }
+  .by-pick:hover { color: var(--accent); border-color: var(--accent); }
+  .by-pick.on { color: #fff; background: var(--accent); border-color: var(--accent-dk); }
+  .by-pick input { margin: 0; accent-color: var(--accent-dk); }
+  .by-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   .by-keyform { margin: 14px 0 0; padding: 13px 0 0; border-top: 1px solid var(--line); }
   .by-keyform input[type=password] { width: 100%; padding: 10px 14px; border-radius: 999px;
     border: 1px solid var(--line); background: #fff; font-size: 14px; color: var(--ink); outline: none; }
   .by-keyform input[type=password]:focus { border-color: var(--accent); }
+
+  /* Azure's two extra facts, and ONLY when Azure is the choice: which resource,
+     and which deployment. They are the visitor's coordinates, not their secret —
+     plain text fields, shown back to them, saved beside the key. */
+  .by-azure { display: grid; gap: 9px; margin: 11px 0 0; }
+  .by-field { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .by-field span { display: block; margin: 0 0 4px; }
+  .by-field input { width: 100%; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; font-size: 13px; font-weight: 400; color: var(--ink); outline: none; }
+  .by-field input:focus { border-color: var(--accent); }
   .by-remember { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.5;
     color: var(--muted); margin: 11px 0 0; }
   .by-remember input { margin-top: 2px; flex: 0 0 auto; }
@@ -580,7 +802,7 @@ ${bootScript(DATA, app)}
  */
 function bootScript(DATA, app) {
   return `
-import { browserAnthropic } from 'agentfootprint/llm-providers';
+import { browserAnthropic, browserAzureOpenai, browserOpenai } from 'agentfootprint/llm-providers';
 import { createChatCore } from './app/lib/chat-core.js';
 import { metrics } from './app/lib/mcp.js';
 import { ${app.id} as PACK } from './app/apps/${app.id}.js';
@@ -589,7 +811,8 @@ import { browserToolsFor } from './app/byok/tools.js';
 import { createLocalApi } from './app/byok/local-api.js';
 
 var DATA = ${DATA};
-var MODEL = DATA.model;
+var PROVIDERS = DATA.providers;
+var PROVIDER_IDS = PROVIDERS.map(function (p) { return p.id; });
 var APP = DATA.app;
 // One desk per page: the visitor picked it on the gallery home, so there is no
 // cross-desk state here at all — only this pack, and its own fork tabs.
@@ -607,63 +830,358 @@ ${startersScript()}
 ${replyActionsScript()}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
-// The visitor's key lives HERE and nowhere else: a variable in this module's
-// closure. It is handed to browserAnthropic and to nothing else. In particular
-// it never enters footprint's SharedMemory, so no snapshot, commit log,
-// influence map or export can contain it — that is a property of where the
+// The visitor's keys live HERE and nowhere else: ONE SLOT PER PROVIDER in this
+// module's closure. A slot is handed to that provider's own factory and to
+// nothing else — an OpenAI key can no more reach Anthropic than it can reach us,
+// because the only read of a slot is by the id that names it. In particular no
+// key ever enters footprint's SharedMemory, so no snapshot, commit log,
+// influence map or export can contain one — that is a property of where the
 // value lives, not a promise about what we do with it.
-var apiKey = null;
-var keyTail = '';
-var STORE_KEY = 'byok:anthropic-key';
+var KEYS = { anthropic: null, openai: null, azure: null };
+var TAILS = { anthropic: '', openai: '', azure: '' };
+// Which provider is armed. Module-scope for the same reason the keys are: the
+// send path must read the CURRENT choice, never one React render behind.
+var PROVIDER = PROVIDER_IDS[0];
+// The visitor's own Azure coordinates. Not secrets — the resource they are
+// calling and the deployment they are calling on it — but theirs, so they are
+// kept and cleared exactly like the key beside them. Azure's "model" IS the
+// deployment name, which is why the badge shows it.
+var AZURE = { endpoint: '', deployment: '' };
+
+// WHERE A KEPT KEY RESTS: localStorage, on the visitor's own machine, one named
+// slot per provider, and nowhere else.
+var SLOT = { anthropic: 'byok:key:anthropic', openai: 'byok:key:openai', azure: 'byok:key:azure' };
+var PROVIDER_SLOT = 'byok:provider';
+var AZURE_ENDPOINT_SLOT = 'byok:azure-endpoint';
+var AZURE_DEPLOYMENT_SLOT = 'byok:azure-deployment';
+// Older builds of this page kept ONE key under ONE name — first in
+// sessionStorage, then in localStorage. This build reads NEITHER: both are
+// erased on sight (see the auto-arm effect), so a browser that once ran an older
+// page is never left holding a key nothing can see and nothing would erase. The
+// cost is one re-paste, once; the alternative is a second copy of a key.
+var LEGACY_SLOT = 'byok:anthropic-key';
+var ALL_SLOTS = [SLOT.anthropic, SLOT.openai, SLOT.azure,
+  PROVIDER_SLOT, AZURE_ENDPOINT_SLOT, AZURE_DEPLOYMENT_SLOT, LEGACY_SLOT];
+
+function providerDef(id) {
+  for (var i = 0; i < PROVIDERS.length; i += 1) if (PROVIDERS[i].id === id) return PROVIDERS[i];
+  return PROVIDERS[0];
+}
+
+// ── WHERE THIS KEY WOULD GO, said in one place ─────────────────────────────
+// Anthropic's and OpenAI's hosts are compile-time constants inside
+// agentfootprint's own providers, and they are in the table above. Azure's is
+// the visitor's OWN resource, so it is read off the endpoint they typed: a
+// custody sentence names the real destination or it names nothing.
+// ONE READING of the endpoint field, shared: the host named in the promise is
+// parsed out of the very URL the request will be sent to (azureEndpointUrl), so
+// the sentence and the wire cannot come apart — including over the https upgrade.
+function azureHost() {
+  var url = azureEndpointUrl();
+  if (!url) return '';
+  try { return new URL(url).host; } catch (err) { return ''; }
+}
+// Azure before the visitor has named a resource: there is no host to print, so
+// the copy says where they will name one — and WHERE it says that depends on
+// where it is being read. \`where === 'dialog'\` is the only surface with the
+// fields actually below the sentence; everywhere else (the top bar's badge and
+// Key button, an error message) points at the dialog by name instead of at
+// empty space. Both forms come from the one noun — see AZURE_HOST_FALLBACK.
+function destinationOf(id, where) {
+  if (id !== 'azure') return providerDef(id).host;
+  return azureHost() || (where === 'dialog' ? DATA.azureHostFallback.dialog : DATA.azureHostFallback.elsewhere);
+}
+// ONE SENTENCE, TWO SURFACES: the Key control's title and the dialog's front
+// line are this call, so the control and the dialog cannot come to say different
+// things — and whichever provider is selected, the sentence names ITS host.
+function promiseLine(id, where) { return 'It goes only to ' + destinationOf(id, where) + ', never to this site.'; }
+// The custody paragraphs behind the fold are authored per provider at build
+// time; only Azure's destination is unknowable then, so the slot in its copy is
+// filled here with the resource the visitor actually named.
+function custodyLines(id) {
+  var lines = DATA.custody[id] || [];
+  if (id !== 'azure') return lines;
+  var host = azureHost();
+  return lines.map(function (segs) {
+    return segs.map(function (s) {
+      if (s.code !== DATA.azureHostSlot) return s;
+      // The fold is inside the key dialog, where the fields ARE below.
+      return host ? { code: host } : { t: DATA.azureHostFallback.dialog };
+    });
+  });
+}
 
 // The API base is a compile-time constant inside agentfootprint's browser
-// provider (https://api.anthropic.com/v1/messages). The ONLY override is this
-// in-page hook, read LAZILY at provider construction so a headless test can set
-// it after load. It is deliberately NOT read from the query string: no
-// query-string configuration exists on this page, so no crafted link can
-// redirect a request that carries someone's key.
+// providers (https://api.anthropic.com/v1/messages, https://api.openai.com/v1/
+// chat/completions). The ONLY override is this in-page hook, read LAZILY at
+// provider construction so a headless test can set it after load. It is
+// deliberately NOT read from the query string: no query-string configuration
+// exists on this page, so no crafted link can redirect a request that carries
+// someone's key. Azure needs no hook — its destination is a field the visitor
+// fills in themselves, in front of them, and the promise line names it back.
 function apiUrlOverride() {
   var hook = window.__BYOK_TEST__;
   return hook && typeof hook.apiUrl === 'string' ? hook.apiUrl : null;
 }
 
+// The endpoint agentfootprint is handed for Azure: what the visitor typed,
+// without a trailing slash — and ALWAYS over https.
+//
+// WHY THE SCHEME IS NOT THE VISITOR'S CHOICE. An Azure key travels as the
+// \`api-key\` REQUEST HEADER, so an endpoint typed as \`http://…\` would put it on
+// the wire in the clear, on whatever network the demo is being shown from. A
+// bare hostname was already being upgraded to https; honouring an explicitly
+// typed http:// meant the safer input got the safer treatment and the riskier
+// one did not. So any scheme the visitor types is replaced with https — the
+// same rule for every input, and the promise line names the host that results.
+function azureEndpointUrl() {
+  var raw = String(AZURE.endpoint || '').trim().replace(/\\/+$/, '');
+  if (!raw) return '';
+  return 'https://' + raw.replace(/^[a-z][a-z0-9+.-]*:\\/\\//i, '');
+}
+
+// ═══ ONE TOOL PER STEP — on the providers that cannot say it on the wire ════
+// Anthropic gets \`parallelToolCalls: false\`, which puts
+// \`tool_choice.disable_parallel_tool_use\` into the request body and lets the API
+// itself return at most one tool call per reply. agentfootprint's browser OpenAI
+// provider has no such option (its options are apiKey, defaultModel,
+// defaultMaxTokens, apiUrl, organization, authScheme, reasoning — and nothing
+// about parallel tool calls), and Azure wraps that same provider, so the rule is
+// kept HERE instead, on the response.
+//
+// WHY IT MATTERS, precisely: when a model answers with three tool calls at once,
+// the agent runs all three inside ONE iteration, and agentfootprint's influence
+// report reads ONE tool result per stage (defaultSuspectClassifier takes
+// \`lastToolResult\`) — so the panel would credit the LAST tool of the batch and
+// silently drop the other two. A desk that really consulted three sources would
+// show one bar, and the two it hid could be neither ignored nor re-run. That
+// comparison is the demo, so this is not optional.
+//
+// The decorator is a plain provider wrapper: it sees the request and the
+// response and NEVER the key — the key stays inside the factory's own closure,
+// which is exactly why this is a wrapper and not a fetch hook. Dropping the
+// extra calls is safe for the conversation because agentfootprint rebuilds the
+// wire messages from ITS OWN transcript: the assistant turn it records carries
+// the one call we kept, so the next request has one tool call and one tool
+// result, and the model asks for the next source on the following step —
+// exactly what Anthropic's own switch makes it do.
+function firstToolCallOnly(res) {
+  if (!res || !res.toolCalls || res.toolCalls.length < 2) return res;
+  return Object.assign({}, res, { toolCalls: [res.toolCalls[0]] });
+}
+function oneToolPerStep(inner) {
+  var wrapped = {
+    name: inner.name,
+    complete: function (req) { return inner.complete(req).then(firstToolCallOnly); },
+  };
+  if (inner.stream) {
+    wrapped.stream = async function* (req) {
+      for await (var chunk of inner.stream(req)) {
+        yield chunk && chunk.response
+          ? Object.assign({}, chunk, { response: firstToolCallOnly(chunk.response) })
+          : chunk;
+      }
+    };
+  }
+  return wrapped;
+}
+
+// The model id every request carries. Azure has none of ours to send: the
+// deployment IS the model, so the deployment the visitor named is what goes.
+function modelFor(id) {
+  return id === 'azure' ? (AZURE.deployment || 'azure') : providerDef(id).model;
+}
+// What the badge prints — the same id, except before an Azure deployment exists.
+function modelLabel(id) {
+  return id === 'azure' ? (AZURE.deployment || 'your deployment') : providerDef(id).model;
+}
+
+// ═══ WHICH PROVIDER ANSWERED — stamped on the turn, replayed from the turn ═══
+// A reply is made by ONE provider on ONE model, and the visitor may switch the
+// picker at any moment afterwards. So every turn is stamped as it runs (this is
+// chat-core's \`currentProvider\` seam) and everything that runs that turn AGAIN —
+// the what-if re-run's probes — is built from the stamp instead of from the
+// picker. Without it, chatting on Anthropic and then re-running on OpenAI would
+// put a different model's answer on the what-if card and call it this reply's
+// counterfactual, which is the one thing this desk exists to show honestly.
+//
+// The stamp carries no secret: an id, a model id and — for Azure, whose "model"
+// is a deployment on a resource the visitor names — the coordinates that pair
+// with them. The key itself stays in KEYS, where nothing but this file's own
+// factory call can read it.
+function providerNow() {
+  var id = PROVIDER;
+  return {
+    id: id,
+    model: modelFor(id),
+    endpoint: id === 'azure' ? azureEndpointUrl() : '',
+    deployment: id === 'azure' ? AZURE.deployment : '',
+  };
+}
+// The model id an agent is built with: a re-run gets the one recorded on the
+// turn; a fresh send gets the one the armed provider serves.
+function modelForRun(stamp) { return stamp && stamp.model ? stamp.model : modelFor(PROVIDER); }
+
+// THE ONE SENTENCE A WHAT-IF GETS when the provider that made the reply is no
+// longer armed. There is no second branch: we do not fall back to another
+// provider, because an answer from a different model is not this reply's
+// counterfactual and presenting it as one would be a lie told by the exact
+// feature that is supposed to prove honesty.
+function rerunRefusal(id) {
+  return 'This reply was made on ' + providerDef(id).label + ' — arm that key again to re-run it. '
+    + 'Nothing was re-run on another provider: a what-if answered by a different model is not this reply\\u2019s what-if.';
+}
+// …and the ordinary missing-key sentence, for a fresh send.
+function armFirst(id) {
+  return 'Add your ' + providerDef(id).label + ' key first — the Key button in the top bar.';
+}
+// Both of those are sentences THIS PAGE wrote about its own state, so the error
+// carries a flag saying "print me as I am" — see failMessage. Without it a
+// refusal could be dressed as a provider's reply, and the provider it would name
+// is the one armed NOW, which in the case that matters is precisely the wrong one.
+function refuse(message) {
+  var err = new Error(message);
+  err.plainSentence = true;
+  return err;
+}
+
+// Split in two: failMessage builds the plain-words sentence; \`fail\` (in the
+// component) shows it in a dialog, and the re-run shows the SAME SENTENCE inside
+// the panel — a failed counterfactual must leave the map and the toggles
+// standing, and a modal that has to be dismissed before you can look at either
+// is the wrong shape for it.
+//
+// The words name the provider that actually answered, and the host that actually
+// refused — a message that said "Anthropic" over an OpenAI failure would be the
+// same kind of untruth as a custody sentence naming the wrong host. So the
+// caller passes an id rather than letting this read the selection, and there are
+// two of them because there are two ways to be wrong about it:
+//   a SEND captures the id when the call is made (the key dialog stays reachable
+//     while a reply is in flight, so the selection may have moved since);
+//   a RE-RUN cannot use the selection at all — its probes ran on the provider
+//     recorded on the turn, which chat-core stamps on the error (err.providerId).
+function failMessage(err, sentWith) {
+  var raw = String((err && err.message) || err);
+  // A SENTENCE THIS PAGE WROTE ABOUT ITS OWN STATE goes out as it is. Two of
+  // them exist (armFirst, rerunRefusal) and both are marked at the throw. It
+  // matters most for a refused re-run: that sentence is about the provider
+  // that MADE the reply, and dressing it as a provider's own words would put
+  // the name of the one armed now — the wrong one — at the end of it.
+  if (err && err.plainSentence) return raw;
+  var status = err && err.status;
+  var id = sentWith || PROVIDER;
+  var who = providerDef(id);
+  var host = destinationOf(id);
+  var lead = null;
+  if (status === 401 || status === 403
+    || /\b401\b|\b403\b|authentication_error|invalid x-api-key|invalid_api_key|Access denied/i.test(raw)) {
+    lead = who.label + ' rejected that key (' + (status || 401) + '). Check it and paste it again. '
+      + 'Nothing was stored, and the key went nowhere except ' + host + '.';
+  } else if (status === 429 || /\b429\b|rate_limit/.test(raw)) {
+    lead = who.label + ' is rate-limiting this key (429). Wait a moment and send again.';
+  } else if (status === 400 && /credit|billing|quota/i.test(raw)) {
+    lead = who.label + ' will not run this key right now (billing or quota). Check your ' + who.console + '.';
+  } else if (status === 404 && id === 'azure') {
+    lead = 'Azure answered 404 for that deployment. Check the deployment name and the endpoint — '
+      + 'Azure’s “model” is the deployment, and it is the one in the top bar.';
+  } else if (/Failed to fetch|NetworkError|load failed/i.test(raw)) {
+    lead = 'The call to ' + host + ' could not be read back. Your key went to ' + host
+      + ' and nowhere else.';
+    // WHY THIS BRANCH IS NOT JUST "check the network" for OpenAI.
+    // Measured against the live API on 2026-07-27, from a browser origin:
+    //   • OPTIONS preflight            → 200, access-control-allow-origin: <origin>,
+    //                                    allow-headers content-type,authorization
+    //   • POST with NO key / a junk    → 401 WITH access-control-allow-origin: *
+    //     bearer                         (served by OpenAI's own proxy)
+    //   • POST with a well-formed but   → 401 WITHOUT any allow-origin header
+    //     WRONG sk-… key                  (a different layer answers it)
+    // So a mistyped OpenAI key is invisible to a browser: it arrives as a bare
+    // fetch failure, exactly like a dropped network. Saying "check the network"
+    // would send a visitor to their wifi over a typo, so this says the likelier
+    // thing first. Anthropic has no such wart — its 401 carries allow-origin.
+    if (id === 'openai') {
+      lead += ' A wrong key looks exactly like this from a browser: OpenAI leaves the CORS header off its '
+        + '“incorrect API key” reply, so the browser refuses to show it. Check the key first, then the network.';
+    }
+    // The other refusal that is nobody's mistake: an Azure resource that does
+    // not allow browser calls at all.
+    if (id === 'azure') {
+      lead += ' Azure resources often block direct browser calls (CORS) — that is a setting on your '
+        + 'resource, not on this page.';
+    }
+  }
+  return lead ? lead + '\\n\\n(' + who.label + ' said: ' + raw + ')' : raw;
+}
+
 // Called fresh per agent construction (lib/chat-core.js's makeProvider seam):
-// swapping or forgetting a key takes effect on the very next send.
-function makeProvider() {
-  if (!apiKey) throw new Error('Add your Anthropic key first — the Key button in the top bar.');
+// swapping a key, or switching provider outright, takes effect on the very next
+// send. Each branch hands ITS OWN slot to ITS OWN factory — there is no path
+// here by which one provider's key reaches another's API.
+//
+// \`opts.provider\` is the turn's stamp and \`opts.replay\` says whether this is a
+// re-run of a recorded reply. A re-run therefore builds the provider the reply
+// was MADE with — including the Azure resource and deployment it was made on —
+// and refuses in words when that key is gone.
+function makeProvider(opts) {
+  var stamp = (opts && opts.provider) || null;
+  var id = stamp ? stamp.id : PROVIDER;
+  var keyValue = KEYS[id];
+  if (!keyValue) throw refuse(opts && opts.replay ? rerunRefusal(id) : armFirst(id));
   var url = apiUrlOverride();
+  if (id === 'openai') {
+    var oOpts = { apiKey: keyValue, defaultModel: providerDef('openai').model };
+    if (url) oOpts.apiUrl = url;
+    return oneToolPerStep(browserOpenai(oOpts));
+  }
+  if (id === 'azure') {
+    var zOpts = { apiKey: keyValue, endpoint: (stamp && stamp.endpoint) || azureEndpointUrl(),
+      apiVersion: DATA.azureApiVersion, deployment: (stamp && stamp.deployment) || AZURE.deployment };
+    return oneToolPerStep(browserAzureOpenai(zOpts));
+  }
   // parallelToolCalls: false — the browser half of the server desk's setting
   // (see lib/chat-core.js). One tool per reply, so each source lands on its own
   // agent iteration and the influence panel can name all three.
-  var opts = { apiKey: apiKey, defaultModel: MODEL, parallelToolCalls: false };
-  if (url) opts.apiUrl = url;
-  return browserAnthropic(opts);
+  var aOpts = { apiKey: keyValue, defaultModel: providerDef('anthropic').model, parallelToolCalls: false };
+  if (url) aOpts.apiUrl = url;
+  return browserAnthropic(aOpts);
 }
 
-// WHERE A KEPT KEY RESTS: localStorage, on the visitor's own machine, and
-// nowhere else. It is a deliberate change from tab-scoped storage — a key that
-// evaporates on reload gets re-pasted in front of an audience, and a key typed
-// in front of an audience is the real hazard. What did NOT change is the only
-// thing that matters: no request carrying this key goes to any origin of ours,
-// so nothing of ours can read what is written here, whatever it survives.
+// A kept key rests in localStorage, on the visitor's own machine, in the slot
+// that names its provider — and nowhere else. It is a deliberate choice over
+// tab-scoped storage: a key that evaporates on reload gets re-pasted in front of
+// an audience, and a key typed in front of an audience is the real hazard. What
+// does NOT change with it is the only thing that matters: no request carrying
+// this key goes to any origin of ours, so nothing of ours can read what is
+// written here, whatever it survives.
 //
-// ONE PLACE, NOT TWO. This build writes localStorage only. A tab-scoped key left
-// by an older build is cleared on sight (see the auto-arm effect) rather than
-// read, so there is never a second copy of a key anywhere.
-function storedKey() {
-  try { return window.localStorage.getItem(STORE_KEY); } catch (e) { return null; }
+// ONE WRITER FOR A KEY, and this is it. Everything else that persists is
+// settings — which provider was last armed, and the Azure coordinates — and it
+// goes through rememberSetting, which is never handed a key.
+function storedKey(id) {
+  try { return window.localStorage.getItem(SLOT[id]); } catch (e) { return null; }
 }
-function rememberKey(k) { try { window.localStorage.setItem(STORE_KEY, k); } catch (e) {} }
-function eraseStoredKey() {
-  // Unconditional, and BOTH storages: "Forget" must mean forgotten, including a
-  // key some older build of this page put in the other one.
-  try { window.localStorage.removeItem(STORE_KEY); } catch (e) {}
-  try { window.sessionStorage.removeItem(STORE_KEY); } catch (e) {}
+function rememberKey(id, k) { try { window.localStorage.setItem(SLOT[id], k); } catch (e) {} }
+function rememberSetting(slot, value) { try { window.localStorage.setItem(slot, value); } catch (e) {} }
+function readSetting(slot) { try { return window.localStorage.getItem(slot) || ''; } catch (e) { return ''; } }
+function eraseStored(slots) {
+  // Unconditional, and BOTH storages: "Forget" must mean forgotten, including
+  // anything an older build of this page put in the other one.
+  for (var i = 0; i < slots.length; i += 1) {
+    try { window.localStorage.removeItem(slots[i]); } catch (e) {}
+    try { window.sessionStorage.removeItem(slots[i]); } catch (e) {}
+  }
 }
 
 // ═══ The machine — identical wiring to the server demo ═════════════════════
+// Three seams instead of one string, and all three exist for the same fact: on
+// this page the provider is the VISITOR'S choice and can change between a reply
+// and its what-if. \`currentProvider\` stamps each turn with who answered it;
+// \`makeProvider\` and \`model\` are then handed that stamp, so a re-run is built
+// with the provider and model id of the reply it is a counterfactual OF — never
+// with whatever the picker says now. lib/chat-core.js still accepts a plain
+// string model and no factory, which is what every server path passes.
 var ctx = makeBrowserCtx();
-var core = createChatCore({ live: true, model: MODEL, makeProvider: makeProvider });
+var core = createChatCore({ live: true, model: modelForRun, makeProvider: makeProvider, currentProvider: providerNow });
 var built = browserToolsFor(PACKS, ctx, core.getPending);
 var api = createLocalApi({ core: core, packs: PACKS, perApp: built.perApp });
 
@@ -887,16 +1405,22 @@ function KeyMore(props) {
 }
 
 /**
- * THE KEY DIALOG — the one place a key is entered, replaced or erased.
+ * THE KEY DIALOG — the one place a provider is chosen and a key is entered,
+ * replaced or erased.
  *
  * TWO LAYERS, IN THE ORDER THE VISITOR NEEDS THEM. The promise first, in one
- * line ("your key stays in your browser; it goes only to api.anthropic.com"),
- * then the field, the checkbox and Save. Everything else that was standing prose
- * above the field — the static-file argument, the DevTools invitation, "not
- * logged, not in any URL", what ticking the box does — is the same sentences,
- * one click behind this dialog's own disclosure row. Nothing was cut. The usage
- * paragraph that used to repeat under the Save button is gone from here on
- * purpose: it belongs to a reply, and it is the ⓘ on one.
+ * line, naming THE HOST THIS KEY WOULD GO TO; then whose key it is (three
+ * radios); then the field, the checkbox and Save. Everything else that was
+ * standing prose above the field — the static-file argument, the DevTools
+ * invitation, "not logged, not in any URL", what ticking the box does, and the
+ * two providers this page does NOT offer — is one click behind this dialog's own
+ * disclosure row. Nothing was cut. The usage paragraph that used to repeat under
+ * the Save button is gone from here on purpose: it belongs to a reply, and it is
+ * the ⓘ on one.
+ *
+ * Azure asks for two more things — the resource endpoint and the deployment —
+ * and asks ONLY when Azure is chosen, because for the other two providers there
+ * is nothing to ask: their host is a constant inside the library.
  *
  * The dialog is reachable at any time from the header control, which is the
  * whole point — a demo gets re-run, and re-running it must not mean re-typing a
@@ -939,6 +1463,9 @@ function KeyModal(props) {
 
   function save() { props.onSave(fieldRef.current); }
 
+  var def = providerDef(props.provider);
+  var isAzure = props.provider === 'azure';
+
   return e('div', { className: 'cd-modal-wrap' },
     e('div', { className: 'cd-modal-backdrop', 'data-testid': 'key-backdrop',
       onClick: function () { closeRef.current(); } }),
@@ -946,37 +1473,83 @@ function KeyModal(props) {
         'aria-labelledby': 'by-key-title', id: 'by-key', 'data-testid': 'key-modal',
         tabIndex: -1, ref: boxRef },
       e('div', { className: 'cd-modal-head' },
-        e('h2', { className: 'cd-modal-title', id: 'by-key-title' }, DATA.keyTitle),
+        e('h2', { className: 'cd-modal-title', id: 'by-key-title' }, def.keyTitle),
         e('button', { type: 'button', className: 'cd-modal-close', 'data-testid': 'key-close',
           'aria-label': 'close', onClick: function () { closeRef.current(); } }, '\\u00d7')),
       e('div', { className: 'cd-modal-body' },
-        // THE PROMISE, and then the field. One line, because the person who
-        // opened this came to paste a key.
-        e('p', { className: 'by-lead', 'data-testid': 'key-lead' }, infoSegs(DATA.keyLead)),
+        // THE PROMISE, and then the choice, and then the field. One line, because
+        // the person who opened this came to paste a key — and the line names the
+        // host THIS choice would send it to, so switching provider rewrites it.
+        // 'dialog': the one surface where Azure's not-yet-named resource can be
+        // pointed at as "below", because its field is.
+        e('p', { className: 'by-lead', 'data-testid': 'key-lead' },
+          infoSegs([{ b: DATA.keyPromise }, { t: ' ' + promiseLine(props.provider, 'dialog') }])),
+        // WHOSE KEY. Three native radios in one group: arrow keys move, Space
+        // picks, and a screen reader announces the group and the position.
+        e('div', { className: 'by-picker' },
+          e('div', { className: 'by-picklbl', id: 'by-key-picker' }, DATA.pickerLabel),
+          e('div', { className: 'by-picks', role: 'radiogroup', 'aria-labelledby': 'by-key-picker',
+            'data-testid': 'key-picker' },
+            PROVIDERS.map(function (p) {
+              return e('label', { key: p.id, className: 'by-pick' + (p.id === props.provider ? ' on' : '') },
+                e('input', { type: 'radio', name: 'byok-provider', value: p.id,
+                  'data-testid': 'provider-' + p.id, checked: p.id === props.provider,
+                  onChange: function () { props.onProvider(p.id); } }),
+                p.label);
+            }))),
         // NO <form> element: no submit default, so nothing here can ever turn
         // into a GET navigation that puts a key in a URL.
         e('div', { className: 'by-keyform' },
           e('input', { type: 'password', autoComplete: 'off', spellCheck: 'false', ref: fieldRef,
             'data-testid': 'byok-key',
-            placeholder: props.armed ? 'sk-ant-\\u2026  (paste a new key to replace it)' : 'sk-ant-\\u2026',
+            placeholder: def.keyPlaceholder + (props.armed ? '  (paste a new key to replace it)' : ''),
             onKeyDown: function (ev) { if (ev.key === 'Enter') save(); } }),
+          // Azure's two coordinates — asked for only when Azure is the choice,
+          // and never hidden behind the fold: the endpoint IS the destination
+          // the promise line above names.
+          isAzure
+            ? e('div', { className: 'by-azure', 'data-testid': 'azure-fields' },
+                e('label', { className: 'by-field' },
+                  e('span', null, 'Resource endpoint'),
+                  e('input', { type: 'text', autoComplete: 'off', spellCheck: 'false',
+                    'data-testid': 'azure-endpoint', value: props.azure.endpoint,
+                    placeholder: 'https://my-co.openai.azure.com',
+                    onChange: function (ev) {
+                      props.onAzure({ endpoint: ev.target.value, deployment: props.azure.deployment });
+                    } })),
+                e('label', { className: 'by-field' },
+                  e('span', null, 'Deployment name'),
+                  e('input', { type: 'text', autoComplete: 'off', spellCheck: 'false',
+                    'data-testid': 'azure-deployment', value: props.azure.deployment,
+                    placeholder: 'gpt-4o-mini',
+                    onChange: function (ev) {
+                      props.onAzure({ endpoint: props.azure.endpoint, deployment: ev.target.value });
+                    } })))
+            : null,
           e('label', { className: 'by-remember' },
             e('input', { type: 'checkbox', 'data-testid': 'byok-remember', checked: props.remember,
               onChange: function (ev) { props.onRemember(ev.target.checked); } }),
             DATA.checkboxLabel),
           e('div', { className: 'by-keyacts' },
             e('button', { type: 'button', 'data-testid': 'byok-arm', onClick: save }, 'Save'),
-            props.armed
+            // Forget is offered whenever ANY provider holds a key, because it
+            // erases all of them — a button that says "my key" while leaving two
+            // others behind would be the lie this page exists not to tell.
+            props.anyArmed
               ? e('button', { type: 'button', className: 'by-forget', 'data-testid': 'byok-forget',
                   onClick: props.onForget }, 'Forget my key')
               : null,
-            // The only echo of the key anywhere on this page — four characters,
-            // in the dialog the visitor opened, never in the page chrome.
+            // The only echo of a key anywhere on this page — four characters, of
+            // the key for THIS provider, in the dialog the visitor opened, never
+            // in the page chrome.
             props.armed
               ? e('span', { className: 'by-keytail', 'data-testid': 'byok-keytail' }, 'key \\u2026' + props.tail)
               : null)),
-        // …and the rest of the contract, whole, one click away.
-        e(KeyMore, { label: DATA.moreLabel, lines: DATA.custody }))));
+        // …and the rest of the contract, whole, one click away — this provider's.
+        // No remount on a provider switch: an open fold stays open and its words
+        // change under the visitor, which is exactly how you compare two
+        // custody promises.
+        e(KeyMore, { label: DATA.moreLabel, lines: custodyLines(props.provider) }))));
 }
 
 /** Depth-safe stringify for the leak check — cycles become '[circular]'. */
@@ -993,10 +1566,24 @@ function safeStringify(value) {
   });
 }
 
+/** The render-side view of the key slots: which providers hold one, and its tail. */
+function emptyKeyInfo() {
+  var info = {};
+  PROVIDER_IDS.forEach(function (id) { info[id] = { has: false, tail: '' }; });
+  return info;
+}
+
 function Byok() {
   var d0 = React.useState(INITIAL); var desk = d0[0], setDesk = d0[1];
-  var a0 = React.useState(!!storedKey()); var armed = a0[0], setArmed = a0[1];
-  var t0 = React.useState(''); var tail = t0[0], setTail = t0[1];
+  // ONE ROW PER PROVIDER, never a single flag: "is a key armed" is a question
+  // about the provider that is selected, and the answer must not be borrowed
+  // from another provider's slot.
+  var a0 = React.useState(emptyKeyInfo); var keyInfo = a0[0], setKeyInfo = a0[1];
+  var p0 = React.useState(PROVIDER_IDS[0]); var provider = p0[0], setProviderSel = p0[1];
+  var z0 = React.useState({ endpoint: '', deployment: '' }); var azure = z0[0], setAzureCfg = z0[1];
+  var armed = !!keyInfo[provider].has;
+  var tail = keyInfo[provider].tail;
+  var anyArmed = PROVIDER_IDS.some(function (id) { return keyInfo[id].has; });
   // DEFAULT ON. This desk is shown from a stage: the common case is the same
   // person, the same machine, several runs, and a key they should type once.
   var r0 = React.useState(true); var remember = r0[0], setRemember = r0[1];
@@ -1017,16 +1604,29 @@ function Byok() {
   var panelRef = React.useRef(null);
 
   // A kept key arms itself on load — that is the whole point of the checkbox:
-  // surviving a reload, a restart, and the gap between two rehearsals.
+  // surviving a reload, a restart, and the gap between two rehearsals. Every
+  // provider's slot is read, so switching provider after a reload finds the key
+  // that belongs to it, and finds nothing when there is nothing.
   //
-  // The sessionStorage sweep is not defensive noise: an older build of this page
-  // wrote the key there, and this build never reads that copy. Clearing it on
-  // sight means a browser that once ran the old page is not left holding a key
-  // nothing can see and nothing would erase.
+  // The legacy sweep is not defensive noise: two older builds of this page wrote
+  // a key under a different name (one of them in sessionStorage), and this build
+  // reads neither. Clearing them on sight means a browser that once ran an older
+  // page is not left holding a key nothing can see and nothing would erase.
   React.useEffect(function () {
-    try { window.sessionStorage.removeItem(STORE_KEY); } catch (err) {}
-    var k = storedKey();
-    if (k) { apiKey = k; keyTail = k.slice(-4); setArmed(true); setTail(keyTail); setRemember(true); }
+    eraseStored([LEGACY_SLOT]);
+    var info = emptyKeyInfo();
+    var found = false;
+    PROVIDER_IDS.forEach(function (id) {
+      var k = storedKey(id);
+      if (k) { KEYS[id] = k; TAILS[id] = k.slice(-4); found = true; info[id] = { has: true, tail: TAILS[id] }; }
+    });
+    AZURE = { endpoint: readSetting(AZURE_ENDPOINT_SLOT), deployment: readSetting(AZURE_DEPLOYMENT_SLOT) };
+    var last = readSetting(PROVIDER_SLOT);
+    if (last && SLOT[last]) PROVIDER = last;
+    setKeyInfo(info);
+    setAzureCfg({ endpoint: AZURE.endpoint, deployment: AZURE.deployment });
+    setProviderSel(PROVIDER);
+    if (found) setRemember(true);
   }, []);
 
   var sess = desk.sessions[desk.active];
@@ -1056,81 +1656,116 @@ function Byok() {
   }
 
   // Failures are shown, never swallowed — and never posted anywhere: there is no
-  // telemetry on this page. Anthropic's own error bodies do not echo keys, and
-  // the raw line is kept after the plain-words lead so a visitor can still see
+  // telemetry on this page. No provider's error body echoes a key back, and the
+  // raw line is kept after the plain-words lead so a visitor can still see
   // exactly what the API said.
   function closePanel() {
     panelRef.current = null;
     patch(function (d) { d.panelKey = null; return d; });
   }
-  // Split in two: failMessage builds the plain-words sentence, fail shows it
-  // in a dialog. The re-run reuses the SENTENCE inside the panel — a failed
-  // counterfactual must leave the map and the toggles standing, and a modal that
-  // has to be dismissed before you can look at either is the wrong shape for it.
-  var failMessage = function (err) {
-    var raw = String((err && err.message) || err);
-    var status = err && err.status;
-    var lead = null;
-    if (status === 401 || /\b401\b|authentication_error|invalid x-api-key/.test(raw)) {
-      lead = 'Anthropic rejected that key (401 — invalid x-api-key). Check it and paste it again. '
-        + 'Nothing was stored, and the key went nowhere except api.anthropic.com.';
-    } else if (status === 429 || /\b429\b|rate_limit/.test(raw)) {
-      lead = 'Anthropic is rate-limiting this key (429). Wait a moment and send again.';
-    } else if (status === 400 && /credit|billing/i.test(raw)) {
-      lead = 'Anthropic will not run this key right now (billing or credit). Check your Anthropic console.';
-    } else if (/Failed to fetch|NetworkError|load failed/i.test(raw)) {
-      lead = 'The call to api.anthropic.com could not be made — check the network. Your key never left this tab.';
-    }
-    return lead ? lead + '\\n\\n(Anthropic said: ' + raw + ')' : raw;
-  };
-  var fail = function (err) { window.alert(failMessage(err)); };
+  var fail = function (err, sentWith) { window.alert(failMessage(err, sentWith)); };
 
   // ═══ arming / forgetting ════════════════════════════════════════════════
   // The argument is the dialog's own field, handed in by KeyModal — this
   // component never holds a reference to the input, so there is no path by which
   // a key could be read back out of the DOM after it is taken.
+  //
+  // EVERYTHING HERE IS SCOPED TO ONE PROVIDER, the selected one: its slot, its
+  // storage, its tail. Saving an OpenAI key cannot touch an Anthropic one, and
+  // only Forget (below) reaches across all three.
+  function persist(id) {
+    // The checkbox, honoured: ticked writes THIS provider's slot and the
+    // settings beside it; unticked ERASES them — it does not merely skip a write.
+    if (remember) rememberKey(id, KEYS[id]); else eraseStored([SLOT[id]]);
+    var settings = id === 'azure'
+      ? [PROVIDER_SLOT, AZURE_ENDPOINT_SLOT, AZURE_DEPLOYMENT_SLOT]
+      : [PROVIDER_SLOT];
+    if (!remember) { eraseStored(settings); return; }
+    rememberSetting(PROVIDER_SLOT, id);
+    if (id === 'azure') {
+      rememberSetting(AZURE_ENDPOINT_SLOT, AZURE.endpoint);
+      rememberSetting(AZURE_DEPLOYMENT_SLOT, AZURE.deployment);
+    }
+  }
   function arm(el) {
+    var id = PROVIDER;
     var k = el && el.value ? el.value.trim() : '';
+    // Azure is the one provider we cannot call on a key alone: without the
+    // resource and the deployment there is no URL to send it to, so we say that
+    // instead of failing later with a network error.
+    if (id === 'azure' && !(AZURE.endpoint.trim() && AZURE.deployment.trim())) {
+      window.alert('Azure needs both the resource endpoint and the deployment name — the two fields above.');
+      return;
+    }
     // Re-saving with an empty field while a key is already armed is the visitor
-    // changing the checkbox, not a mistake: honour the choice for the key held.
+    // changing the checkbox (or their Azure coordinates), not a mistake: honour
+    // the choice for the key held.
     if (!k) {
-      if (!apiKey) { window.alert('Paste your Anthropic API key first.'); return; }
-      if (remember) rememberKey(apiKey); else eraseStoredKey();
+      if (!KEYS[id]) { window.alert('Paste your ' + providerDef(id).label + ' API key first.'); return; }
+      persist(id);
       setKeyOpen(false);
       return;
     }
-    apiKey = k;
-    keyTail = k.slice(-4);
-    if (remember) rememberKey(k); else eraseStoredKey();
+    KEYS[id] = k;
+    TAILS[id] = k.slice(-4);
+    persist(id);
     if (el) el.value = '';           // the key string leaves the DOM immediately
-    setArmed(true);
-    setTail(keyTail);
+    setKeyInfo(function (info) {
+      var next = Object.assign({}, info);
+      next[id] = { has: true, tail: TAILS[id] };
+      return next;
+    });
     setKeyOpen(false);
   }
+  // FORGET MEANS ALL OF THEM. The button says "my key"; a visitor who presses it
+  // means every key they ever gave this page — so it clears every provider's
+  // slot in memory, every slot in BOTH storages, the settings beside them and the
+  // names two older builds used.
   function forget() {
-    apiKey = null;
-    keyTail = '';
-    eraseStoredKey();
-    setArmed(false);
-    setTail('');
+    PROVIDER_IDS.forEach(function (id) { KEYS[id] = null; TAILS[id] = ''; });
+    AZURE = { endpoint: '', deployment: '' };
+    eraseStored(ALL_SLOTS);
+    setKeyInfo(emptyKeyInfo());
+    setAzureCfg({ endpoint: '', deployment: '' });
     setKeyOpen(false);
+  }
+  // Switching provider is a live change to what the next send will do, so the
+  // module-scope selection moves with the rendered one — never a render behind.
+  function chooseProvider(id) {
+    PROVIDER = id;
+    setProviderSel(id);
+  }
+  // The Azure coordinates are the visitor's, not secrets: kept in state so the
+  // fields show them back, and mirrored into module scope because makeProvider
+  // reads them at construction time.
+  function changeAzure(cfg) {
+    AZURE = { endpoint: cfg.endpoint, deployment: cfg.deployment };
+    setAzureCfg({ endpoint: cfg.endpoint, deployment: cfg.deployment });
   }
 
   // ═══ the four calls — local functions, no HTTP, no server ═══════════════
   function send(explicit) {
     var msg = (typeof explicit === 'string' ? explicit : input).trim();
     if (!msg) return;
-    // Guard on the KEY, not on React's armed flag: apiKey is the module-scope
-    // variable that actually enables a call, and unlike a rendered flag it is
-    // never one render behind.
+    // Guard on the KEY OF THE SELECTED PROVIDER, not on a rendered flag: KEYS is
+    // the module-scope object that actually enables a call, and unlike a rendered
+    // flag it is never one render behind. A key in another provider's slot is not
+    // a key for this call and does not open the gate.
     //
     // NO KEY IS NOT AN ERROR, IT IS A MISSING STEP. The composer and the starter
     // pills stay live without one, and asking for it here — the dialog, opened
     // at the moment it is needed — beats a disabled box that explains itself in
     // a placeholder. The message is put in the composer rather than dropped, so
     // a tapped pill is still there to send once the key is in.
-    if (!apiKey) { setInput(msg); setKeyOpen(true); return; }
+    if (!KEYS[PROVIDER]) { setInput(msg); setKeyOpen(true); return; }
     if (LIVE) return;                    // one in-flight turn per page
+    // WHO THIS TURN IS BEING SENT WITH, captured now: the key dialog stays
+    // reachable while a reply is in flight, so a failure must be narrated
+    // against the provider that made the call, not the one on screen when it
+    // came back. chat-core stamps the same id on anything it throws (the turn
+    // may sit in the queue behind a re-run before it runs at all); this is the
+    // fallback for a failure that never reached a turn.
+    var sentWith = PROVIDER;
     setInput('');
     LIVE = { userMessage: msg, status: null, text: '' };
     LAST_STREAM = { statuses: [], tokenCount: 0, finalReceived: false };
@@ -1155,7 +1790,7 @@ function Byok() {
         return d;
       });
       return j;
-    }).catch(function (err) { done(); return fail(err); });
+    }).catch(function (err) { done(); return fail(err, (err && err.providerId) || sentWith); });
   }
 
   function openReason(sid, ti) {
@@ -1187,6 +1822,10 @@ function Byok() {
     var parts = key.split(':'), sid = parts[0], ti = Number(parts[1]);
     var before = metrics.toolDispatches;
     var labels = labelsForIds(key, ids);
+    // NARRATE A FAILURE AGAINST THE PROVIDER THAT RAN THE PROBES — which is the
+    // one recorded on the turn, not the one selected now. chat-core stamps it on
+    // the error (err.providerId) because only it knows; the selection is the
+    // fallback for anything thrown before a probe ever existed.
     LAST_RERUN = { key: key, ids: ids, statuses: [], finalReceived: false };
     setRerunLive({ key: key, labels: labels, status: null, error: null });
     // Only the panel this re-run belongs to may be repainted by it.
@@ -1208,7 +1847,8 @@ function Byok() {
     }, function (err) {
       // The panel stays alive and the map stays exactly as it was — the note
       // names what was being removed and what failed, and Re-run works again.
-      setRerunLive({ key: key, labels: labels, status: null, error: failMessage(err) });
+      setRerunLive({ key: key, labels: labels, status: null,
+        error: failMessage(err, (err && err.providerId) || PROVIDER) });
       throw err;
     });
   }
@@ -1230,7 +1870,7 @@ function Byok() {
   }
 
   // A real test seam (not theater): the exact handlers, callable headless.
-  // It exposes the key's LAST FOUR characters at most — never the key.
+  // It exposes a key's LAST FOUR characters at most — never a key.
   window.__byok = {
     appId: APP.id,
     // arm() takes the dialog's own field (KeyModal hands it in), so a drive
@@ -1241,12 +1881,26 @@ function Byok() {
     isArmed: function () { return armed; },
     remembers: function () { return remember; },
     keyTail: function () { return tail; },
+    // The provider seam, so a drive can prove per-provider isolation the way a
+    // visitor makes it: pick, save, pick again.
+    provider: function () { return PROVIDER; },
+    chooseProvider: chooseProvider,
+    setAzure: changeAzure,
+    azure: function () { return { endpoint: AZURE.endpoint, deployment: AZURE.deployment }; },
+    model: function () { return modelFor(PROVIDER); },
+    // Which slots hold a key — the FACT, never the value.
+    armedProviders: function () {
+      return PROVIDER_IDS.filter(function (id) { return !!KEYS[id]; });
+    },
     send: function (m) { setInput(m); return send(m); },
     reason: openReason, rerun: doRerun, fork: doFork,
     // The guard's own inputs, so a drive can prove WHEN it fires, not just that
     // a dialog appeared: false before the first message, true after it lands.
     hasConversation: hasConversation,
-    getState: function () { return { appId: APP.id, desk: desk, armed: armed, tail: tail }; },
+    getState: function () {
+      return { appId: APP.id, desk: desk, armed: armed, tail: tail,
+        provider: PROVIDER, model: modelFor(PROVIDER) };
+    },
     // What the last send really saw on the in-tab event channel.
     get lastStream() { return LAST_STREAM; },
     // The same, for the last re-run: every status in arrival order.
@@ -1358,22 +2012,31 @@ function Byok() {
   // ═══ the key control, and the dialog behind it ══════════════════════════
   // ONE control, two states, always in the same place — so replacing a key
   // between two rehearsal runs is a click, not a scroll back through a page.
+  // Both of its titles name the SELECTED provider, and the idle one makes the
+  // custody promise in the same words the dialog's front line does, because it
+  // is the same call (promiseLine) — with no 'dialog' placement, because this
+  // one lives in the top bar and there is nothing below it to point at.
   var keyControl = e('button', { type: 'button',
     className: 'by-keybtn' + (armed ? ' on' : ''), 'data-testid': 'key-open',
     'aria-haspopup': 'dialog', 'aria-controls': 'by-key',
     'aria-expanded': keyOpen ? 'true' : 'false',
     title: armed
-      ? 'Your Anthropic key — replace it, or erase it from this browser'
-      : 'Add your Anthropic key. It goes only to api.anthropic.com, never to this site.',
+      ? 'Your ' + providerDef(provider).label + ' key — replace it, switch provider, or erase it from this browser'
+      : 'Add your ' + providerDef(provider).label + ' key. ' + promiseLine(provider),
     onClick: function () { setKeyOpen(true); } },
     armed ? DATA.keyBtnSet : DATA.keyBtnIdle);
 
-  // The badge names what answered, and stops there. The provider sentence and
-  // the key's last four used to ride along here; both are custody copy, and
-  // custody copy belongs in the key dialog, where it is read.
+  // The badge names what answered, and stops there — and now it FOLLOWS THE
+  // PROVIDER: the model id of whichever key is armed, which for Azure is the
+  // visitor's own deployment. The provider sentence and the key's last four used
+  // to ride along here; both are custody copy, and custody copy belongs in the
+  // key dialog, where it is read. The hover names the destination in its
+  // PLACELESS form (see destinationOf): this badge is in the top bar, so an
+  // Azure resource that has not been named yet is pointed at by the dialog it is
+  // named in, not by a "below" with nothing under it.
   var badge = e('span', { className: 'cd-model' + (armed ? ' live' : ''), 'data-testid': 'model-badge',
-    title: 'Every request from this page goes straight to api.anthropic.com with this model id' },
-    e('span', { className: 'cd-dot ' + (armed ? 'live' : 'notconsulted') }), MODEL);
+    title: 'Every request from this page goes straight to ' + destinationOf(provider) + ' with this model id' },
+    e('span', { className: 'cd-dot ' + (armed ? 'live' : 'notconsulted') }), modelLabel(provider));
 
   var panelOpen = !!(desk.panelKey && desk.reason[desk.panelKey]);
   var panelInner = panelOpen
@@ -1412,7 +2075,7 @@ function Byok() {
     ? e('div', { className: 'cd-thread' }, thread)
     : e('div', { className: 'cd-empty-hint' }, armed
         ? 'Ask a question to begin. Every reply carries a “visible reason” button — tap it to see, as a ranked bar list, exactly which sources shaped the answer.'
-        : 'Ask a question to begin — the Key button, top right, is where your Anthropic key goes. Nothing is sent anywhere until it does.',
+        : 'Ask a question to begin — the Key button, top right, is where your API key goes (Anthropic, OpenAI or Azure OpenAI). Nothing is sent anywhere until it does.',
         // Offered with or without a key. A tap without one is not a failure: it
         // opens the key dialog and keeps the question in the composer, so the
         // pill is still one press from sending. (The pack's own questions, one
@@ -1458,7 +2121,8 @@ function Byok() {
               onKeyDown: function (ev) { if (ev.key === 'Enter') send(); } }),
             e('button', { 'data-testid': 'chat-send', disabled: !!liveTurn, onClick: send }, 'Send'))))),
     keyOpen
-      ? e(KeyModal, { armed: armed, tail: tail, remember: remember,
+      ? e(KeyModal, { armed: armed, anyArmed: anyArmed, tail: tail, remember: remember,
+          provider: provider, onProvider: chooseProvider, azure: azure, onAzure: changeAzure,
           onRemember: setRemember, onSave: arm, onForget: forget,
           onClose: function () { setKeyOpen(false); } })
       : null,
@@ -1493,7 +2157,17 @@ export function packToPageData(app) {
   };
 }
 
+/**
+ * THE PROVIDER TABLE — the one place the destinations, the model ids and the
+ * dialog's per-provider words are written down. byok.js hands it to both
+ * builders and verify-byok.mjs checks the generated pages against it (with the
+ * three hosts hard-coded there as well, so a change here cannot silently
+ * retarget a key without a gate saying so).
+ */
+export const BYOK_PROVIDERS = PROVIDERS;
+
 export const BYOK_COPY = {
-  CUSTODY_COPY, COST_COPY, SCOPE_COPY, KEY_TRAVEL_COPY,
+  CUSTODY_COPY, COST_COPY, SCOPE_COPY, KEY_TRAVEL_COPY, custodyFor,
   CHECKBOX_LABEL, STOCK_NOTE, LEAVE_CONFIRM, BYOK_STATES,
+  KEY_PROMISE, PICKER_LABEL, AZURE_API_VERSION, AZURE_HOST_SLOT, AZURE_HOST_FALLBACK,
 };

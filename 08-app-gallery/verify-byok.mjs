@@ -15,18 +15,53 @@
 // only, ONE script whose every property is asserted from its own bytes, no key
 // field, and the honest not-enterable row for the desk a browser cannot run.
 //
+// The last section is the exception, and it is deliberate: section (h) RUNS the
+// page's own provider logic — lifted out of the generated boot script by name —
+// against a fake OpenAI on a real socket. Two behaviours are load-bearing and
+// invisible to a text lock: one tool call per step (a correct-looking rewrite
+// that broke the stream branch would pass every string check above) and the
+// provider a what-if re-run is computed with.
+//
 //   node 08-app-gallery/verify-byok.mjs
+import { createServer } from 'node:http';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { browserAnthropic, browserAzureOpenai, browserOpenai } from 'agentfootprint/llm-providers';
 import { generate, serve } from './byok.js';
+import { BYOK_PROVIDERS } from './lib/byok-page.js';
 import { HEADER_LINKS, PAPER_AUTHORS, PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
+import { createChatCore } from './lib/chat-core.js';
+import { buildMockTools, decorateTools } from './lib/mcp.js';
+import { createLocalApi } from './byok/local-api.js';
 import { trip } from './apps/trip.js';
 import { APPS } from './apps/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out', 'byok');
 const MODEL = 'claude-haiku-4-5-20251001';
+
+// ═══ THE THREE DESTINATIONS, WRITTEN DOWN HERE TOO ══════════════════════════
+// The page reads its hosts and model ids from lib/byok-page.js's table. A gate
+// that only re-read that table would agree with any edit to it, including one
+// that pointed a key somewhere new — so the custody-critical facts are ALSO
+// stated here, as literals, and the two are checked against each other. Azure's
+// destination is the visitor's own resource and cannot be a literal: what is
+// asserted for it is that the copy carries the SLOT the page fills from the
+// endpoint they typed, and never a host of ours.
+const EXPECT = {
+  anthropic: { label: 'Anthropic', host: 'api.anthropic.com', model: 'claude-haiku-4-5-20251001' },
+  openai: { label: 'OpenAI', host: 'api.openai.com', model: 'gpt-4o-mini' },
+  azure: { label: 'Azure OpenAI', host: '{azure-host}', model: null },
+};
+const PROVIDER_IDS = Object.keys(EXPECT);
+// Azure's destination before the visitor has named a resource, in the two forms
+// the page needs — written out here as literals, because the failure this pins
+// is a sentence pointing at a field that is not on the surface it is read on.
+const AZURE_HOST_FALLBACK = {
+  dialog: 'the Azure resource you name below',
+  elsewhere: 'the Azure resource you name in the Key dialog',
+};
 
 let failed = 0;
 const ok = (cond, label, detail = '') => {
@@ -60,7 +95,10 @@ const bootOf = (h) => h.slice(h.lastIndexOf('<script type="module">'));
 const dataOf = (h) => {
   const src = bootOf(h);
   const start = src.indexOf('var DATA = ') + 'var DATA = '.length;
-  return JSON.parse(src.slice(start, src.indexOf('\nvar MODEL', start)).trim().replace(/;$/, ''));
+  // The payload is ONE line, and the next line is the next `var` — so the end is
+  // the line break, not the name of whatever declaration follows it (which used
+  // to be `var MODEL` and is now `var PROVIDERS`).
+  return JSON.parse(src.slice(start, src.indexOf('\n', start)).trim().replace(/;$/, ''));
 };
 // The desk that carries every page-script property; the checks that are about
 // the SCRIPT (one shared generator) run once over it and are proven identical
@@ -87,29 +125,88 @@ ok(['node:module', 'node:path', 'node:url'].every((k) => imports[k]?.startsWith(
   'node builtins are satisfied by in-page stubs, not left dangling');
 
 // ═══ (b) nothing key-shaped, no server path, no env read ════════════════════
-const REAL_KEY_SHAPE = /sk-ant-[A-Za-z0-9_-]{16,}/;
+// ONE ENTRY PER PROVIDER THE BUNDLE OFFERS, and the list is checked against the
+// provider table before it is used: a fourth provider added to that table
+// without a shape here FAILS LOUDLY rather than shipping a key format nothing
+// scans for. (This gate used to scan for `sk-ant-…` alone, which covered one of
+// the three destinations the page now has.)
+//
+// NOTHING PRINTS A MATCH. A hit reports the file and the provider whose shape
+// matched — never the string, because a gate that echoes the secret it found is
+// the leak it was written to prevent.
+const entropyOf = (s) => {
+  const n = new Map();
+  for (const c of s) n.set(c, (n.get(c) ?? 0) + 1);
+  let h = 0;
+  for (const count of n.values()) { const p = count / s.length; h -= p * Math.log2(p); }
+  return h;
+};
+// Azure's keys carry NO prefix — nothing about the string says "key" — so its
+// entry tests what such a string IS: a bounded run of letters and digits, mixed,
+// with high per-character entropy. Calibrated against 2,000 random keys of each
+// real shape: 1,970/2,000 of the 32-character hex ones and 2,000/2,000 of the
+// 84-character ones trip it, and it fires on NONE of the 17 files this bundle
+// authors. It is deliberately NOT run over vendor/ — those are npm's own
+// published bytes, and they carry inline base64 sourcemaps that any entropy test
+// must either flag or be tuned into uselessness by. The prefixed shapes below DO
+// scan vendor/, and so does the owner-key check, which is a literal comparison.
+const SECRET_RUN = /(?<![A-Za-z0-9])[A-Za-z0-9]{32,96}(?![A-Za-z0-9])/g;
+const looksLikeAnUnprefixedKey = (body) => {
+  for (const m of body.matchAll(SECRET_RUN)) {
+    const s = m[0];
+    if (!/[0-9]/.test(s) || !/[A-Za-z]/.test(s)) continue;
+    if (entropyOf(s) >= 3.3) return true;
+  }
+  return false;
+};
+const PROVIDER_KEY_SHAPES = {
+  anthropic: { what: 'sk-ant-…', hits: (body) => /sk-ant-[A-Za-z0-9_-]{16,}/.test(body) },
+  openai: { what: 'sk-… / sk-proj-…', hits: (body) => /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}/.test(body) },
+  azure: { what: 'no prefix — a high-entropy 32–96 character run', hits: looksLikeAnUnprefixedKey, oursOnly: true },
+};
+ok(BYOK_PROVIDERS.every((p) => PROVIDER_KEY_SHAPES[p.id])
+  && Object.keys(PROVIDER_KEY_SHAPES).length === BYOK_PROVIDERS.length,
+  'every provider this bundle takes a key for has a key shape this gate scans for',
+  `${Object.keys(PROVIDER_KEY_SHAPES).length} shapes · ${BYOK_PROVIDERS.length} providers`);
 const offenders = [];
+let scannedFiles = 0;
 for (const file of walk(outDir)) {
   if (!['.html', '.js', '.json', '.css'].includes(extname(file))) continue;
+  const rel = relative(outDir, file);
   const body = readFileSync(file, 'utf8');
-  if (REAL_KEY_SHAPE.test(body)) offenders.push(relative(outDir, file));
+  scannedFiles += 1;
+  for (const [id, shape] of Object.entries(PROVIDER_KEY_SHAPES)) {
+    if (shape.oursOnly && rel.split('/')[0] === 'vendor') continue;
+    if (shape.hits(body)) offenders.push(`${rel} (${id}-shaped)`);
+  }
 }
-ok(offenders.length === 0, 'no key-shaped literal anywhere in the artifact', offenders.join(', ') || 'clean');
+ok(offenders.length === 0, 'no key-shaped literal anywhere in the artifact — checked once per provider',
+  offenders.join(', ') || `clean over ${scannedFiles} files`);
 
-// The owner's own key must be provably absent — the generator never reads it,
-// and this proves the artifact never carried it.
+// The owner's own keys must be provably absent — the generator never reads .env,
+// and this proves the artifact never carried what is in it. ALL THREE names are
+// read, because the owner now plausibly holds all three keys, and the comparison
+// is against the actual VALUES. Nothing here prints one: the loop reports a name
+// and a verdict, and the value never leaves the comparison it was read for.
+const OWNER_ENV_NAMES = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY'];
 const envPath = join(here, '..', '.env');
 if (existsSync(envPath)) {
-  const ownerKey = (readFileSync(envPath, 'utf8').match(/ANTHROPIC_API_KEY\s*=\s*(\S+)/) ?? [])[1];
-  if (ownerKey && ownerKey.length > 20) {
+  const env = readFileSync(envPath, 'utf8');
+  const checked = [];
+  for (const name of OWNER_ENV_NAMES) {
+    const raw = (env.match(new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(.+)$`, 'm')) ?? [])[1];
+    const value = raw ? raw.trim().replace(/^['"]|['"]$/g, '') : '';
+    if (value.length <= 20) continue;   // a placeholder or an empty slot is not a key
+    checked.push(name);
     let leaked = false;
     for (const file of walk(outDir)) {
       if (statSync(file).size > 20e6) continue;
-      if (readFileSync(file, 'latin1').includes(ownerKey)) { leaked = true; break; }
+      if (readFileSync(file, 'latin1').includes(value)) { leaked = true; break; }
     }
-    ok(!leaked, "the owner's .env key does not appear anywhere in the artifact");
-  } else {
-    console.log('SKIP  owner-key check — no usable ANTHROPIC_API_KEY in .env');
+    ok(!leaked, `the owner's ${name} does not appear anywhere in the artifact`);
+  }
+  if (checked.length === 0) {
+    console.log(`SKIP  owner-key check — no usable ${OWNER_ENV_NAMES.join(' / ')} in .env`);
   }
 } else {
   console.log('SKIP  owner-key check — no .env present');
@@ -131,15 +228,112 @@ for (const d of deskPages) {
     `[${d.id}] the key field is not inside a <form> — no submit default that could put it in a URL`);
 }
 
-// ═══ (c) the right provider actually shipped ════════════════════════════════
-const providerPath = join(outDir, 'vendor/agentfootprint/dist/esm/adapters/llm/BrowserAnthropicProvider.js');
-const provider = existsSync(providerPath) ? readFileSync(providerPath, 'utf8') : '';
+// ═══ (c) the right providers actually shipped ═══════════════════════════════
+// THREE providers are offered now, so all three are checked in the bytes this
+// bundle vendors — not in the library's docs and not from memory. What each
+// desk needs is the same list every time: a compile-time destination, a key that
+// can only come from the caller, real tool calls in BOTH directions (a desk is a
+// three-source comparison), and streaming.
+const vendored = (file) => {
+  const p = join(outDir, 'vendor/agentfootprint/dist/esm/adapters/llm/', file);
+  return existsSync(p) ? readFileSync(p, 'utf8') : '';
+};
+const provider = vendored('BrowserAnthropicProvider.js');
+const openaiProvider = vendored('BrowserOpenAIProvider.js');
 ok(provider.includes('anthropic-dangerous-direct-browser-access'),
   'the vendored browser provider carries the documented direct-browser header');
 ok(provider.includes('https://api.anthropic.com/v1/messages'),
   'the provider’s API base is the compile-time Anthropic endpoint');
 ok(/Browser providers do not read environment variables/.test(provider),
   'the browser provider takes its key ONLY from the caller');
+// Anthropic's one-tool-per-reply switch is real, and it is what the page asks
+// for: without it a three-source desk shows one influence bar.
+ok(provider.includes("body.tool_choice = { type: 'auto', disable_parallel_tool_use: true };")
+  && provider.includes('parallelToolCalls === false'),
+  'the Anthropic provider turns parallelToolCalls:false into disable_parallel_tool_use ON THE WIRE');
+
+// ── OpenAI (and Azure, which literally wraps it) ────────────────────────────
+ok(openaiProvider.includes("const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'"),
+  'the vendored browser OpenAI provider’s API base is the compile-time OpenAI endpoint');
+ok(/browserOpenai[\s\S]{0,400}Browser providers do not read environment variables/.test(openaiProvider),
+  'it too takes its key ONLY from the caller');
+ok(openaiProvider.includes("headers['authorization'] = `Bearer ${options.apiKey}`"),
+  'an OpenAI key travels as the Authorization bearer of that same request — nowhere else');
+ok(openaiProvider.includes("headers['api-key'] = options.apiKey; // Azure OpenAI"),
+  'an Azure key travels as that resource’s api-key header');
+// TOOL CALLS, both directions — the property a desk cannot run without.
+ok(openaiProvider.includes('if (req.tools && req.tools.length > 0)')
+  && openaiProvider.includes('body.tools = req.tools.map(toOpenAITool);'),
+  'it sends the agent’s tools as OpenAI function tools');
+ok(openaiProvider.includes('if (delta.tool_calls)') && openaiProvider.includes('toolCallsByIndex')
+  && openaiProvider.includes("case 'tool_calls':\n            return 'tool_use';"),
+  'it reassembles streamed tool calls and reports the tool_use stop reason');
+ok(openaiProvider.includes('async *stream(req)') && openaiProvider.includes('parseSSE(response.body)'),
+  'it streams real SSE tokens — the desks’ arrival pacing is arrival, not a timer');
+// Azure = the same code plus a deployment-scoped URL. Asserted, because the
+// dialog's Azure branch depends on exactly that.
+ok(openaiProvider.includes('const inner = browserOpenai({')
+  && openaiProvider.includes("`${base}/openai/deployments/${encodeURIComponent(options.deployment)}`"),
+  'browserAzureOpenai wraps that same provider, on a deployment-scoped URL');
+// …and the ONE thing it cannot do, which is why the page does it instead. This
+// is the evidence for `oneToolPerStep`: if a future agentfootprint grows the
+// option, this check fails and the decorator can be replaced by it.
+ok(!/parallel_tool_calls/.test(openaiProvider),
+  'the OpenAI provider has NO parallel-tool-call switch — the page enforces one tool per step itself');
+
+// ── THE PROVIDER THAT IS NOT A CHOICE, checked against the bytes ────────────
+// The key dialog now says Bedrock "is not offered because there is nothing to
+// offer". That is a claim about the library, so it is read off the library: no
+// browser Bedrock factory is exported and no browser Bedrock adapter exists in
+// the tree this bundle vendors. If agentfootprint ever ships one, this fails and
+// the sentence has to be rewritten — which is exactly the point of pinning copy
+// to bytes.
+const vendorAdapters = join(outDir, 'vendor/agentfootprint/dist/esm/adapters/llm');
+const adapterFiles = existsSync(vendorAdapters) ? readdirSync(vendorAdapters) : [];
+const bedrockBrowser = [...walk(join(outDir, 'vendor/agentfootprint'))]
+  .filter((f) => extname(f) === '.js' && /browserBedrock/.test(readFileSync(f, 'utf8')));
+ok(adapterFiles.length > 0 && bedrockBrowser.length === 0
+  && !adapterFiles.includes('BrowserBedrockProvider.js'),
+  'there is no browser Bedrock provider in the vendored library — the dialog’s reason is a fact, not a preference',
+  `${adapterFiles.length} adapters, 0 browser-Bedrock`);
+
+// ═══ ONE PROVIDER'S HOST, ONLY WHERE IT IS ONE PROVIDER'S HOST ══════════════
+// `api.anthropic.com` was this bundle's single destination, and sentences from
+// that time survive the change that ended it: the dev server's own banner was
+// still promising that "every Claude call goes straight from the browser to
+// api.anthropic.com" while two of three providers went elsewhere. A stale
+// sentence in a custody claim is not a typo — it is a promise about the wrong
+// host — so the host may be written in exactly two kinds of place: the PROVIDER
+// TABLE, where it is a fact about one provider, and a passage that names the
+// other destinations too. Anywhere else fails here, with the line printed.
+const SOURCES = ['byok.js', 'lib/byok-page.js', 'publish-byok.mjs'];
+const tableBanner = 'THE PROVIDERS A VISITOR MAY BRING A KEY FOR';
+const strayHostLines = [];
+for (const rel of SOURCES) {
+  const src = readFileSync(join(here, rel), 'utf8');
+  const lines = src.split('\n');
+  // The provider table's own region — from its banner to the line after the
+  // array, which is where `providerById` is declared.
+  const from = lines.findIndex((l) => l.includes(tableBanner));
+  const to = lines.findIndex((l) => l.startsWith('const providerById'));
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!lines[i].includes('api.anthropic.com')) continue;
+    if (from !== -1 && to !== -1 && i >= from && i <= to) continue;   // the table itself
+    const window = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
+    if (window.includes('api.openai.com')) continue;                 // names the others too
+    strayHostLines.push(`${rel}:${i + 1} ${lines[i].trim().slice(0, 70)}`);
+  }
+}
+ok(strayHostLines.length === 0,
+  'api.anthropic.com appears only in the provider table, or in a passage that names the other destinations',
+  strayHostLines.join(' | ') || `${SOURCES.length} source files clean`);
+// …and the banner that was wrong, specifically: the served page says the same
+// thing publish-byok.mjs says, because they answer the same question.
+const serveSrc = readFileSync(join(here, 'byok.js'), 'utf8');
+ok(serveSrc.includes('every model')
+  && serveSrc.includes('call goes straight from the browser to the provider you picked:')
+  && serveSrc.includes("api.anthropic.com, api.openai.com, or your own *.openai.azure.com resource."),
+  'the dev server’s banner names every destination the page can send a key to');
 
 // ═══ key custody, as written ════════════════════════════════════════════════
 // WHERE A KEPT KEY RESTS CHANGED; WHAT CAN READ IT DID NOT. The key is now
@@ -158,56 +352,110 @@ ok(!boot.includes('sessionStorage.setItem'),
   'the key is written to exactly ONE storage — no second copy is ever created');
 ok(boot.includes('localStorage.removeItem') && boot.includes('sessionStorage.removeItem'),
   '"Forget my key" clears BOTH storages, unconditionally');
-// The one write is guarded by the checkbox, and the ONLY caller of the writer is
-// the save handler — an unticked box must leave nothing behind at all.
-ok(/function rememberKey\(k\) \{ try \{ window\.localStorage\.setItem\(STORE_KEY, k\); \}/.test(boot),
-  'exactly one function writes the key, and it writes only the key, only to localStorage');
-ok(/if \(remember\) rememberKey\(k\); else eraseStoredKey\(\);/.test(boot),
+// ONE SLOT PER PROVIDER, and the names are exactly these three — a page that
+// stored two providers under one name would be the "silently reuses another
+// provider's key" bug, spelled in storage.
+ok(/var SLOT = \{ anthropic: 'byok:key:anthropic', openai: 'byok:key:openai', azure: 'byok:key:azure' \};/.test(boot),
+  'each provider’s key has its own named slot — three slots, never one');
+// The one key write is guarded by the checkbox, and the ONLY caller of the
+// writer is the save path — an unticked box must leave nothing behind at all.
+ok(/function rememberKey\(id, k\) \{ try \{ window\.localStorage\.setItem\(SLOT\[id\], k\); \}/.test(boot),
+  'exactly one function writes a key, and it writes only that key, only to its own slot, only to localStorage');
+// The OTHER writer exists now (which provider was last armed, and the visitor's
+// Azure coordinates) and it must never be handed a key: every call site is
+// named here, and each one passes a settings slot.
+const settingWrites = boot.split('\n').map((l) => l.trim()).filter((l) => /rememberSetting\(/.test(l));
+const SETTING_SHAPES = [
+  /^function rememberSetting\(slot, value\) \{ try \{ window\.localStorage\.setItem\(slot, value\); \} catch \(e\) \{\} \}$/,
+  /^rememberSetting\(PROVIDER_SLOT, id\);$/,
+  /^rememberSetting\(AZURE_ENDPOINT_SLOT, AZURE\.endpoint\);$/,
+  /^rememberSetting\(AZURE_DEPLOYMENT_SLOT, AZURE\.deployment\);$/,
+  /^\/\//,
+];
+ok(settingWrites.length > 0 && settingWrites.every((l) => SETTING_SHAPES.some((re) => re.test(l))),
+  'the settings writer is never handed a key — its every call site passes a named non-key slot',
+  settingWrites.filter((l) => !SETTING_SHAPES.some((re) => re.test(l))).join(' | ') || `${settingWrites.length} call sites, all allowed`);
+ok(/if \(remember\) rememberKey\(id, KEYS\[id\]\); else eraseStored\(\[SLOT\[id\]\]\);/.test(boot),
   'an unticked “keep it in this browser” actively erases — it does not merely skip the write');
+// FORGET MEANS EVERY PROVIDER. The button says "my key"; a page that cleared one
+// slot and left two would be lying in the one place it must not.
+ok(/var ALL_SLOTS = \[SLOT\.anthropic, SLOT\.openai, SLOT\.azure,\s*\n?\s*PROVIDER_SLOT, AZURE_ENDPOINT_SLOT, AZURE_DEPLOYMENT_SLOT, LEGACY_SLOT\];/.test(boot)
+  && /function forget\(\) \{\s*\n\s*PROVIDER_IDS\.forEach\(function \(id\) \{ KEYS\[id\] = null; TAILS\[id\] = ''; \}\);/.test(boot)
+  && /eraseStored\(ALL_SLOTS\);/.test(boot),
+  '“Forget my key” drops EVERY provider’s key from memory and erases every slot from both storages');
 // Storage that survives the tab makes a stale key from an OLDER build a real
-// object in a real browser. It is cleared on sight rather than read.
-ok(/window\.sessionStorage\.removeItem\(STORE_KEY\);/.test(boot)
-  && !/sessionStorage\.getItem/.test(boot),
-  'a key left in sessionStorage by an older build is erased on load, never read');
-ok(/var apiKey = null/.test(boot), 'the key lives in a module-scoped page variable');
-ok(boot.includes("keyTail = k.slice(-4)") || boot.includes('slice(-4)'),
+// object in a real browser. It is cleared on sight rather than read — and that
+// now covers BOTH older names, the sessionStorage one and the localStorage one.
+ok(/var LEGACY_SLOT = 'byok:anthropic-key';/.test(boot)
+  && /eraseStored\(\[LEGACY_SLOT\]\);/.test(boot)
+  && !/getItem\(LEGACY_SLOT\)/.test(boot) && !/sessionStorage\.getItem/.test(boot),
+  'a key left by an older build (either storage, either name) is erased on load, never read');
+ok(/var KEYS = \{ anthropic: null, openai: null, azure: null \};/.test(boot),
+  'the keys live in a module-scoped page object — one slot per provider, nothing shared');
+ok(boot.includes("TAILS[id] = k.slice(-4)") || boot.includes('slice(-4)'),
   'only the last four characters are ever shown');
 
-// ═══ THE KEY GOES NOWHERE BUT ANTHROPIC ════════════════════════════════════
+// ═══ A KEY GOES NOWHERE BUT ITS OWN PROVIDER ═══════════════════════════════
 // Section (b) already proves there is no own-origin fetch on the page. These
 // close the other exits a stored key would make attractive: a logger, a beacon,
 // an image ping, a title or a URL carrying it, or the key rendered as page text.
+// And with three keys in the page there is a NEW exit to close: one provider's
+// key reaching another provider's API. That is why the allowlist below is
+// written in terms of `KEYS[id]` — a slot can only be read by the id naming it.
 for (const d of deskPages) {
   const b = bootOf(d.html);
-  ok(!/console\.(log|info|warn|error|debug)\s*\(\s*(apiKey|k\b)/.test(b),
+  ok(!/console\.(log|info|warn|error|debug)\s*\(\s*(KEYS|keyValue|k\b)/.test(b),
     `[${d.id}] the key is never logged`);
   ok(!/sendBeacon|new Image\(|XMLHttpRequest|WebSocket|navigator\.send/.test(b),
     `[${d.id}] there is no beacon, image ping, XHR or socket on the page at all`);
   ok(!/document\.title\s*=/.test(b) && !/history\.(replace|push)State/.test(b),
     `[${d.id}] nothing writes the URL or the tab title — a stored key cannot leak through either`);
-  // THE KEY VALUE IS PASSED TO EXACTLY ONE THING. Not a count (a count drifts
-  // with every comment) — an allowlist of the shapes a key reference may take:
-  // the declaration, the provider hand-off, an assignment, a presence guard, or
-  // a comment. Anything else — apiKey handed to a function, put in an object, or
-  // concatenated into a string — is a new exit and fails here.
+  // A KEY VALUE IS PASSED TO EXACTLY ONE THING, AND IT IS THAT KEY'S OWN
+  // PROVIDER. Not a count (a count drifts with every comment) — an allowlist of
+  // the shapes a key reference may take: the slots' declaration, the three
+  // hand-offs (one per provider factory), an assignment, a read, a presence
+  // guard, or a comment. Anything else — a key handed to another function, put
+  // in an object, or concatenated into a string — is a new exit and fails here.
   const KEY_SHAPES = [
-    /^var apiKey = null;$/,                                  // the one home
-    /^var opts = \{ apiKey: apiKey, defaultModel: MODEL, parallelToolCalls: false \};$/, // the one hand-off
-    /^apiKey = (k|null);$/,                                  // set / cleared
-    /^if \(!apiKey\)/,                                       // presence guards
-    /^if \(remember\) rememberKey\(apiKey\); else eraseStoredKey\(\);$/,
-    /^if \(k\) \{ apiKey = k; keyTail = k\.slice\(-4\);/,     // auto-arm on load
-    /^\/\//,                                                 // prose
+    /^var KEYS = \{ anthropic: null, openai: null, azure: null \};$/,   // the one home
+    /^var keyValue = KEYS\[id\];$/,                                    // the one read
+    // the three hand-offs — each names ITS OWN provider's factory options
+    /^var oOpts = \{ apiKey: keyValue, defaultModel: providerDef\('openai'\)\.model \};$/,
+    /^var zOpts = \{ apiKey: keyValue, endpoint: \(stamp && stamp\.endpoint\) \|\| azureEndpointUrl\(\),$/,
+    /^var aOpts = \{ apiKey: keyValue, defaultModel: providerDef\('anthropic'\)\.model, parallelToolCalls: false \};$/,
+    // the one refusal — two sentences, and neither of them reaches for another slot
+    /^if \(!keyValue\) throw refuse\(opts && opts\.replay \? rerunRefusal\(id\) : armFirst\(id\)\);$/,
+    /^KEYS\[id\] = (k|null);$/,                                        // set / cleared
+    /^if \(!KEYS\[(id|PROVIDER)\]\)/,                                  // presence guards
+    /^PROVIDER_IDS\.forEach\(function \(id\) \{ KEYS\[id\] = null; TAILS\[id\] = ''; \}\);$/,
+    /^if \(remember\) rememberKey\(id, KEYS\[id\]\); else eraseStored\(\[SLOT\[id\]\]\);$/,
+    /^if \(k\) \{ KEYS\[id\] = k; TAILS\[id\] = k\.slice\(-4\); found = true;/,   // auto-arm on load
+    /^return PROVIDER_IDS\.filter\(function \(id\) \{ return !!KEYS\[id\]; \}\);$/, // the has-a-key FACT
+    /^\/\//,                                                           // prose
   ];
-  const keyLines = b.split('\n').map((l) => l.trim()).filter((l) => /\bapiKey\b/.test(l));
+  const keyLines = b.split('\n').map((l) => l.trim()).filter((l) => /\bKEYS\b|\bkeyValue\b/.test(l));
   const strays = keyLines.filter((l) => !KEY_SHAPES.some((re) => re.test(l)));
-  ok(b.includes('apiKey: apiKey') && keyLines.length > 0 && strays.length === 0,
-    `[${d.id}] every use of the key value is one of the allowed shapes — the provider is its only destination`,
+  ok(b.includes('apiKey: keyValue') && keyLines.length > 0 && strays.length === 0,
+    `[${d.id}] every use of a key value is one of the allowed shapes — that key’s own provider is its only destination`,
     strays.join(' | ') || `${keyLines.length} references, all allowed`);
+  // …and the hand-off is reached only through the slot named by the provider
+  // being built — the TURN'S stamp when there is one (a re-run) and the current
+  // selection when there is not (a fresh send). Either way one id chooses both
+  // the slot and the factory, so there is no path by which one provider's key is
+  // handed to another provider's API.
+  ok(/function makeProvider\(opts\) \{\s*\n\s*var stamp = \(opts && opts\.provider\) \|\| null;\s*\n\s*var id = stamp \? stamp\.id : PROVIDER;\s*\n\s*var keyValue = KEYS\[id\];/.test(b),
+    `[${d.id}] the key handed to a provider is the slot named by the provider being built`);
+  ok((b.match(/apiKey: keyValue/g) || []).length === 3,
+    `[${d.id}] exactly three hand-offs exist — one per provider, and no fourth`,
+    String((b.match(/apiKey: keyValue/g) || []).length));
   // The page renders the last four and nothing more: no element anywhere is
-  // given the key itself as a child, a value or a title.
-  ok(!/(children|value|title|placeholder)\s*:\s*apiKey/.test(b) && !/, apiKey\)/.test(b),
+  // given a key itself as a child, a value or a title.
+  ok(!/(children|value|title|placeholder)\s*:\s*(keyValue|KEYS\[)/.test(b) && !/, keyValue\)/.test(b),
     `[${d.id}] the key is never rendered into the DOM — only its last four characters are`);
+  // The test seam may expose WHICH slots hold a key. It may not expose one.
+  ok(!/__byok[\s\S]*?key: function \(\) \{ return KEYS/.test(b)
+    && b.includes('// Which slots hold a key — the FACT, never the value.'),
+    `[${d.id}] the headless seam exposes which providers are armed, never what with`);
 }
 
 // ═══ (d) the custody copy + the three-state badge ═══════════════════════════
@@ -220,22 +468,119 @@ const mustSay = [
   // Updated with the storage change, and it had to be: a key that survives the
   // tab cannot be described as staying in it. The sentence names where the key
   // now rests (this browser, i.e. the visitor's own machine) — the guarantee
-  // underneath it is unchanged and the rest of the list is untouched.
+  // underneath it is unchanged.
   'Your key stays in your browser.',
   'This is a live public demo — it runs entirely in your browser.',
   'this site’s host (GitHub Pages) never receives it',
-  'Every Claude call goes straight from your browser to',
+  // "Claude call" could not survive three providers and stay true. The claim is
+  // the same claim; the word names what is actually being called.
+  'Every model call goes straight from your browser to',
   'our demo server never sees your key',
   'there is no server code that',
   'the only requests that carry your key go to',
-  // …and the new mechanics, stated where the visitor decides: what ticking the
-  // box does, how long it lasts, and what unticking it does instead.
+  // …and the mechanics, stated where the visitor decides: what ticking the box
+  // does, how long it lasts, what unticking it does instead — and, now that
+  // there can be three keys, that Forget takes all of them.
   'saved in this browser’s own storage, on your machine, and stays there through a reload or a restart until you press Forget',
   'untick it and the key is held in memory only and is gone the moment you reload',
+  'erases every provider’s key from both, instantly',
+  'switching provider never sends one provider’s key to another',
 ];
 for (const page of [{ id: 'home', html: landing }, ...deskPages]) {
   for (const phrase of mustSay) {
     ok(page.html.includes(phrase), `[${page.id}] custody copy present: “${phrase.slice(0, 46)}…”`);
+  }
+}
+
+// ═══ THE PROVIDER TABLE — the page's, checked against literals ══════════════
+// The generated pages must carry exactly these three providers, with exactly
+// these destinations and model ids. Written twice on purpose (see EXPECT): the
+// page reads lib/byok-page.js, this reads its own literals, and a change that
+// retargets a key has to face both.
+ok(BYOK_PROVIDERS.map((p) => p.id).join(' ') === PROVIDER_IDS.join(' '),
+  'the bundle offers exactly three providers, in order', BYOK_PROVIDERS.map((p) => p.id).join(', '));
+for (const id of PROVIDER_IDS) {
+  const p = BYOK_PROVIDERS.find((x) => x.id === id);
+  ok(p.label === EXPECT[id].label && p.host === EXPECT[id].host && p.model === EXPECT[id].model,
+    `[${id}] the table says what this gate says — label, destination host and model id`,
+    `${p.label} · ${p.host} · ${p.model}`);
+}
+ok(EXPECT.azure.host === '{azure-host}' && BYOK_PROVIDERS.find((p) => p.id === 'azure').host === '{azure-host}',
+  'Azure’s destination is a SLOT, never a host of ours — the page fills it from the endpoint the visitor types');
+for (const d of deskPages) {
+  const data = dataOf(d.html);
+  ok(data.providers.length === 3 && data.providers.every((p, i) => p.id === PROVIDER_IDS[i]),
+    `[${d.id}] the desk boots with all three providers, in order`);
+  for (const id of PROVIDER_IDS) {
+    const p = data.providers.find((x) => x.id === id);
+    ok(p.host === EXPECT[id].host && p.model === EXPECT[id].model,
+      `[${d.id}] …and ${id}'s destination and model ride the page as data, not as prose`);
+  }
+  // EVERY provider's fold carries the WHOLE contract, with ITS OWN destination
+  // named in it. This is the check that stops a second provider being bolted on
+  // with the first one's promise still printed above the field.
+  for (const id of PROVIDER_IDS) {
+    const layer = JSON.stringify(data.custody[id]);
+    for (const phrase of mustSay.filter((s) => s !== 'Your key stays in your browser.')) {
+      ok(layer.includes(phrase.replace(/’/g, '’')),
+        `[${d.id}][${id}] the fold still carries: “${phrase.slice(0, 38)}…”`);
+    }
+    ok(layer.includes(EXPECT[id].host),
+      `[${d.id}][${id}] …and it names ${id === 'azure' ? 'the Azure host slot' : EXPECT[id].host}, its own destination`);
+    // …and NOBODY ELSE'S. An OpenAI fold that mentioned api.anthropic.com would
+    // be a promise about the wrong host, which is the failure this whole file
+    // exists to make impossible.
+    for (const other of PROVIDER_IDS.filter((x) => x !== id && x !== 'azure')) {
+      ok(!layer.includes(EXPECT[other].host),
+        `[${d.id}][${id}] …and never names ${EXPECT[other].host} — another provider’s destination`);
+    }
+  }
+  // Azure's two extra sentences: what it needs, and the one honest caveat.
+  const azureLayer = JSON.stringify(data.custody.azure);
+  ok(azureLayer.includes('api-version') && azureLayer.includes('2024-12-01-preview')
+    && azureLayer.includes('Azure’s “model” is the deployment'),
+    `[${d.id}][azure] the fold says what Azure actually sends — the deployment, at a named api-version`);
+  ok(azureLayer.includes('do not allow direct browser calls (CORS)')
+    && azureLayer.includes('That is your resource’s own setting, not this page’s')
+    && azureLayer.includes('your key still went nowhere'),
+    `[${d.id}][azure] …and says plainly that a resource may refuse browser calls, whose setting that is, and what it costs`);
+  // OpenAI's own wart, measured live rather than assumed: its 401 for a WRONG
+  // key comes back with no allow-origin header, so a browser cannot show it and
+  // a typo arrives looking like a dead network. The page says so in two places —
+  // the fold, and the message a visitor actually hits.
+  const openaiLayer = JSON.stringify(data.custody.openai);
+  ok(openaiLayer.includes('a browser cannot show you OpenAI’s “incorrect API key” reply')
+    && openaiLayer.includes('a typo looks like a network failure'),
+    `[${d.id}][openai] the fold warns that a wrong OpenAI key looks like a network failure in a browser`);
+  ok(bootOf(d.html).includes('A wrong key looks exactly like this from a browser: OpenAI leaves the CORS header off its ')
+    && bootOf(d.html).includes('Check the key first, then the network.'),
+    `[${d.id}][openai] …and the failure message itself says the likelier cause first`);
+  // A REFUSAL NAMES THE PROVIDER THAT REFUSED. The key dialog stays reachable
+  // while a reply is in flight, so a SEND captures the id when the call is made
+  // and hands it to the message. A RE-RUN cannot use that id at all: its probes
+  // run on the provider recorded on the turn, so the one that failed is the one
+  // chat-core stamps on the error, and the selection is only the fallback.
+  ok(/function failMessage\(err, sentWith\) \{[\s\S]{0,600}var id = sentWith \|\| PROVIDER;/.test(bootOf(d.html))
+    && bootOf(d.html).includes('var sentWith = PROVIDER;')
+    && bootOf(d.html).includes('return fail(err, (err && err.providerId) || sentWith); });')
+    && bootOf(d.html).includes('error: failMessage(err, (err && err.providerId) || PROVIDER) });'),
+    `[${d.id}] a failure is narrated against the provider the call was MADE with, not the one on screen after`);
+  // The two providers this page does NOT offer, named with the reason, on every
+  // provider's fold — a visitor asking "why only three?" gets an answer.
+  //
+  // BEDROCK'S REASON IS THE SIMPLE TRUE ONE, AND IT LEADS. The copy used to say
+  // Bedrock was "deliberately NOT offered", which reads as a choice that was
+  // weighed — but agentfootprint ships no browser Bedrock provider at all (see
+  // the vendored-bytes check below), so there was nothing to decline. The
+  // custody argument is still there; it is now the answer to "then write one",
+  // which is what it always was.
+  for (const id of PROVIDER_IDS) {
+    const layer = JSON.stringify(data.custody[id]);
+    ok(layer.includes('the library has no browser Bedrock provider')
+      && layer.indexOf('the library has no browser Bedrock provider')
+        < layer.indexOf('long-lived AWS credentials living in your tab')
+      && layer.includes('Ollama listens on') && layer.includes('http://localhost'),
+      `[${d.id}][${id}] the fold names what is NOT offered here — the absence first, the custody argument after`);
   }
 }
 // ═══ THE KEY CONTROL — one control, one dialog, both states ════════════════
@@ -274,31 +619,78 @@ for (const d of deskPages) {
   // ── THE DIALOG'S TWO LAYERS ──────────────────────────────────────────────
   // It used to open with five paragraphs of custody prose before the field, and
   // repeat the usage paragraph under Save. A person who opens it came to paste a
-  // key. So: the promise, the field — then everything else behind ONE row.
-  // NOTHING WAS CUT: every sentence of the contract is asserted below to be in
-  // the dialog's own markup, in one layer or the other, and the mustSay loop
-  // above still reads it off the page.
+  // key. So: the promise, whose key it is, the field — then everything else
+  // behind ONE row. NOTHING WAS CUT: every sentence of the contract is asserted
+  // above to be in the dialog's own data, per provider.
   const modalSrc = b.slice(b.indexOf('function KeyModal(props) {'), b.indexOf('function safeStringify('));
   const leadAt = modalSrc.indexOf("'data-testid': 'key-lead'");
+  const pickAt = modalSrc.indexOf("'data-testid': 'key-picker'");
   const fieldAt = modalSrc.indexOf("'data-testid': 'byok-key'");
+  const azureAt = modalSrc.indexOf("'data-testid': 'azure-fields'");
   const saveAt = modalSrc.indexOf("'data-testid': 'byok-arm'");
   const moreAt = modalSrc.indexOf('e(KeyMore, {');
-  ok(leadAt > 0 && fieldAt > leadAt && saveAt > fieldAt && moreAt > saveAt,
-    `[${d.id}] the dialog reads promise → field → Save → the row with the rest`,
-    `lead ${leadAt} · field ${fieldAt} · save ${saveAt} · more ${moreAt}`);
-  ok(modalSrc.includes('infoSegs(DATA.keyLead)')
-    && d.html.includes('"keyLead":[{"b":"Your key stays in your browser."},'
-      + '{"t":" It goes only to api.anthropic.com, never to this site."}]'),
-    `[${d.id}] the front layer is the promise itself — where the key goes, and where it does not`);
-  // …and it is the SAME sentence the Key control's own title makes, so the
-  // control and the dialog cannot come to say different things.
-  ok(b.includes('It goes only to api.anthropic.com, never to this site.'),
-    `[${d.id}] the control and the dialog make that promise in the same words`);
+  ok(leadAt > 0 && pickAt > leadAt && fieldAt > pickAt && azureAt > fieldAt
+    && saveAt > azureAt && moreAt > saveAt,
+    `[${d.id}] the dialog reads promise → whose key → field (→ Azure’s two) → Save → the row with the rest`,
+    `lead ${leadAt} · picker ${pickAt} · field ${fieldAt} · azure ${azureAt} · save ${saveAt} · more ${moreAt}`);
+  // THE PROMISE IS BUILT, NOT WRITTEN — from the chosen provider's own host, so
+  // it cannot go on naming Anthropic while an OpenAI key sits in the field. The
+  // 'dialog' placement is the dialog's alone: it is the one surface that may
+  // point at Azure's endpoint field as "below", because the field is below it.
+  ok(modalSrc.includes("infoSegs([{ b: DATA.keyPromise }, { t: ' ' + promiseLine(props.provider, 'dialog') }])")
+    && d.html.includes('"keyPromise":"Your key stays in your browser."'),
+    `[${d.id}] the front layer is the promise itself, built for the provider selected`);
+  ok(/function promiseLine\(id, where\) \{ return 'It goes only to ' \+ destinationOf\(id, where\) \+ ', never to this site\.'; \}/.test(b)
+    && /function destinationOf\(id, where\) \{\s*\n\s*if \(id !== 'azure'\) return providerDef\(id\)\.host;/.test(b),
+    `[${d.id}] …and the destination in it comes from the provider table, never from a literal`);
+  // …and the Key control's title is the SAME call, so the control and the dialog
+  // cannot come to say different things.
+  ok(b.includes("'Add your ' + providerDef(provider).label + ' key. ' + promiseLine(provider)"),
+    `[${d.id}] the control and the dialog make that promise in the same words, from the same call`);
+  // Azure's host is the visitor's own: unknowable at build time, so the copy
+  // carries a slot and the page fills it from the endpoint they typed — and
+  // until they type one, from the fallback that suits WHERE the sentence is
+  // read. Two forms, because "the Azure resource you name below" is a lie in the
+  // top bar, where nothing is below.
+  ok(/function azureHost\(\) \{/.test(b)
+    && b.includes("return azureHost() || (where === 'dialog' ? DATA.azureHostFallback.dialog : DATA.azureHostFallback.elsewhere);")
+    && d.html.includes(`"azureHostFallback":{"dialog":"${AZURE_HOST_FALLBACK.dialog}","elsewhere":"${AZURE_HOST_FALLBACK.elsewhere}"}`),
+    `[${d.id}] Azure’s promise names the resource the visitor typed, or the place they will name it`);
+  // ONE READING of the field: the host in the sentence is parsed out of the very
+  // URL the request goes to, so the copy cannot survive a change to the URL.
+  ok(/function azureHost\(\) \{\s*\n\s*var url = azureEndpointUrl\(\);/.test(b),
+    `[${d.id}] …and that host is read off the URL the request will actually use`);
+  ok(/function custodyLines\(id\) \{/.test(b) && b.includes('if (s.code !== DATA.azureHostSlot) return s;')
+    && b.includes('return host ? { code: host } : { t: DATA.azureHostFallback.dialog };'),
+    `[${d.id}] …and the fold — which is inside the dialog — fills from the same reading, in the dialog’s form`);
   // Exactly one paragraph stands before the field. This is the trim, measured:
-  // a sixth explanatory line creeping back in front of the input fails here.
+  // an explanatory line creeping back in front of the input fails here. The
+  // picker is not prose — it is the choice itself, and it is asserted separately.
   ok((modalSrc.slice(0, fieldAt).match(/className: 'by-copy'/g) || []).length === 0
     && (modalSrc.slice(0, fieldAt).match(/className: 'by-lead'/g) || []).length === 1,
-    `[${d.id}] and it is the ONLY thing above the field — no custody slab came back`);
+    `[${d.id}] and it is the ONLY prose above the field — no custody slab came back`);
+
+  // ── THE PICKER — three native radios, one group ──────────────────────────
+  ok(modalSrc.includes("role: 'radiogroup'") && modalSrc.includes("'aria-labelledby': 'by-key-picker'")
+    && modalSrc.includes("e('input', { type: 'radio', name: 'byok-provider'"),
+    `[${d.id}] whose key it is, is a real radio group — arrow keys and screen readers are the browser’s`);
+  for (const id of PROVIDER_IDS) {
+    ok(modalSrc.includes("'data-testid': 'provider-' + p.id") && d.html.includes(`"id":"${id}"`),
+      `[${d.id}] the picker offers ${id}`);
+    ok(d.html.includes(`"label":"${EXPECT[id].label}"`),
+      `[${d.id}] …under the name a visitor would recognise (${EXPECT[id].label})`);
+  }
+  ok(modalSrc.includes('onChange: function () { props.onProvider(p.id); }')
+    && /function chooseProvider\(id\) \{\s*\n\s*PROVIDER = id;\s*\n\s*setProviderSel\(id\);/.test(b),
+    `[${d.id}] picking one moves the module-scope selection too — the send path is never a render behind`);
+  // ── AZURE'S TWO EXTRA FIELDS, and only when Azure is chosen ──────────────
+  ok(modalSrc.includes("var isAzure = props.provider === 'azure';") && modalSrc.includes('isAzure\n            ? e('),
+    `[${d.id}] the endpoint and deployment fields exist only on the Azure choice`);
+  ok(modalSrc.includes("'data-testid': 'azure-endpoint'") && modalSrc.includes("'data-testid': 'azure-deployment'")
+    && modalSrc.includes("e('span', null, 'Resource endpoint')") && modalSrc.includes("e('span', null, 'Deployment name')"),
+    `[${d.id}] …and both are labelled for what Azure calls them`);
+  ok(b.includes("window.alert('Azure needs both the resource endpoint and the deployment name — the two fields above.')"),
+    `[${d.id}] saving Azure without them says so, instead of failing later on the wire`);
   // CONSENT STAYS IN FRONT. What ticking the box does is not detail: it is the
   // choice being made, so its label is in the front layer, before the fold.
   ok(modalSrc.slice(0, moreAt).includes('DATA.checkboxLabel')
@@ -317,21 +709,14 @@ for (const d of deskPages) {
     `[${d.id}] it is the landing's 0fr→1fr fold, with visibility driven by CSS from .is-open`);
   ok(/@media \(prefers-reduced-motion: reduce\) \{\s*\n\s*\.by-more-fold \{ transition: none; \}/.test(d.html),
     `[${d.id}] reduced motion turns that fold instant`);
-  ok(b.includes('lines: DATA.custody })') && d.html.includes(`"moreLabel":"${MORE_LABEL}"`),
-    `[${d.id}] and what it holds is the custody contract itself, not a summary of it`);
-  // EVERY sentence, in one layer or the other — read off the dialog's own data.
-  const data = dataOf(d.html);
-  const keyLayers = JSON.stringify([data.keyLead, data.custody]);
-  for (const phrase of mustSay) {
-    ok(keyLayers.includes(phrase),
-      `[${d.id}] the dialog still carries: “${phrase.slice(0, 40)}…”`);
-  }
+  ok(b.includes('lines: custodyLines(props.provider) })') && d.html.includes(`"moreLabel":"${MORE_LABEL}"`),
+    `[${d.id}] and what it holds is the custody contract itself — the selected provider’s, not a summary`);
   // THE USAGE PARAGRAPH IS OFF THIS DIALOG — and only off THIS dialog. It is
   // about a reply, so it lives on the reply's ⓘ, which is where it already was.
   ok(!modalSrc.includes('DATA.usage'),
     `[${d.id}] the usage paragraph no longer repeats under the Save button`);
   ok(b.includes('usage: { title: DATA.usageTitle, lines: DATA.usage },')
-    && d.html.includes('Runs on your key: each reply is a handful of small Haiku calls'),
+    && d.html.includes('Runs on your key: each reply is a handful of small model calls'),
     `[${d.id}] …and it is still carried, on the ⓘ beside each reply’s reason button`);
   // The retired tab-scoped claims, by name. (Not a blanket "in this tab" ban —
   // two comments say true things about the TURN's recording living in the tab,
@@ -361,16 +746,47 @@ ok(landing.includes('the SEC’s servers don’t allow browser calls, so the sto
 for (const d of deskPages) {
   const b = bootOf(d.html);
   ok(d.html.includes("'data-testid': 'model-badge'"), `[${d.id}] the desk renders a model badge`);
-  ok(d.html.includes(MODEL), `[${d.id}] the badge names the real model id (${MODEL})`);
-  ok(/e\('span', \{ className: 'cd-dot ' \+ \(armed \? 'live' : 'notconsulted'\) \}\), MODEL\)/.test(b),
-    `[${d.id}] the badge is the model id and its state dot — not a sentence`);
+  ok(d.html.includes(MODEL), `[${d.id}] the badge can name the Anthropic model id (${MODEL})`);
+  ok(d.html.includes(`"model":"${EXPECT.openai.model}"`),
+    `[${d.id}] …and the OpenAI one (${EXPECT.openai.model})`);
+  // THE BADGE FOLLOWS THE PROVIDER. Not a constant any more: the id of whichever
+  // key is armed — and for Azure, the visitor's own deployment, because Azure's
+  // "model" IS the deployment.
+  ok(/e\('span', \{ className: 'cd-dot ' \+ \(armed \? 'live' : 'notconsulted'\) \}\), modelLabel\(provider\)\)/.test(b),
+    `[${d.id}] the badge is the SELECTED provider’s model id and its state dot — not a sentence`);
+  ok(/function modelLabel\(id\) \{\s*\n\s*return id === 'azure' \? \(AZURE\.deployment \|\| 'your deployment'\) : providerDef\(id\)\.model;/.test(b),
+    `[${d.id}] …and on Azure it names the deployment the visitor typed, or asks for one`);
+  // ═══ WHICH PROVIDER ANSWERED, AND WHICH ONE RE-ANSWERS ═══════════════════
+  // The bug this pins, in the shape a visitor makes it: chat on Anthropic,
+  // switch the picker to OpenAI, press Re-run. A page that read the picker at
+  // probe time would compute the what-if with a DIFFERENT MODEL and put it on
+  // the card as this reply's counterfactual — the demo's headline claim,
+  // quietly turned into a cross-model comparison. So the turn is stamped with
+  // who answered it, and the re-run is built from the stamp. (Section (h) runs
+  // this end to end; these three are the wiring it depends on.)
+  ok(b.includes('createChatCore({ live: true, model: modelForRun, makeProvider: makeProvider, currentProvider: providerNow })'),
+    `[${d.id}] the desk hands chat-core all three provider seams — stamp, factory and model id`);
+  ok(/function providerNow\(\) \{\s*\n\s*var id = PROVIDER;\s*\n\s*return \{\s*\n\s*id: id,\s*\n\s*model: modelFor\(id\),/.test(b)
+    && b.includes("endpoint: id === 'azure' ? azureEndpointUrl() : '',")
+    && b.includes("deployment: id === 'azure' ? AZURE.deployment : '',"),
+    `[${d.id}] …and the stamp carries the provider id, the model id and (for Azure) the coordinates that pair with them`);
+  ok(/function modelForRun\(stamp\) \{ return stamp && stamp\.model \? stamp\.model : modelFor\(PROVIDER\); \}/.test(b),
+    `[${d.id}] a re-run's model id comes off the turn's stamp — the picker only speaks for a fresh send`);
+  // THE REFUSAL, in words, and with no second branch that could substitute.
+  ok(/function rerunRefusal\(id\) \{\s*\n\s*return 'This reply was made on ' \+ providerDef\(id\)\.label \+ ' — arm that key again to re-run it\. '/.test(b)
+    && b.includes('a what-if answered by a different model is not this reply\\u2019s what-if.'),
+    `[${d.id}] a re-run whose provider is no longer armed is refused in one honest sentence`);
   ok(!b.includes('— direct from your browser · ') && !b.includes("'no key yet'"),
     `[${d.id}] the provider sentence and the key fingerprint are off the badge`);
   // …and the claim they carried is still made, in the dialog and on the badge's
-  // own hover, so nothing was dropped — only moved to where it is read.
-  ok(b.includes('Every request from this page goes straight to api.anthropic.com with this model id'),
-    `[${d.id}] the badge still says, on hover, where its requests go`);
-  ok(b.includes('It goes only to api.anthropic.com, never to this site.'),
+  // own hover, so nothing was dropped — only moved to where it is read. The
+  // hover names the SELECTED provider's host, by the same call the promise uses,
+  // and it asks for NO placement: the badge is in the top bar, so Azure's
+  // not-yet-named resource must be pointed at by name, not as "below".
+  ok(b.includes("title: 'Every request from this page goes straight to ' + destinationOf(provider) + ' with this model id'")
+    && !b.includes("destinationOf(provider, 'dialog')"),
+    `[${d.id}] the badge still says, on hover, where its requests go — in the form that is true in a top bar`);
+  ok(b.includes("'Add your ' + providerDef(provider).label + ' key. ' + promiseLine(provider)"),
     `[${d.id}] the Key control itself states the custody promise before a key is typed`);
   ok(!d.html.includes('scripted mock'), `[${d.id}] never claims a mock — the desk is live-only by definition`);
   // The tagline is program notes (same words on every render) and the gallery
@@ -380,6 +796,39 @@ for (const d of deskPages) {
   ok(!bar.includes('DebugControl'), `[${d.id}] the debug control is off the header`);
   ok(/e\('div', \{ className: 'by-keyzone' \}, badge, keyControl\)\)/.test(bar),
     `[${d.id}] the header's right-hand zone is exactly the badge and the Key control`);
+}
+
+// ═══ ONE TOOL PER STEP — the property the influence panel depends on ═══════
+// These desks are a THREE-SOURCE comparison: a reply consults three tools, and
+// every one of them must be nameable, ignorable and re-runnable in the panel.
+// agentfootprint's influence report reads ONE tool result per stage, so a model
+// that answers with three tool calls at once collapses to a single bar. Anthropic
+// is told not to on the wire; OpenAI (and Azure, which wraps it) has no such
+// option, so the page keeps the rule itself — and that is asserted here, because
+// a desk that quietly showed one source of three would still LOOK fine.
+for (const d of deskPages) {
+  const b = bootOf(d.html);
+  ok(b.includes('parallelToolCalls: false'),
+    `[${d.id}] Anthropic is asked for one tool per reply, on the wire`);
+  ok(/function firstToolCallOnly\(res\) \{\s*\n\s*if \(!res \|\| !res\.toolCalls \|\| res\.toolCalls\.length < 2\) return res;\s*\n\s*return Object\.assign\(\{\}, res, \{ toolCalls: \[res\.toolCalls\[0\]\] \}\);/.test(b),
+    `[${d.id}] …and OpenAI/Azure get the same rule kept on the response`);
+  ok(b.includes('return oneToolPerStep(browserOpenai(oOpts));')
+    && b.includes('return oneToolPerStep(browserAzureOpenai(zOpts));')
+    && !/oneToolPerStep\(browserAnthropic/.test(b),
+    `[${d.id}] the decorator wraps exactly the two providers that need it, and not the one that doesn’t`);
+  // It wraps a PROVIDER, not a fetch — which is why it never sees a key. Read
+  // out of the decorator's OWN body, not "somewhere near it": the two functions
+  // between the declaration and the closing brace are all it is allowed to be.
+  const wrapSrc = b.slice(b.indexOf('function oneToolPerStep(inner) {'),
+    b.indexOf('\n}', b.indexOf('function oneToolPerStep(inner) {')));
+  ok(wrapSrc.includes('complete: function (req) { return inner.complete(req).then(firstToolCallOnly); }')
+    && wrapSrc.includes('wrapped.stream = async function* (req) {')
+    && !/apiKey|KEYS|fetch\(|localStorage|headers/.test(wrapSrc),
+    `[${d.id}] …and it is a provider wrapper: it sees the request and the response, never the key`,
+    `${wrapSrc.split('\n').length} lines`);
+  // Streaming survives the wrapper — the desks' arrival pacing is real arrival.
+  ok(b.includes('for await (var chunk of inner.stream(req))') && b.includes('chunk && chunk.response'),
+    `[${d.id}] the wrapper passes every token chunk through and rewrites only the terminal one`);
 }
 
 // ═══ (e) THE GALLERY HOME ═══════════════════════════════════════════════════
@@ -417,9 +866,10 @@ ok(!/fetch\(|XMLHttpRequest|WebSocket|sendBeacon|new Image\(|import\(|navigator\
   '[home] the landing script makes no request of any kind');
 ok(!/sessionStorage|localStorage|document\.cookie|indexedDB|caches\./.test(landingJs),
   '[home] the landing script touches no storage');
-ok(!/apiKey|api\.anthropic|sk-ant|password/i.test(landingJs),
-  '[home] the landing script knows nothing about keys');
-ok(!REAL_KEY_SHAPE.test(landingJs), '[home] the landing script carries no key-shaped literal');
+ok(!/apiKey|api\.anthropic|api\.openai|openai\.azure|sk-ant|password/i.test(landingJs),
+  '[home] the landing script knows nothing about keys, or about where one would go');
+ok(Object.values(PROVIDER_KEY_SHAPES).every((shape) => !shape.hits(landingJs)),
+  '[home] the landing script carries no key-shaped literal — of any of the three shapes');
 ok(!/location|URLSearchParams|history\.|window\.open|\.submit\(/.test(landingJs),
   '[home] the landing script reads no URL and navigates nowhere');
 ok(!/eval\(|new Function|document\.write|innerHTML/.test(landingJs),
@@ -474,11 +924,20 @@ for (const id of DESKS) {
 ok((landing.match(/class="vr-enter"/g) || []).length === DESKS.length,
   '[home] every runnable desk has a way in', String((landing.match(/class="vr-enter"/g) || []).length));
 for (const line of [
-  `model: ${MODEL} — on your key, streamed token by token`,
-  'browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between',
+  // The capability lines had to move with the change: a bundle that accepts
+  // three keys cannot advertise one model, and "every Claude call" is not what
+  // an OpenAI key does. Both facts are named, and both are true of THIS bundle.
+  `your key, your provider — Anthropic (${EXPECT.anthropic.model}), OpenAI (${EXPECT.openai.model}) `
+    + 'or your own Azure OpenAI deployment',
+  'browser-direct: every model call goes from your tab to that provider’s own API — no server in between',
   'statuses and reply arrive as they happen',
   'every reply: visible reason → re-run without a source → fork',
 ]) ok(landing.includes(line), `[home] capability line: “${line.slice(0, 44)}…”`);
+// The home names all three destinations where it invites people to check them —
+// a DevTools promise that named one host of three would be a broken one.
+for (const host of [EXPECT.anthropic.host, EXPECT.openai.host, '*.openai.azure.com']) {
+  ok(landing.includes(`<code>${host}</code>`), `[home] the custody note names ${host}`);
+}
 
 // The desk that cannot run in a browser: listed, not enterable, and it says why.
 ok(landing.includes('<article class="vr-desk is-off">'),
@@ -683,7 +1142,367 @@ const liveGallery = buildGalleryPage(APPS, { live: true, model: MODEL });
 ok(mockGallery.includes('scripted mock — no model'), 'mock gallery cards say “scripted mock — no model”');
 ok(liveGallery.includes(`model: ${MODEL}`), 'live gallery cards name the real model id');
 
-// ═══ (e) the server has no routes ═══════════════════════════════════════════
+// ═══ (h) THE PAGE'S OWN LOGIC, RUN ══════════════════════════════════════════
+// Everything above READS the shipped page. This section EXECUTES it: the
+// functions below are lifted out of the generated boot script BY NAME and
+// evaluated, so what runs is the artifact's own bytes — not a copy written for
+// the test, which would agree with itself while the page did something else.
+//
+// Two things need running rather than reading:
+//
+//   `oneToolPerStep`  the only net-new behavioural logic in the BYOK diff — it
+//                     DISCARDS tool calls a model asked for. A rewrite that
+//                     broke the stream branch (which is the branch that runs:
+//                     agentfootprint calls provider.stream() when it exists)
+//                     would pass every text lock above and silently collapse a
+//                     three-source desk to one bar.
+//   `makeProvider`    which provider a what-if is computed with. A text lock can
+//                     see the stamp being passed; only a run can prove that a
+//                     turn recorded on one provider is re-run on THAT one, or
+//                     refused — and never quietly answered by another.
+/** Lift named top-level functions out of the boot script, verbatim. */
+function liftFromBoot(src, names) {
+  return names.map((name) => {
+    const at = src.indexOf(`\nfunction ${name}(`);
+    if (at === -1) throw new Error(`verify-byok: the boot script has no top-level function ${name}()`);
+    const end = src.indexOf('\n}\n', at);
+    if (end === -1) throw new Error(`verify-byok: ${name}() does not close at column 0 — cannot lift it`);
+    return src.slice(at + 1, end + 2);
+  }).join('\n');
+}
+const LIFTED = [
+  'providerDef', 'azureEndpointUrl', 'azureHost', 'destinationOf', 'promiseLine',
+  'apiUrlOverride', 'modelFor', 'firstToolCallOnly', 'oneToolPerStep',
+  'providerNow', 'modelForRun', 'rerunRefusal', 'armFirst', 'refuse', 'failMessage',
+  'makeProvider',
+];
+// The page's module scope, supplied as the page supplies it: the real provider
+// table, the real page payload (parsed out of the desk it ships in), the three
+// real browser factories, and the key slots — which start EMPTY, exactly as a
+// visitor's do.
+const pageEnv = {
+  KEYS: { anthropic: null, openai: null, azure: null },
+  window: {},
+};
+const buildPage = new Function('deps', `
+  "use strict";
+  var PROVIDERS = deps.PROVIDERS, DATA = deps.DATA, window = deps.window, KEYS = deps.KEYS;
+  var browserAnthropic = deps.browserAnthropic, browserOpenai = deps.browserOpenai,
+      browserAzureOpenai = deps.browserAzureOpenai;
+  var PROVIDER = deps.PROVIDER, AZURE = { endpoint: '', deployment: '' };
+  ${liftFromBoot(boot, LIFTED)}
+  return {
+    ${LIFTED.join(', ')},
+    select: function (id) { PROVIDER = id; },
+    setAzure: function (cfg) { AZURE = cfg; }
+  };
+`);
+const page = buildPage({
+  PROVIDERS: BYOK_PROVIDERS,
+  DATA: dataOf(deskPages[0].html),
+  PROVIDER: PROVIDER_IDS[0],
+  window: pageEnv.window,
+  KEYS: pageEnv.KEYS,
+  browserAnthropic,
+  browserOpenai,
+  browserAzureOpenai,
+});
+console.log(`\n── the page's own functions, lifted and run (${LIFTED.length} of them) ──\n`);
+
+// ── MINOR: an Azure key must not travel in the clear ────────────────────────
+// An Azure key is an `api-key` REQUEST HEADER, so an endpoint typed as http://
+// puts it on the wire in cleartext. A bare hostname was already being upgraded
+// to https; an explicitly typed http:// was passed straight through, which gave
+// the riskier input the weaker treatment. Every form now resolves to https.
+for (const [typed, expected] of [
+  ['my-co.openai.azure.com', 'https://my-co.openai.azure.com'],
+  ['http://my-co.openai.azure.com', 'https://my-co.openai.azure.com'],
+  ['HTTP://my-co.openai.azure.com/', 'https://my-co.openai.azure.com'],
+  ['https://my-co.openai.azure.com/', 'https://my-co.openai.azure.com'],
+  ['ws://my-co.openai.azure.com', 'https://my-co.openai.azure.com'],
+  ['', ''],
+]) {
+  page.setAzure({ endpoint: typed, deployment: 'gpt-4o-mini' });
+  ok(page.azureEndpointUrl() === expected,
+    `an Azure endpoint typed as “${typed || '(nothing)'}” is called over https`, page.azureEndpointUrl());
+}
+page.setAzure({ endpoint: 'http://my-co.openai.azure.com', deployment: 'gpt-4o-mini' });
+ok(page.destinationOf('azure') === 'my-co.openai.azure.com',
+  '…and the custody sentence names the host of the URL that will actually be called');
+// ── MINOR: the two forms of Azure's not-yet-named destination ───────────────
+page.setAzure({ endpoint: '', deployment: '' });
+ok(page.destinationOf('azure', 'dialog') === AZURE_HOST_FALLBACK.dialog,
+  'in the key dialog, an unnamed Azure resource is the one "below" — where its field is',
+  page.destinationOf('azure', 'dialog'));
+ok(page.destinationOf('azure') === AZURE_HOST_FALLBACK.elsewhere
+  && !page.destinationOf('azure').includes('below'),
+  'everywhere else it is named by the dialog it is typed in — no "below" with nothing under it',
+  page.destinationOf('azure'));
+ok(page.promiseLine('azure', 'dialog') !== page.promiseLine('azure')
+  && page.promiseLine('anthropic', 'dialog') === page.promiseLine('anthropic'),
+  '…and the placement changes nothing for a provider whose host is known at build time');
+
+// ─── a fake OpenAI, on a real socket ────────────────────────────────────────
+// Enough of the chat-completions SSE protocol for agentfootprint's own browser
+// provider to drive, and deliberately rude in the one way that matters: it opens
+// every conversation by asking for ALL of its tools at once, which is what a
+// real model regularly does and what the OpenAI API has no switch to prevent.
+const PLACE = 'Mission Peak';
+const MSG = 'Should I hike Mission Peak on Saturday?';
+function startFakeOpenAI() {
+  const seen = [];                       // every request body, in arrival order
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      let body = {};
+      try { body = JSON.parse(raw || '{}'); } catch (err) { body = { unparseable: true }; }
+      seen.push(body);
+      // ANY OTHER PROVIDER'S BODY IS A 400, not a crash. If a regression points
+      // a re-run at the wrong provider, what arrives here is that provider's
+      // wire format — and a gate must report that as a failed check, not die
+      // inside a socket callback with no PASS/FAIL line to read.
+      if (!Array.isArray(body.messages) || (body.tools ?? []).some((t) => !t?.function?.name)) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'this fake speaks OpenAI only' } }));
+        return;
+      }
+      const offered = (body.tools ?? []).map((t) => t.function.name);
+      const nameOf = new Map();
+      for (const m of body.messages ?? []) {
+        for (const tc of m.tool_calls ?? []) nameOf.set(tc.id, tc.function.name);
+      }
+      const answered = (body.messages ?? []).filter((m) => m.role === 'tool').map((m) => nameOf.get(m.tool_call_id));
+      const left = offered.filter((n) => !answered.includes(n));
+      // The whole point: everything at once on the opening turn, one at a time
+      // after that (a model that has already been answered asks smaller).
+      const wanted = answered.length === 0 ? left : left.slice(0, 1);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const send = (delta, finish = null) => res.write(`data: ${JSON.stringify({
+        id: 'chatcmpl-fake', object: 'chat.completion.chunk',
+        choices: [{ index: 0, delta, finish_reason: finish }],
+      })}\n\n`);
+      if (wanted.length > 0) {
+        send({ tool_calls: wanted.map((name, i) => ({
+          index: i, id: `call_${name}`, type: 'function',
+          function: { name, arguments: JSON.stringify({ place: PLACE }) },
+        })) });
+        send({}, 'tool_calls');
+      } else {
+        const text = answered.includes(trip.driver)
+          ? 'GO — the forecast is clear and the trail reads as manageable.'
+          : 'POSTPONE — without a forecast to rely on, nothing here says Saturday is the day.';
+        for (const piece of text.match(/\S+\s*/g)) send({ content: piece });
+        send({}, 'stop');
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+  return { server, seen };
+}
+const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', r));
+
+const { tools: rawTools } = await buildMockTools();
+/** One desk's machine, wired exactly as the page wires it. */
+function deskFor(overrides = {}) {
+  const core = createChatCore({
+    live: true, model: page.modelForRun, makeProvider: page.makeProvider, currentProvider: page.providerNow,
+    ...overrides,
+  });
+  const decorated = decorateTools(rawTools, core.getPending);
+  const byName = new Map(decorated.map((t) => [t.schema.name, t]));
+  const perApp = new Map(APPS.map((a) => [a.id, a.tools.map((t) => byName.get(t.name))]));
+  return { core, api: createLocalApi({ core, packs: APPS, perApp }) };
+}
+const assistantToolCalls = (seen) =>
+  seen.flatMap((b) => (b.messages ?? []).filter((m) => m.role === 'assistant' && m.tool_calls));
+
+// ═══ ONE TOOL PER STEP, EXECUTED ═══════════════════════════════════════════
+const fake = startFakeOpenAI();
+await listen(fake.server);
+const fakeUrl = `http://127.0.0.1:${fake.server.address().port}/v1/chat/completions`;
+try {
+  console.log('\n── three tool calls at once, against the shipped decorator ──\n');
+  // A fake key of an obviously fake shape — it never leaves this process, and
+  // the fake server does not look at it.
+  pageEnv.window.__BYOK_TEST__ = { apiUrl: fakeUrl };
+  pageEnv.KEYS.openai = 'openai-key-for-this-test-only';
+  page.select('openai');
+
+  const wrapped = deskFor();
+  const session = wrapped.api.startSession(trip);
+  const turn = await wrapped.api.chat({ appId: 'trip', sessionId: session.id, message: MSG });
+
+  ok(fake.seen.length === 4,
+    'the batched reply became THREE separate agent iterations, then the answer — one tool per step',
+    `${fake.seen.length} model calls`);
+  ok(fake.seen.every((b) => b.stream === true),
+    '…through the wrapper’s STREAM branch, which is the branch agentfootprint actually calls');
+  const rebuilt = assistantToolCalls(fake.seen);
+  ok(rebuilt.length >= 3 && rebuilt.every((m) => m.tool_calls.length === 1),
+    'every assistant message the agent rebuilt onto the wire carries exactly ONE tool call',
+    `${rebuilt.length} assistant turns, max ${Math.max(0, ...rebuilt.map((m) => m.tool_calls.length))} calls each`);
+  const consulted = Object.entries(turn.provenance).filter(([, v]) => v !== 'not consulted').map(([k]) => k);
+  ok(consulted.length === trip.tools.length,
+    'all three sources were really consulted — none was dropped with the discarded calls',
+    consulted.join(', '));
+  const panel = await wrapped.api.reason({ appId: 'trip', sessionId: session.id, turnIndex: 0 });
+  const named = panel.map.sources.map((s) => s.id);
+  ok(trip.tools.every((t) => named.includes(t.name)),
+    'and the influence panel names all three — each ignorable, each re-runnable',
+    named.join(', '));
+  // THE STAMP, on the turn that just ran.
+  const meta = wrapped.core.sessions.get(session.id).meta[0];
+  ok(meta.provider?.id === 'openai' && meta.model === EXPECT.openai.model,
+    'the turn is stamped with the provider that answered it and the model id it was sent',
+    `${meta.provider?.id} · ${meta.model}`);
+
+  // THE SAME MODEL, THE SAME SERVER, WITHOUT THE DECORATOR. This is the failure
+  // the decorator exists to prevent, run rather than described: the three calls
+  // land inside ONE iteration, agentfootprint's influence report reads one tool
+  // result per stage, and the panel can only name the last of them.
+  const bareSeen = fake.seen.length;
+  const bare = deskFor({ makeProvider: () => browserOpenai({
+    apiKey: 'openai-key-for-this-test-only', defaultModel: EXPECT.openai.model, apiUrl: fakeUrl }) });
+  const bareSession = bare.api.startSession(trip);
+  const bareTurn = await bare.api.chat({ appId: 'trip', sessionId: bareSession.id, message: MSG });
+  const barePanel = await bare.api.reason({ appId: 'trip', sessionId: bareSession.id, turnIndex: 0 });
+  const bareNamed = barePanel.map.sources.map((s) => s.id);
+  ok(fake.seen.length - bareSeen === 2 && bareNamed.length < trip.tools.length,
+    'without the decorator the same batch runs in ONE iteration and the panel names fewer sources — this is what it is for',
+    `${fake.seen.length - bareSeen} model calls · panel named ${bareNamed.length} of ${trip.tools.length}: ${bareNamed.join(', ')}`);
+  ok(Object.values(bareTurn.provenance).every((v) => v !== 'not consulted'),
+    '…even though all three tools really ran — the loss is in what can be named, which is worse than a missing fetch');
+
+  // ═══ A WHAT-IF IS COMPUTED BY THE PROVIDER THAT MADE THE REPLY ═══════════
+  console.log('\n── the what-if, after the visitor switches provider ──\n');
+  // The visitor now brings an Anthropic key and picks it. The reply above was
+  // made on OpenAI, and nothing about that changed.
+  pageEnv.KEYS.anthropic = 'anthropic-key-for-this-test-only';
+  page.select('anthropic');
+  const before = fake.seen.length;
+  const rerun = await wrapped.api.rerunTurn({
+    appId: 'trip', sessionId: session.id, turnIndex: 0, ignore: [trip.driver],
+  });
+  ok(fake.seen.length > before && typeof rerun.result?.answer === 'string',
+    'a re-run started while ANOTHER provider is armed still goes to the one that made the reply',
+    `${fake.seen.length - before} model calls to the recorded provider`);
+  ok(fake.seen.slice(before).every((b) => b.model === EXPECT.openai.model),
+    '…carrying the model id recorded on the turn, not the one the top bar shows',
+    fake.seen[before]?.model);
+
+  // …and when that provider's key is gone, the re-run is REFUSED. Never
+  // answered by the armed one, which would put a different model's answer on
+  // the card and call it this reply's counterfactual.
+  pageEnv.KEYS.openai = null;
+  const quiet = fake.seen.length;
+  let refusal = null;
+  try {
+    await wrapped.api.rerunTurn({ appId: 'trip', sessionId: session.id, turnIndex: 0, ignore: [trip.driver] });
+  } catch (err) { refusal = err; }
+  ok(refusal !== null, 'a re-run whose provider is no longer armed does not quietly run on another one');
+  ok(refusal && /^This reply was made on OpenAI/.test(refusal.message),
+    '…it says which provider made the reply, and asks for that key back',
+    refusal ? refusal.message.slice(0, 72) : '(no error)');
+  ok(refusal && !/Anthropic/.test(refusal.message),
+    '…and never names the provider that happened to be armed');
+  // The error knows whose failure it is, so the panel can narrate a REAL failure
+  // (a 401, a dead network) against the provider the probes actually ran on —
+  // which is the recorded one, and is not on screen anywhere.
+  ok(refusal?.providerId === 'openai',
+    '…and it carries the provider the probes were built for, for the panel to narrate with',
+    String(refusal?.providerId));
+  ok(fake.seen.length === quiet,
+    '…and nothing was sent anywhere: the refusal happens before any probe is built',
+    `${fake.seen.length - quiet} new model calls`);
+  // Re-arming the recorded provider makes the same re-run work again — the
+  // refusal is a missing key, not a broken turn.
+  pageEnv.KEYS.openai = 'openai-key-for-this-test-only';
+  const again = await wrapped.api.rerunTurn({
+    appId: 'trip', sessionId: session.id, turnIndex: 0, ignore: [trip.driver],
+  });
+  ok(typeof again.result?.answer === 'string' && again.rerunId !== rerun.rerunId,
+    'arming that key again re-runs the turn — the refusal was a state, not a wall');
+  // A FORK RUNS NOTHING, so there is no provider for it to get wrong; its own
+  // later turns are new replies and stamp themselves.
+  const forkCalls = fake.seen.length;
+  const child = await wrapped.api.fork({
+    appId: 'trip', sessionId: session.id, turnIndex: 0, rerunId: again.rerunId,
+  });
+  ok(fake.seen.length === forkCalls && typeof child.sessionId === 'string',
+    'a fork calls no model at all — it copies the what-if’s answer into a new transcript',
+    `${fake.seen.length - forkCalls} model calls`);
+} catch (err) {
+  // A drive that dies mid-way is a FAILED CHECK with a readable line, never a
+  // stack trace where the report should be: a regression that points a re-run at
+  // the wrong provider makes this fake answer 400, and what a reader needs then
+  // is the sentence, not Node's own.
+  ok(false, 'the in-tab drive ran to completion', String((err && err.message) || err).slice(0, 110));
+} finally {
+  fake.server.close();
+}
+
+// ── the same lifted makeProvider, asked the awkward questions directly ──────
+// The drive above proves the path a visitor takes. These prove the rule itself,
+// including the branch a drive cannot reach: what happens when the recorded
+// provider IS armed but a different one is selected.
+pageEnv.KEYS.anthropic = 'anthropic-key-for-this-test-only';
+pageEnv.KEYS.openai = 'openai-key-for-this-test-only';
+page.select('anthropic');
+ok(page.makeProvider({ provider: { id: 'openai', model: EXPECT.openai.model }, replay: true }).name === 'browser-openai',
+  'a re-run of an OpenAI reply builds an OpenAI provider while Anthropic is the armed one');
+ok(page.makeProvider({ provider: null, replay: false }).name === 'browser-anthropic',
+  '…and a fresh send with no stamp is the armed provider, exactly as before');
+pageEnv.KEYS.openai = null;
+let refused = null;
+try { page.makeProvider({ provider: { id: 'openai', model: EXPECT.openai.model }, replay: true }); } catch (e) { refused = e; }
+ok(refused && refused.message === page.rerunRefusal('openai'),
+  'a stamped provider with an empty slot throws the refusal, and nothing else');
+let asked = null;
+try { page.makeProvider({ provider: { id: 'openai', model: EXPECT.openai.model }, replay: false }); } catch (e) { asked = e; }
+ok(asked && asked.message === page.armFirst('openai') && asked.message !== refused.message,
+  '…while a fresh send with no key is asked for one — two situations, two sentences');
+// …AND THE PANEL PRINTS THAT SENTENCE AS IT IS. failMessage exists to translate
+// a provider's error into plain words and sign it with that provider's name; a
+// refusal is already plain words, and the name it would be signed with is the
+// provider armed NOW — the one that did NOT make the reply.
+page.select('anthropic');
+ok(page.failMessage(refused, 'anthropic') === page.rerunRefusal('openai'),
+  'the refusal reaches the panel verbatim — no provider’s name is appended to a sentence the page wrote',
+  page.failMessage(refused, 'anthropic').slice(0, 60));
+const providerSaid = Object.assign(new Error('authentication_error: invalid_api_key'), { status: 401 });
+ok(/^OpenAI rejected that key \(401\)/.test(page.failMessage(providerSaid, 'openai'))
+  && page.failMessage(providerSaid, 'openai').includes('(OpenAI said:'),
+  '…while a real provider error still gets the plain-words lead and that provider’s own name',
+  page.failMessage(providerSaid, 'openai').split('\n')[0].slice(0, 60));
+// Azure re-runs on the RESOURCE AND DEPLOYMENT it was recorded with, not on
+// whatever the fields hold now: the deployment IS the model there, so reading
+// the field would be the same bug wearing Azure's clothes.
+pageEnv.KEYS.azure = 'azure-key-for-this-test-only';
+const azureStamp = {
+  id: 'azure', model: 'the-recorded-deployment',
+  endpoint: 'https://then.openai.azure.com', deployment: 'the-recorded-deployment',
+};
+// The fields are EMPTY — the visitor cleared them, or typed a different resource
+// since. browserAzureOpenai refuses to be built without an endpoint, so a
+// provider that comes back at all is a provider built from the STAMP.
+page.setAzure({ endpoint: '', deployment: '' });
+ok(page.makeProvider({ provider: azureStamp, replay: true }).name === 'browser-azure-openai',
+  'an Azure re-run is built from the turn’s own resource — it still works with the fields now empty');
+let noCoords = null;
+try { page.makeProvider({ provider: { id: 'azure', model: 'x' }, replay: true }); } catch (e) { noCoords = e; }
+ok(noCoords !== null && /endpoint/i.test(noCoords.message),
+  '…and a stamp with no resource on it has nowhere to go — the library says so rather than guessing',
+  noCoords ? noCoords.message.slice(0, 60) : '(built anyway)');
+ok(boot.includes('endpoint: (stamp && stamp.endpoint) || azureEndpointUrl(),')
+  && boot.includes('deployment: (stamp && stamp.deployment) || AZURE.deployment };'),
+  '…and the deployment travels with it — on Azure the deployment IS the model, so reading the field would be the same bug');
+pageEnv.KEYS.anthropic = null;
+pageEnv.KEYS.openai = null;
+pageEnv.KEYS.azure = null;
+
+// ═══ (i) the server has no routes ═══════════════════════════════════════════
 const PORT = 4179;
 const server = serve(PORT);
 await new Promise((r) => server.once('listening', r));

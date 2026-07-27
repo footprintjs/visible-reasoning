@@ -1,6 +1,6 @@
 // The BYOK generator — writes 08-app-gallery/out/byok/, a fully static page
-// where a visitor chats on THEIR OWN Anthropic key with nothing of ours in the
-// key path.
+// where a visitor chats on THEIR OWN key — Anthropic's, OpenAI's, or their own
+// Azure OpenAI resource's — with nothing of ours in the key path.
 //
 //   node 08-app-gallery/byok.js           → generate out/byok/
 //   node 08-app-gallery/byok.js --serve   → generate, then serve it on :4176
@@ -29,7 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { trip } from './apps/trip.js';
 import { movies } from './apps/movies.js';
 import { stocks } from './apps/stocks.js';
-import { buildByokLanding, buildByokPage, packToPageData } from './lib/byok-page.js';
+import { BYOK_PROVIDERS, buildByokLanding, buildByokPage, packToPageData } from './lib/byok-page.js';
 import { copyDevViews } from './lib/dev-views.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,9 +42,11 @@ const nodeModules = join(repoRoot, 'node_modules');
 const DEFAULT_OUT_DIR = join(here, 'out', 'byok');
 const PORT = 4176;
 
-// The model every request from the page will carry — the same id the gallery's
-// live mode sends, and what the page's badge names.
-const MODEL = 'claude-haiku-4-5-20251001';
+// WHOSE KEY the page will accept, where each one's requests go, and the model id
+// each one carries — one table, owned by lib/byok-page.js because it is as much
+// copy (the custody sentence names the host) as it is configuration. Anthropic's
+// entry is the same id the gallery's live mode sends.
+const PROVIDERS = BYOK_PROVIDERS;
 
 // The desks the bundle carries, one page each. Stocks is excluded on evidence,
 // not taste: the SEC's servers refuse browser calls (CORS), so 1 of its 3
@@ -287,7 +289,7 @@ export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
   const html = buildByokLanding({
     apps: PACKS.map(packToPageData),
     stock: packToPageData(OFF_PACK),
-    model: MODEL,
+    providers: PROVIDERS,
   });
   const file = join(outDir, 'index.html');
   writePage('index.html', html);
@@ -300,7 +302,7 @@ export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
     writePage(`${pack.id}.html`, buildByokPage({
       importMap,
       app: packToPageData(pack),
-      model: MODEL,
+      providers: PROVIDERS,
     }));
   }
   log(`generated ${Object.keys(pages).join(', ')} → ${outDir}`);
@@ -342,9 +344,14 @@ export function serve(port = PORT, outDir = DEFAULT_OUT_DIR) {
     res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
   });
   server.listen(port, () => {
+    // The same sentence publish-byok.mjs prints, for the same reason: this page
+    // takes three kinds of key now, and "every Claude call" was true of exactly
+    // one of them. A banner that names one destination while the page offers
+    // three is the single-provider claim surviving the change that ended it.
     console.log(`Bring your own key → http://localhost:${port}`);
-    console.log('  This server only hands out files. Your key never reaches it —');
-    console.log('  every Claude call goes straight from the browser to api.anthropic.com.');
+    console.log('  This server only hands out files. Your key never reaches it — every model');
+    console.log('  call goes straight from the browser to the provider you picked:');
+    console.log('  api.anthropic.com, api.openai.com, or your own *.openai.azure.com resource.');
   });
   return server;
 }

@@ -418,8 +418,10 @@ ok(byok.includes("e(Starters, { starters: APP.starters, variant: 'big'")
 ok(!/armed \? e\(Starters/.test(byok)
   && byok.includes("e(Starters, { starters: APP.starters, variant: 'big', onPick: send })"),
   'BYOK offers its starters from the first paint, key or no key');
-ok(byok.includes('if (!apiKey) { setInput(msg); setKeyOpen(true); return; }'),
-  '…and a tap with no key asks for the key instead of failing quietly');
+// The guard reads the slot of the SELECTED provider (the page takes three keys
+// now, one per provider), which is the same property said about a bigger object.
+ok(byok.includes('if (!KEYS[PROVIDER]) { setInput(msg); setKeyOpen(true); return; }'),
+  '…and a tap with no key for the chosen provider asks for that key instead of failing quietly');
 ok(byok.indexOf("variant: 'compact'") > byok.indexOf("e('div', { className: 'cd-composer' }")
   && byok.indexOf("variant: 'compact'") < byok.indexOf("'data-testid': 'chat-input'"),
   'BYOK’s compact row is part of the composer too');
@@ -561,7 +563,10 @@ for (const [html, name] of [[byok, 'BYOK'], [deskMock, 'desk']]) {
 // own money — and it is now an ⓘ beside the reply's reason button rather than a
 // standing paragraph under the transcript. A desk with nothing to say renders no
 // icon at all: an ⓘ that opens an empty dialog is worse than no ⓘ.
-const COST_SENTENCE = 'Runs on your key: each reply is a handful of small Haiku calls';
+// "Haiku calls" could not survive a page that also takes an OpenAI or an Azure
+// key: the sentence now names what is actually being called, and stays the
+// visitor's-money sentence it always was.
+const COST_SENTENCE = 'Runs on your key: each reply is a handful of small model calls';
 ok(byok.includes(COST_SENTENCE), 'BYOK still carries the usage sentence, verbatim');
 ok(!byok.includes("'data-testid': 'byok-footer'"),
   '…but no longer as standing prose under the conversation');

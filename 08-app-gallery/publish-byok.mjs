@@ -125,7 +125,8 @@ export function publish({ quiet = false } = {}) {
   log('');
   log('Checks worth doing once it is up: the page loads, DevTools → Network shows');
   log('every module resolving under /visible-reasoning/, and the only key-bearing');
-  log('request goes to api.anthropic.com.');
+  log('request goes to the provider you picked — api.anthropic.com, api.openai.com,');
+  log('or your own *.openai.azure.com resource — and never back to this site.');
 
   return { stagingDir, files, bytes };
 }
