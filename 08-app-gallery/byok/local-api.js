@@ -45,6 +45,10 @@ export function createLocalApi({ core, packs, perApp }) {
       label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
       entity: m.entity ?? session.entity, provenance: m.provenance ?? null,
       sourceLabels: m.sourceLabels ?? null,
+      // Same field, same builder as the server demo — and here it never even
+      // leaves the tab. Derived from the turn's frozen recording, so the debug
+      // modal opens on data the page already has.
+      debug: core.debugFor(session, turn.index),
     };
   }
 

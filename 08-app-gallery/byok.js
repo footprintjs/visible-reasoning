@@ -218,6 +218,7 @@ export function generate({ quiet = false, outDir = DEFAULT_OUT_DIR } = {}) {
   // 1. the app modules, copied VERBATIM (byte-shared with the server demo)
   const appFiles = [
     ['lib/chat-core.js', 'app/lib/chat-core.js'],
+    ['lib/debug-view.js', 'app/lib/debug-view.js'],
     ['lib/mcp.js', 'app/lib/mcp.js'],
     ['apps/index.js', 'app/apps/index.js'],
     ['apps/stocks.js', 'app/apps/stocks.js'],

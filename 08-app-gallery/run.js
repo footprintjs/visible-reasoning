@@ -127,6 +127,11 @@ const chatPayload = (session, turn) => {
     label: session.label, forkOf: session.forkOf, ignoredSourceIds: session.excludedIds,
     entity: m.entity ?? session.entity, provenance: m.provenance ?? null,
     sourceLabels: m.sourceLabels ?? null,
+    // The debug view's data rides the reply it describes. It is derived from
+    // the turn's own frozen recording (lib/debug-view.js), so it costs no model
+    // call and no fetch — and shipping it here is why the modal never has to ask
+    // the server for anything.
+    debug: core.debugFor(session, turn.index),
   };
 };
 

@@ -37,8 +37,8 @@ import { dirname, join } from 'node:path';
 // imported, never re-authored, so a card here and a card in the local gallery
 // are the same element with different truths in it.
 import {
-  PROVENANCE_CSS, buildHome, codeSeg, deskNote, orderForHome, programNotes, provenanceHelpScript,
-  question, t as tSeg,
+  DEBUG_CSS, PROVENANCE_CSS, buildHome, codeSeg, debugModalScript, deskNote, orderForHome,
+  programNotes, provenanceHelpScript, question, t as tSeg,
 } from './page.js';
 
 const require = createRequire(import.meta.url);
@@ -375,6 +375,7 @@ ${importMap}
     background: var(--soft); border-radius: 9px; border: 1px solid var(--line); line-height: 1.5; }
 
 ${PROVENANCE_CSS}
+${DEBUG_CSS}
 
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
@@ -435,6 +436,12 @@ ${PROVENANCE_CSS}
     .cd-backdrop.show { opacity: 1; pointer-events: auto; }
     .cd-tagline { display: none; }
     .cd-tab { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* This bar carries one thing the desks' does not: a badge that names the
+       model AND the key's four characters. It cannot be dropped on a phone (it
+       is a custody signal) and it cannot be ellipsized without lying, so the bar
+       wraps instead — every control stays on screen and reachable. */
+    .cd-bar { flex-wrap: wrap; row-gap: 8px; }
+    .cd-model { white-space: normal; }
   }
 </style></head>
 <body><div id="root"></div>
@@ -495,6 +502,7 @@ ${/* No 'scripted' here: every tool on this page is a real browser fetcher, so
       now, but reaching it costs this page's conversation (a page load ends it),
       so the vocabulary still has to be readable without leaving the desk. */
   provenanceHelpScript(BYOK_STATES, { defs: true })}
+${debugModalScript()}
 
 // ═══ KEY CUSTODY ═══════════════════════════════════════════════════════════
 // The visitor's key lives HERE and nowhere else: a variable in this module's
@@ -814,8 +822,11 @@ function Byok() {
       patch(function (d) {
         var sessions = Object.assign({}, d.sessions);
         var s = Object.assign({}, sessions[j.sessionId]);
+        // The debug payload came back with the reply, from the turn's own
+        // recording — computed in this tab, never requested, never stored.
         s.turns = s.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply,
-          provenance: j.provenance, sourceLabels: j.sourceLabels || null, entity: j.entity }]);
+          provenance: j.provenance, sourceLabels: j.sourceLabels || null, entity: j.entity,
+          debug: j.debug || null }]);
         if (j.entity) s.entity = j.entity;
         sessions[j.sessionId] = s;
         d.sessions = sessions;
@@ -1041,6 +1052,8 @@ function Byok() {
         e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', APP.title),
         e('span', { className: 'cd-tagline' }, APP.tagline),
         badge,
+        // One small control; everything it opens lives inside the dialog.
+        e(DebugControl, { turns: (sess && sess.turns) || [] }),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
