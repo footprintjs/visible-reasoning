@@ -1,14 +1,32 @@
 # Visible Reasoning — runnable reference implementations
 
-Runnable reference implementations of the ideas in the published paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*, built on open-source TypeScript libraries. Eight self-contained examples, each behind a single `run.js`, each printing a summary that is byte-checked against a recorded `expected-output.txt`.
-
-The idea the paper argues for is **recorded decision evidence**: instead of asking a model to narrate itself (chain-of-thought, unverifiable) or asking a second model to judge it (recursive trust), the execution substrate owns the trace. Every decision is a typed event, and humans, cheaper models and training pipelines all read the same recording.
-
 ## Try it online
 
 **→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
 
 Two of the desks — trip advisor and movie desk — running on real keyless data (Open-Meteo, Wikipedia, iTunes). Bring your own Anthropic key: **it runs entirely in your browser.** Your key goes only to `api.anthropic.com`; the site's host (GitHub Pages) serves static files and has no backend that *could* receive it. Open DevTools → Network and check. (The stock desk gets a card too, disabled — the SEC's servers don't allow browser calls, and the card says so rather than pretending.)
+
+## The libraries it runs on
+
+**[agentfootprint](https://github.com/footprintjs/agentfootprint)** — observable, explainable AI agents: recordings, influence localization, ablate-and-rerun, MCP tools. If it's useful, a ⭐ helps people find it.
+
+**[footprintjs](https://github.com/footprintjs/footPrint)** — the self-explaining flowchart engine underneath, recording every stage, decision and write as a typed event. A star there is welcome too, for the same reason.
+
+## The wider ecosystem
+
+Both libraries and the rest of the family live at [footprintjs.github.io](https://footprintjs.github.io/), the ecosystem home; the repositories are at [github.com/footprintjs](https://github.com/footprintjs).
+
+## What this is
+
+The reference implementation of the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Eight self-contained examples, each behind a single `run.js`, each printing a summary that is byte-checked against a recorded `expected-output.txt`.
+
+## The paper
+
+Anbalagan, S. K., Nie, X., Kommalapati, A., Kanamarlapudi, V. K., Radhakrishnan, S., Zhao, X., & Mohan, U. (2026). Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems. In *Artificial Intelligence in HCI (HCII 2026)*, Lecture Notes in Computer Science vol. 16745, pp. 3–21. Springer, Cham. https://doi.org/10.1007/978-3-032-30849-8_1
+
+The ideas in this repository were developed with those co-authors and published in that paper. The paper states the argument; this repository makes it runnable.
+
+*This repository is an independent, personal open-source project. It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored by, or endorsed by any employer.*
 
 ## Run everything locally
 
@@ -29,14 +47,6 @@ npm run all
 cp .env.example .env   # paste your Anthropic key into .env
 npm run live           # about two small Haiku calls; requires Node 20.6+ (--env-file)
 ```
-
-## The paper
-
-Anbalagan, S. K., Nie, X., Kommalapati, A., Kanamarlapudi, V. K., Radhakrishnan, S., Zhao, X., & Mohan, U. (2026). Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems. In *Artificial Intelligence in HCI (HCII 2026)*, Lecture Notes in Computer Science vol. 16745, pp. 3–21. Springer, Cham. https://doi.org/10.1007/978-3-032-30849-8_1
-
-The ideas in this repository were developed with those co-authors and published in that paper. The paper states the argument; this repository makes it runnable.
-
-*This repository is an independent, personal open-source project. It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored by, or endorsed by any employer.*
 
 ## The examples
 
@@ -366,7 +376,7 @@ python3 -m http.server 4176 -d 08-app-gallery/out/byok
 
 (A double-clicked `file://` page won't load ES modules — that's a browser platform rule; use any dumb file server, including GitHub Pages.)
 
-**Your key stays in your tab.**  Every Claude call goes straight from your browser to `api.anthropic.com` (agentfootprint's browser provider); the tools are keyless public APIs called from your browser too. There is no backend, so there is no server code that *could* see your key. It is kept in a page variable only; tick "remember my key in this tab" and it lives in `sessionStorage` until the tab closes (which is also what carries it back through the gallery into the other desk). "Forget my key" erases it instantly. It is never sent to us, never logged, never in a URL — `npm run verify:byok` re-generates the bundle and asserts all of that, on every page that can hold a key.
+**Your key stays in your browser.**  Every Claude call goes straight from your browser to `api.anthropic.com` (agentfootprint's browser provider); the tools are keyless public APIs called from your browser too. There is no backend, so there is no server code that *could* see your key. You add it through the **Key** button in the desk's top bar, which opens the one dialog that ever takes, replaces or erases it. "Keep it in this browser" is ticked by default and puts it in `localStorage`, on your own machine, so it survives a reload, a restart and the trip between desks — a demo whose key evaporates gets re-typed in front of an audience, which is the real hazard. Untick it and the key is held in memory only and is gone on reload. "Forget my key" erases it from `localStorage` *and* `sessionStorage`, instantly. It is never sent to us, never logged, never in a URL — `npm run verify:byok` re-generates the bundle and asserts all of that, on every page that can hold a key.
 
 Honest scope: two desks, not three. The SEC's servers don't allow browser calls, so the stock desk runs only in the server demo (`npm run gallery:live`). Each reply spends a handful of small Haiku calls on your key; re-runs replay the original turn's frozen tool results — zero new fetches.
 
