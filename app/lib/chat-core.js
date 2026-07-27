@@ -47,6 +47,12 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   // pending.mode === 'replay') can never paint tokens into a visitor's bubble.
   // Absent an `onEvent` option the sink stays null and nothing changes.
   let liveEventSink = null;
+  // The RE-RUN sink — the counterfactual's own seam, and the exact mirror image
+  // of liveEventSink: set only inside rerunTurnK's serialized op, gated on
+  // pending.mode === 'replay', so a visitor's live turn can never be narrated as
+  // a probe and a probe can never be narrated as a turn. Absent an `onEvent`
+  // option it stays null and nothing about a re-run changes.
+  let rerunEventSink = null;
 
   // `pending` is a shared single-slot: every makeAgent call inside an awaited
   // operation reads it. A re-run samples makeAgent across several awaits, so two
@@ -100,6 +106,16 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       try { pending.blueprint = agent.getSpec()?.buildTimeStructure ?? null; } catch (err) { pending.blueprint = null; }
     }
     if (probeEventSink) { const evs = []; agent.on('*', (e) => evs.push(e)); probeEventSink.push(evs); }
+    // The re-run tap, gated the same way in the other direction. THIS call is
+    // also the only honest boundary marker a probe has: af builds exactly one
+    // agent per seeded run (recordedChat's runner → makeAgent), so one call here
+    // IS one run starting — and `toolNames` is what that run will really be able
+    // to consult, which is how the sink tells a baseline run from an ablated one
+    // without being told.
+    if (rerunEventSink && pending.mode === 'replay') {
+      rerunEventSink.probeStarted(toolNames);
+      agent.on('*', (e) => { if (rerunEventSink) rerunEventSink.event(e); });
+    }
     // The live tap. Double-gated on purpose: a sink exists ONLY while a
     // chatTurn op is in flight, and the mode check makes a replay probe's
     // events structurally unable to reach it.
@@ -288,7 +304,48 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   // the FROZEN WORLD (the honesty keystone) and the rerunId registry: `pending`
   // flips to replay mode over turn K's recorded tool log, so the decorator
   // returns the ORIGINAL bytes and dispatches nothing.
-  async function rerunTurnK(session, k, ignoreIds) {
+  //
+  // ─── The re-run's narration sink ──────────────────────────────────────────
+  // Two host phases and nothing else. Both are things that DEMONSTRABLY happen,
+  // read off the run itself rather than assumed from a script:
+  //
+  //   vr.rerun.start — the frozen world is armed (pending.mode is already
+  //                    'replay' when this is built), naming the ids the host is
+  //                    actually about to hand af.
+  //   vr.rerun.probe — one seeded run is starting. WHICH KIND of run it is comes
+  //                    from the tool list that run was really constructed with:
+  //                    af runs the BASELINE probe first (empty specs → every
+  //                    tool survives) and the ablated probe second (the ignored
+  //                    tools are gone). We read the fact instead of trusting the
+  //                    order. When an ignored id is not a tool of this pack at
+  //                    all we cannot classify it, and the frame says so by
+  //                    carrying `phase: null` rather than guessing.
+  function makeRerunSink(onEvent, session, ignoreIds, samples) {
+    const packTools = session.decoratedTools.map((t) => t.schema.name);
+    const classifiable = ignoreIds.length > 0 && ignoreIds.every((id) => packTools.includes(id));
+    const counts = { baseline: 0, without: 0, unknown: 0 };
+    onEvent({ type: 'vr.rerun.start', payload: { removed: [...ignoreIds], samples, checkBaseline: true } });
+    return {
+      probeStarted(toolNames) {
+        const removed = ignoreIds.filter((id) => !toolNames.includes(id));
+        const phase = classifiable ? (removed.length > 0 ? 'without' : 'baseline') : null;
+        counts[phase ?? 'unknown'] += 1;
+        onEvent({
+          type: 'vr.rerun.probe',
+          payload: { phase, run: counts[phase ?? 'unknown'], samples, removed },
+        });
+      },
+      event: onEvent,
+    };
+  }
+
+  // `opts.onEvent` — a per-call sink for the re-run's OWN narration (the panel's
+  // status line). It carries the agent's typed events verbatim plus two host
+  // phases the agent has no event for but that really happen: the moment the
+  // frozen world is armed (`vr.rerun.start`) and the start of each seeded run
+  // (`vr.rerun.probe`). Absent, the sink stays null and a re-run behaves
+  // byte-identically.
+  async function rerunTurnK(session, k, ignoreIds, opts = {}) {
     await getReport(session, k); // memoize the report BEFORE the re-run resolves `ignore`
     return serial(async () => {
       const pack = session.pack;
@@ -302,8 +359,10 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
         toolLog: meta.toolLog ?? new Map(),
         maxIterations: session.decoratedTools.length + 2,
       };
+      const samples = live ? 2 : 3;   // live cost control (af's floor is 2)
       const dispatchesBefore = metrics.toolDispatches;
       const sink = live ? [] : null; probeEventSink = sink;
+      if (opts.onEvent) rerunEventSink = makeRerunSink(opts.onEvent, session, ignoreIds, samples);
       let result;
       try {
         result = await session.chat.rerunTurn(k, {
@@ -311,9 +370,9 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
           embedder,
           answerChanged: decisionChanged(pack),
           checkBaseline: true,        // unlocks the causal verdict
-          samples: live ? 2 : 3,      // live cost control (floor is 2)
+          samples,
         });
-      } finally { probeEventSink = null; }
+      } finally { probeEventSink = null; rerunEventSink = null; }
       if (live) {
         const rerunLlmCalls = sink.reduce((n, evs) => n + llmCallIdsFromEvents(evs).length, 0);
         console.log(`[frozen-world][${pack.id}] re-run ignoring [${ignoreIds.join(', ')}]: `

@@ -30,10 +30,12 @@ export function createLocalApi({ core, packs, perApp }) {
     return s;
   };
 
-  // `onEvent` is the page's live status/token sink. It is forwarded ONLY here —
-  // reason/rerunTurn/fork never take one, so a counterfactual probe cannot paint
-  // into a visitor's bubble. There is still no request in this file: the agent
-  // runs in the tab, so these events are already local.
+  // `onEvent` is the page's live status/token sink for a TURN. Each of the two
+  // agent-running calls takes its OWN sink (chat here, rerunTurn below) and
+  // chat-core keeps them structurally apart — a probe's events cannot reach a
+  // turn's sink and a turn's cannot reach a probe's — so a counterfactual can
+  // never paint into a visitor's bubble. There is still no request in this file:
+  // the agent runs in the tab, so these events are already local.
   async function chat({ appId, sessionId, message, onEvent }) {
     const app = appOr404(appId);
     const session = sessionId ? resolve(app, sessionId) : startSession(app);
@@ -76,11 +78,15 @@ export function createLocalApi({ core, packs, perApp }) {
     return { map: r.map, strategies: r.strategies };
   }
 
-  async function rerunTurn({ appId, sessionId, turnIndex, ignore }) {
+  // The re-run's `onEvent` is the panel's status sink. On the server demo the
+  // same events cross an SSE hop; here there is no transport at all, so the
+  // statuses the tab shows ARE the probe's own events, one function call away.
+  async function rerunTurn({ appId, sessionId, turnIndex, ignore, onEvent }) {
     const session = resolve(appOr404(appId), sessionId);
     if (!session.chat.turns[turnIndex]) throw new Error('unknown session/turn');
     const ids = Array.isArray(ignore) ? ignore : [];
-    const { rerunId, result } = await core.rerunTurnK(session, turnIndex, ids);
+    if (ids.length === 0) throw new Error('ignore must name at least one source');
+    const { rerunId, result } = await core.rerunTurnK(session, turnIndex, ids, { onEvent });
     return { rerunId, ignoredLabels: core.labelsFor(await core.getReport(session, turnIndex), ids), result };
   }
 

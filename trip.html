@@ -1405,9 +1405,10 @@
   /* ── the two library views (agentfootprint-lens · footprint-explainable-ui) ──
      They own their panel exactly as the player does, and they must be given a
      REAL height: the flowchart is a canvas, and a canvas in an auto-height box
-     measures zero and draws nothing. Both ship their own (dark) styling; the
-     one stylesheet either of them needs is @xyflow/react's, loaded beside the
-     bundle and scoped entirely under .react-flow. */
+     measures zero and draws nothing. Both bring their own styling (see the
+     token sheet below); the one stylesheet either of them needs is
+     @xyflow/react's, loaded beside the bundle and scoped entirely under
+     .react-flow. */
   .cd-dbg-body.devview { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
   .cd-dbg-dev { flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .cd-dbg-devnote { flex: 0 0 auto; margin: 0; padding: 7px 16px 8px; font-size: 11px; line-height: 1.5;
@@ -1415,6 +1416,54 @@
   .cd-dbg-devwait { padding: 26px 16px; font-size: 12.5px; line-height: 1.6; color: var(--muted); font-style: italic; }
   .cd-dbg-foot { flex: 0 0 auto; padding: 8px 16px 10px; border-top: 1px solid var(--line);
     font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+  /* ── ONE TOKEN SHEET, TWO LIBRARIES ─────────────────────────────────────────
+     Left alone, both views arrive as a dark slate rectangle in the middle of a
+     paper-coloured desk: dark is what their RAW FALLBACKS say, and this page
+     was telling them nothing. Neither library is patched to fix that, and no
+     rule of ours reaches inside either component — because the two share ONE
+     theming vocabulary by design: footprint-explainable-ui styles everything
+     through var(--fp-*, …) and agentfootprint-lens resolves
+     --lens-X → --fp-X → its own fallback. So a single sheet of --fp-* values,
+     on the one container both views mount into, re-skins BOTH of them in their
+     own words, and the desk chrome outside it is untouched.
+
+     WHY NOT THEIR THEME PROPS (eui's traceTheme, lens's theme): each stamps
+     a preset as INLINE --fp-* variables on its own root, and an inline variable
+     beats an inherited one — passing either would overrule this sheet and hand
+     the desk back somebody else's grey. The sheet IS the theme; the props stay
+     unpassed on purpose, and verify-dev-views.mjs keeps them that way.
+
+     Four of these (--fp-accent, --fp-accent-bg, --fp-bg, --fp-success) are
+     tokens eui READS but its own theme presets never emit, and --fp-bg-elevated
+     is the same gap on the lens side (summary bar, step strip, detail cards).
+     They are listed here because without them those surfaces stay dark whatever
+     else is set — the drift is reported upstream, this is the desk's cover.
+
+     The accent is the DESK'S accent — var(--accent), which each app page
+     already stamps for itself — so the movies desk lights its chart in its own
+     purple and the trip desk in its own green. */
+  .cd-dbg-dev {
+    --fp-bg-primary: #FFFFFF;
+    --fp-bg-secondary: #F6F4F0;
+    --fp-bg-tertiary: #E9E3DA;
+    --fp-bg-elevated: #F6F4F0;
+    --fp-text-primary: #1E1A15;
+    --fp-text-secondary: #57503F;
+    --fp-text-muted: #786D5E;
+    --fp-border: #E9E3DA;
+    --fp-color-primary: var(--accent);
+    --fp-color-success: #22A860;
+    --fp-node-visited: #22A860;
+    --fp-node-cursor: var(--accent);
+    --fp-accent: var(--accent);
+    /* the tint under a selected chip — the desk accent at a tenth. The plain
+       rgba line is the same thing for a browser without color-mix(). */
+    --fp-accent-bg: rgba(120, 109, 94, .10);
+    --fp-accent-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+    --fp-bg: #FFFFFF;
+    --fp-success: #22A860;
+  }
 
   /* the only state the dialog draws itself: nothing to show, said plainly */
   .cd-tr-empty { font-size: 12.5px; line-height: 1.6; color: var(--muted); font-style: italic; }
@@ -1475,6 +1524,18 @@
     cursor: pointer; padding: 0 8px 2px; border-radius: 8px; }
   .cd-panel-close:hover { background: var(--soft); color: var(--ink); }
   .cd-panel-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 14px 24px; }
+
+  /* the re-run's status row (lib/page.js's, duplicated per the freeze-and-copy
+     convention): the same pulse + one muted sentence as the chat status line,
+     pinned to the top of the panel so it cannot scroll out of sight. The pulse
+     inherits .cd-status's reduced-motion rule. */
+  .cd-rerun-status { position: sticky; top: -10px; z-index: 2; margin: 0 0 8px;
+    padding: 8px 10px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+  .cd-rerun-err { margin: 0 0 8px; padding: 9px 11px; font-size: 12.5px; line-height: 1.5;
+    color: #8A2B14; background: #FDEDE7; border: 1px solid #F3C9BA; border-radius: 10px; }
+  .cd-inf.busy .inf-bar-ignore, .cd-inf.busy .inf-toggle, .cd-inf.busy .inf-rerun {
+    pointer-events: none; opacity: .45; }
+  .cd-inf.busy { cursor: progress; }
 
   .cd-composer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--bg); }
   .cd-composer-col { max-width: 720px; margin: 0 auto; padding: 13px 22px 18px; }
@@ -19004,6 +19065,43 @@ function dbgLensSafe(views, artifacts) {
   catch (err) { return { model: null, error: err }; }
 }
 
+/**
+ * THE EXECUTION PATH, READ BACK OUT OF THE RECORDING.
+ *
+ * The inspector's chart is coloured from exactly one input — a runtime overlay:
+ * the ordered list of stage executions. Live, footprint-explainable-ui builds
+ * that by listening to a run as it happens. Nothing on this page listens to
+ * anything, but it does not have to: the run's own COMMIT LOG is that order.
+ * footprintjs writes one bundle per executed stage, in the order they committed,
+ * and a stage that commits more than once (subflow boundaries do) is kept once,
+ * first commit wins — which is exactly what the live builder does with the
+ * events it hears.
+ *
+ * Field by field, all four come out of the frozen recording:
+ *   runtimeStageId  the bundle's own `[subflowPath/]stageId#executionIndex`
+ *   stageId         that, up to the '#' — which is what a chart node is called
+ *   stageName       the bundle's own stage name
+ *   timestampMs     0. Commit bundles carry NO wall clock, and this field is
+ *                   display-only — the inspector never reads it to place,
+ *                   order or colour anything. Zero is the absence stated, not
+ *                   a time invented. What genuinely cannot be recovered is
+ *                   per-stage DURATION, and the pane's note says so.
+ */
+function dbgOverlayFromCommitLog(commitLog) {
+  var seen = {};
+  var order = [];
+  (commitLog || []).forEach(function (b) {
+    var rsid = b && b.runtimeStageId;
+    if (typeof rsid !== 'string' || !rsid || seen[rsid]) return;
+    seen[rsid] = true;
+    var h = rsid.indexOf('#');
+    var stageId = h >= 0 ? rsid.slice(0, h) : rsid;
+    order.push({ runtimeStageId: rsid, stageId: stageId,
+      stageName: typeof b.stage === 'string' ? b.stage : stageId, timestampMs: 0 });
+  });
+  return { executionOrder: order, errors: new Map(), running: false };
+}
+
 /** The pane's one honest failure note, worded once and used wherever it is true. */
 function dbgUnreadable(err) {
   return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-error' },
@@ -19074,9 +19172,9 @@ function DbgDevPane(props) {
   // The inspector's chart, from the SAME recorded blueprint — lens owns the
   // bridge between the two vocabularies, and `decorate: false` is its
   // footprintjs-level view (plain stages and subflows, no agent semantics),
-  // which is what this shell is a renderer for. No runtime overlay is passed:
-  // the stage-by-stage colouring is recorded only by a live attach, so the
-  // chart shows the structure and the timeline beside it shows the execution.
+  // which is what this shell is a renderer for. lens path-qualifies every node
+  // id, so a node is named exactly as the overlay below names a stage and the
+  // two line up with no translation of ours in between.
   var chart = React.useMemo(function () {
     if (st.phase !== 'ready' || props.kind !== 'inspector' || !st.art.blueprint) return null;
     // WHY the console is narrowed for exactly this call: the bridge walks lens's
@@ -19097,6 +19195,15 @@ function DbgDevPane(props) {
     catch (err) { return null; }
     finally { console.warn = warn; }
   }, [st.phase, st.views, st.art, props.kind]);
+
+  // …and the path that chart is lit along, derived from this turn's own commit
+  // log (dbgOverlayFromCommitLog). Memoized beside the chart because the shell
+  // re-derives its whole flowchart renderer whenever this prop's identity
+  // changes, and a scrub must not rebuild the chart under the visitor's cursor.
+  var overlay = React.useMemo(function () {
+    if (st.phase !== 'ready' || props.kind !== 'inspector') return null;
+    return dbgOverlayFromCommitLog(st.art.snapshot && st.art.snapshot.commitLog);
+  }, [st.phase, st.art, props.kind]);
 
   if (st.phase === 'no-transport') {
     return React.createElement('p', { className: 'cd-dbg-devwait', 'data-testid': 'debug-view-noserver' },
@@ -19147,12 +19254,16 @@ function DbgDevPane(props) {
     note = 'footprint-explainable-ui \u2014 footprintjs\u2019s own inspector, over the run snapshot '
       + 'recordedChat froze on this turn: every stage in order, a transport to step through them, and the '
       + 'state each one left behind (right panel \u2192 INSPECTOR). The chart is this agent\u2019s own '
-      + 'build-time structure; it is not lit stage by stage, because that colouring is recorded only while '
-      + 'a run is happening. \u201cInsights\u201d is empty for the same honest reason \u2014 this run '
-      + 'attached no extra recorders.';
+      + 'build-time structure, and it lights up as you scrub \u2014 the path comes from the recording\u2019s '
+      + 'own commit log, which is the order the stages really ran in. What the recording does NOT carry is '
+      + 'timing: no stage was clocked, so every duration on the timeline reads 0ms and its bars stay flat. '
+      + '\u201cInsights\u201d is empty for a plain reason too \u2014 this run attached no extra recorders.';
     body = React.createElement(V.eui.ExplainableShell, {
       runtimeSnapshot: st.art.snapshot,
       traceGraph: chart,
+      // The one input that colours the chart. Derived, not observed — see
+      // dbgOverlayFromCommitLog: same order, same ids, nothing invented.
+      runtimeOverlay: overlay,
       title: props.title || 'this turn',
       // Narrative is honestly absent (this run attached no narrative recorder);
       // naming it here keeps an empty tab from claiming otherwise.
@@ -19536,6 +19647,57 @@ function makeLiveSink() {
   };
 }
 
+// ═══ THE RE-RUN'S STATUS LINE — the counterfactual, narrated ════════════════
+// A re-run here is 2×samples real Anthropic calls made from this tab over the
+// turn's frozen tool log, and it takes tens of seconds. atui's own footer says
+// "this can take a moment" once, at the bottom of a scrollable panel — and it
+// erases that sentence the instant an ignore toggle is tapped. So the panel gets
+// the same honest line the chat thread has.
+//
+// The event→status map is run.js's rerunStatusMapper, duplicated per the
+// freeze-and-copy convention. Two host phases the probe really has (the frozen
+// world being armed, and each seeded run starting — chat-core emits both from
+// the run itself) plus the SAME agent events the chat sink maps. No tokens: a
+// probe's prose is a counterfactual and must never type itself into the
+// transcript. Nothing is paced — a re-run's phases are what the visitor is
+// waiting on, and holding a finished one on screen would misreport the work.
+var LAST_RERUN = null;   // what the headless drive reads (window.__byok.lastRerun)
+
+/** One raw event → at most one status line. Real events only. @param show (status) => void */
+function makeRerunSink(labels, show) {
+  var nameOf = {};
+  var without = labels.length > 0 ? labels.join(', ') : 'the selected sources';
+  return function (ev) {
+    var p = ev.payload || {};
+    var s = null;
+    if (ev.type === 'vr.rerun.start') {
+      s = { kind: 'removing', removed: p.removed,
+        label: 'removing ' + without + ' \u2014 the original turn\u2019s tool results stay frozen' };
+    } else if (ev.type === 'vr.rerun.probe') {
+      var text = p.phase === 'baseline'
+        ? 'baseline run ' + p.run + ' of ' + p.samples + ' \u2014 nothing removed'
+        : p.phase === 'without'
+          ? 're-run ' + p.run + ' of ' + p.samples + ' without ' + without
+          // Unclassifiable: an ignored id this pack serves no tool for. Say the
+          // one thing we do know rather than guess which probe this is.
+          : 'seeded re-run ' + p.run;
+      s = { kind: 'probe', phase: p.phase || null, run: p.run, of: p.samples, label: text };
+    } else if (ev.type === 'agentfootprint.stream.llm_start') {
+      s = { kind: 'thinking', label: 'thinking\u2026' };
+    } else if (ev.type === 'agentfootprint.stream.tool_start') {
+      nameOf[p.toolCallId] = p.toolName;
+      s = { kind: 'tool', tool: p.toolName,
+        label: 'replaying ' + plainTool(p.toolName) + ' from the original turn \u2014 no new fetch' };
+    } else if (ev.type === 'agentfootprint.stream.tool_end' && p.error) {
+      var name = nameOf[p.toolCallId] || 'a source';
+      s = { kind: 'tool', tool: name, label: plainTool(name) + ' hit an error \u2014 this run answers without it' };
+    }
+    if (!s) return;
+    if (LAST_RERUN) LAST_RERUN.statuses.push(s);
+    show(s);
+  };
+}
+
 /** Render one rich-text line of the custody copy. */
 function richLine(segs, key) {
   return e('p', { key: key }, segs.map(function (s, i) {
@@ -19570,6 +19732,9 @@ function Byok() {
   // the reply writing itself from Anthropic's own arrival cadence.
   var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
   SET_LIVE = setLiveTurn;
+  // The in-flight re-run: which panel it belongs to, the sources it is removing,
+  // the latest real status, and — if it failed — the honest note.
+  var x0 = React.useState(null); var rerunLive = x0[0], setRerunLive = x0[1];
   var keyRef = React.useRef(null);
   // Which turn the reason panel is showing, tracked in a ref as well as in
   // state: a re-run fired in the same tick as the reason that opened the panel
@@ -19617,7 +19782,11 @@ function Byok() {
     panelRef.current = null;
     patch(function (d) { d.panelKey = null; return d; });
   }
-  var fail = function (err) {
+  // Split in two: failMessage builds the plain-words sentence, fail shows it
+  // in a dialog. The re-run reuses the SENTENCE inside the panel — a failed
+  // counterfactual must leave the map and the toggles standing, and a modal that
+  // has to be dismissed before you can look at either is the wrong shape for it.
+  var failMessage = function (err) {
     var raw = String((err && err.message) || err);
     var status = err && err.status;
     var lead = null;
@@ -19631,8 +19800,9 @@ function Byok() {
     } else if (/Failed to fetch|NetworkError|load failed/i.test(raw)) {
       lead = 'The call to api.anthropic.com could not be made — check the network. Your key never left this tab.';
     }
-    window.alert(lead ? lead + '\n\n(Anthropic said: ' + raw + ')' : raw);
+    return lead ? lead + '\n\n(Anthropic said: ' + raw + ')' : raw;
   };
+  var fail = function (err) { window.alert(failMessage(err)); };
 
   // ═══ arming / forgetting ════════════════════════════════════════════════
   function arm() {
@@ -19705,12 +19875,30 @@ function Byok() {
     }).catch(fail);
   }
 
+  /** The words the map itself used for these ids — never an id in prose. */
+  function labelsForIds(key, ids) {
+    var srcs = (desk.reason[key] && desk.reason[key].map && desk.reason[key].map.sources) || [];
+    return ids.map(function (id) {
+      for (var i = 0; i < srcs.length; i += 1) if (srcs[i].id === id) return srcs[i].label;
+      return id;
+    });
+  }
+
   function doRerun(ids) {
     var key = desk.panelKey || panelRef.current;
     if (!key) return;
     var parts = key.split(':'), sid = parts[0], ti = Number(parts[1]);
     var before = metrics.toolDispatches;
-    return api.rerunTurn({ appId: APP.id, sessionId: sid, turnIndex: ti, ignore: ids }).then(function (j) {
+    var labels = labelsForIds(key, ids);
+    LAST_RERUN = { key: key, ids: ids, statuses: [], finalReceived: false };
+    setRerunLive({ key: key, labels: labels, status: null, error: null });
+    // Only the panel this re-run belongs to may be repainted by it.
+    var show = function (s) {
+      setRerunLive(function (r) { return r && r.key === key ? { key: key, labels: labels, status: s, error: null } : r; });
+    };
+    return api.rerunTurn({ appId: APP.id, sessionId: sid, turnIndex: ti, ignore: ids,
+      onEvent: makeRerunSink(labels, show) }).then(function (j) {
+      LAST_RERUN.finalReceived = true;
       var dispatched = metrics.toolDispatches - before;
       patch(function (d) {
         d.reruns = Object.assign({}, d.reruns);
@@ -19718,8 +19906,14 @@ function Byok() {
           result: j.result, dispatched: dispatched };
         return d;
       });
+      setRerunLive(null);
       return j.result;   // the af RerunWithoutSourcesResult, verbatim, for atui's own panel
-    }).catch(fail);
+    }, function (err) {
+      // The panel stays alive and the map stays exactly as it was — the note
+      // names what was being removed and what failed, and Re-run works again.
+      setRerunLive({ key: key, labels: labels, status: null, error: failMessage(err) });
+      throw err;
+    });
   }
 
   function doFork(sid, ti, rerunId) {
@@ -19753,6 +19947,8 @@ function Byok() {
     getState: function () { return { appId: APP.id, desk: desk, armed: armed, tail: tail }; },
     // What the last send really saw on the in-tab event channel.
     get lastStream() { return LAST_STREAM; },
+    // The same, for the last re-run: every status in arrival order.
+    get lastRerun() { return LAST_RERUN; },
     // Everything the page holds, deep-serialized — the assertion that the key
     // never entered the recorded state, run against real bytes.
     dump: function () {
@@ -19883,6 +20079,30 @@ function Byok() {
         view: 'bars', strategyControl: 'dropdown', brand: APP.title })
     : null;
 
+  // ── the panel while a re-run is in flight (lib/page.js's, verbatim) ───────
+  // The map NEVER goes away: it is the thing the re-run is about. What changes
+  // is that the three controls that would invalidate the running probe freeze,
+  // and one sticky line at the top says where the work actually is. Freezing is
+  // not decoration: atui resets its own re-run state on any ignore toggle, so a
+  // tap mid-flight erased the only "running" sentence AND let the finished
+  // result land under a caption naming a different set of sources.
+  var rerunOnThisPanel = !!(rerunLive && rerunLive.key === desk.panelKey);
+  var rerunBusy = rerunOnThisPanel && !rerunLive.error;
+  var freezeWhileRerunning = function (ev) {
+    if (!rerunBusy) return;
+    var hit = ev.target && ev.target.closest ? ev.target.closest('.inf-bar-ignore, .inf-toggle, .inf-rerun') : null;
+    if (!hit) return;
+    ev.preventDefault(); ev.stopPropagation();
+  };
+  var rerunNote = !rerunOnThisPanel ? null : (rerunLive.error
+    ? e('div', { className: 'cd-rerun-err', 'data-testid': 'rerun-error' },
+        'the re-run without ' + rerunLive.labels.join(', ') + ' did not finish \u2014 ' + rerunLive.error
+        + ' This map and your ignore toggles are unchanged, so Re-run works again.')
+    : e('div', { className: 'cd-status cd-rerun-status', 'data-testid': 'rerun-status', role: 'status',
+        'aria-live': 'polite' },
+        e('span', { className: 'cd-pulse' }),
+        rerunLive.status ? rerunLive.status.label : 're-run requested \u2014 waiting for the first status'));
+
   var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
@@ -19942,7 +20162,12 @@ function Byok() {
       e('div', { className: 'cd-panel-head' },
         e('span', { className: 'cd-panel-title' }, 'Visible reason'),
         e('button', { className: 'cd-panel-close', 'aria-label': 'close', onClick: closePanel }, '×')),
-      e('div', { className: 'cd-panel-body' }, panelInner)),
+      e('div', { className: 'cd-panel-body' },
+        rerunNote,
+        e('div', { className: 'cd-inf' + (rerunBusy ? ' busy' : ''),
+          'aria-busy': rerunBusy ? 'true' : null,
+          onClickCapture: freezeWhileRerunning, onKeyDownCapture: freezeWhileRerunning },
+          panelInner))),
     e('div', { className: 'cd-backdrop' + (panelOpen ? ' show' : ''), onClick: closePanel }));
 }
 
