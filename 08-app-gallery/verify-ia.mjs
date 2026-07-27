@@ -21,8 +21,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  BUTTON_HELP, HEADER_LINKS, LIVE_COST_LINE, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE, PROVENANCE_HELP,
-  PROVENANCE_PHILOSOPHY, aboutCards, buildAppPage, buildGalleryPage, provenanceHelpScript,
+  BUTTON_HELP, HEADER_LINKS, LIVE_COST_LINE, PAPER_AUTHORS, PROVENANCE_CLOSING, PROVENANCE_EXAMPLE,
+  PROVENANCE_HELP, PROVENANCE_PHILOSOPHY, buildAppPage, buildGalleryPage, provenanceHelpScript,
+  question, statesForBuild,
 } from './lib/page.js';
 import { APPS } from './apps/index.js';
 import { generate } from './byok.js';
@@ -63,101 +64,182 @@ const byok = byokPages['trip.html'];
 // ═══ A1. the landing carries the vocabulary, single-sourced ═════════════════
 const mockGallery = buildGalleryPage(APPS, { live: false, model: MODEL });
 const liveGallery = buildGalleryPage(APPS, { live: true, model: MODEL });
-const guideOf = (html) => {
-  const start = html.indexOf('id="guide"');
-  return start === -1 ? '' : html.slice(start, html.indexOf('</section>', start));
+// One note row, from its own anchor to the next row's. Both landings are the
+// same components (lib/page.js's buildHome), so one reader serves both.
+const noteOf = (html, id) => {
+  const start = html.indexOf(`<div class="vr-note" id="${id}"`);
+  if (start === -1) return '';
+  const next = html.indexOf('<div class="vr-note"', start + 10);
+  return html.slice(start, next === -1 ? undefined : next);
 };
-const guide = guideOf(mockGallery);
+const guide = noteOf(mockGallery, 'guide');
+const liveGuide = noteOf(liveGallery, 'guide');
 
 ok(mockGallery.includes('id="guide"'), 'the landing has the stable #guide anchor the desks deep-link');
-ok(guide.includes('How to read the demo'), 'the guide is titled “How to read the demo”');
-for (const h of PROVENANCE_HELP) {
-  ok(guide.includes(h.label) && guide.includes(h.what),
-    `#guide carries the “${h.label}” definition byte-equal from PROVENANCE_HELP`);
+ok(guide.includes('how to read the demo'), 'the guide note is labeled “how to read the demo”');
+// A GUIDE DEFINES ONLY WHAT ITS OWN BUILD CAN PRODUCE. The mock build calls
+// nothing, so “live — real data fetched from the internet just now” is a word
+// its desks can never say; the live build runs the real fetchers, so “scripted”
+// is. statesForBuild() is the one place that fact is written, and the desks'
+// dialogs read it too (buildAppPage), so a tooltip word and a definition cannot
+// come apart.
+const DOT_CLASS = { live: 'live', scripted: 'scripted', fallback: 'fallback', synthetic: 'synthetic', 'not consulted': 'notconsulted' };
+for (const [build, html, body] of [['mock', mockGallery, guide], ['live', liveGallery, liveGuide]]) {
+  const can = statesForBuild(build === 'live');
+  for (const h of PROVENANCE_HELP) {
+    const mine = can.includes(h.state);
+    ok(body.includes(h.what) === mine && body.includes(`class="cd-dot ${DOT_CLASS[h.state]}"`) === mine,
+      `[${build}] #guide ${mine ? 'carries' : 'omits'} the “${h.label}” definition — ${mine ? 'byte-equal from PROVENANCE_HELP' : 'this build cannot report it'}`);
+  }
+  ok(html.includes(`class="cd-dot ${DOT_CLASS[build === 'live' ? 'live' : 'scripted']}"`),
+    `[${build}] the verdict this build DOES report is on the page`);
 }
 ok(guide.includes(PROVENANCE_CLOSING), '#guide carries PROVENANCE_CLOSING verbatim');
 ok(guide.includes(PROVENANCE_PHILOSOPHY), '#guide carries the honesty-philosophy line');
 ok(guide.includes(PROVENANCE_EXAMPLE), '#guide carries the synthetic-crowd worked example (moved off the footer)');
-for (const cls of ['cd-dot live', 'cd-dot scripted', 'cd-dot fallback', 'cd-dot synthetic', 'cd-dot notconsulted']) {
-  ok(guide.includes(`class="${cls}"`), `#guide paints a real “${cls}” dot (same classes as a desk)`);
-}
 ok(!mockGallery.includes('always synthetic</strong>'), 'the old footer sentence is gone from the footer');
 
-// the other two new sections + their anchors
-ok(mockGallery.includes('id="buttons"') && mockGallery.includes('What the buttons do'),
+// THE COUNT IN THE PROSE IS THE COUNT ON THE PAGE. “where the data comes from”
+// points two rows up at the guide and names how many labels are there; the
+// number is derived from the same list that renders them, so this re-counts the
+// rendered rows on every landing rather than trusting the sentence.
+const guideDefRows = (body) => (body.match(/<div class="vr-defrow">/g) || []).length;
+const spelledOut = (body) => Number((body.match(/The (\d+) labels are spelled out in/) || [])[1]);
+for (const [name, html] of [['gallery mock', mockGallery], ['gallery live', liveGallery], ['byok home', byokHome]]) {
+  const rows = guideDefRows(noteOf(html, 'guide'));
+  const said = spelledOut(noteOf(html, 'data'));
+  ok(rows > 0 && said === rows,
+    `[${name}] “the N labels are spelled out in how to read the demo” names the number of definitions actually rendered`,
+    `says ${said}, renders ${rows}`);
+}
+
+// the other program notes + their anchors
+ok(mockGallery.includes('id="buttons"') && mockGallery.includes('<span>what the buttons do</span>'),
   'the landing has #buttons — what every control does');
 for (const b of BUTTON_HELP) {
   ok(mockGallery.includes(b.name) && mockGallery.includes(b.what), `#buttons explains “${b.name}”`);
 }
 ok(mockGallery.includes('id="byok"') && mockGallery.includes('footprintjs.github.io/visible-reasoning'),
   'the landing has #byok — the take-home pointer at the public page');
-ok(/#guide, #about, #buttons, #byok \{ scroll-margin-top: 18px; \}/.test(mockGallery),
+ok(/\.vr-note \{ border-top: 1px solid var\(--hair\); scroll-margin-top: 18px; \}/.test(mockGallery),
   'anchored arrivals get scroll-margin so they do not sit flush against the viewport edge');
 
-// ═══ A1b. the header rail + the about deck, on BOTH landings ════════════════
+// ═══ A1b. ONE DESIGN, TWO LANDINGS ══════════════════════════════════════════
 // Static information, so it belongs here by the same rule as the guide: it reads
-// the same before the first message and after the hundredth. Both surfaces are
-// rendered from lib/page.js by both landings — neither has its own copy of the
-// text, so a claim can only be wrong in one place.
-const backsOf = (html) => [...html.matchAll(/<p class="ab-body">([\s\S]*?)<\/p>/g)]
-  .map((m) => m[1].replace(/<[^>]+>/g, '').trim());
+// the same before the first message and after the hundredth. Both landings are
+// lib/page.js's buildHome — neither has its own copy of the chrome or the text,
+// so a claim can only be wrong in one place.
+//
+// The reveal gesture is asserted structurally on both: rows are authored OPEN
+// (scripting off ⇒ the whole page still reads), the control is a native
+// button[aria-expanded], and the fold is the grid-template-rows animation.
+const NOTES = [
+  'what is visible reasoning?', 'how to read the demo', 'what the buttons do', 'what a reply costs',
+  'why this isn’t the model explaining itself', 'what the scores mean — and don’t',
+  'where the data comes from', 'the paper &amp; the libraries',
+];
 for (const [name, html] of [['gallery', mockGallery], ['byok home', byokHome]]) {
   for (const l of HEADER_LINKS) {
     ok(html.includes(`<a href="${l.href}" target="_blank" rel="noopener"`),
-      `[${name}] the header rail links ${l.label} in a new tab`);
+      `[${name}] the page links ${l.label} in a new tab`);
   }
-  const titles = aboutCards({ desks: '', sources: '' }).map((c) => c.title);
-  ok((html.match(/data-testid="about-card"/g) || []).length === titles.length,
-    `[${name}] the about deck carries five cards`, String((html.match(/data-testid="about-card"/g) || []).length));
-  for (const title of titles) ok(html.includes(title), `[${name}] the about deck carries the “${title}” card`);
-  // Short enough to read standing up, long enough to say something. Measured on
-  // the RENDERED back of each card, so the per-landing facts are counted too.
-  const backs = backsOf(html);
-  ok(backs.length === titles.length, `[${name}] every card has a back`, String(backs.length));
-  backs.forEach((text, i) => {
-    // Words, not tokens: a lone em dash is punctuation, not something to read.
-    const words = text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
-    ok(words >= 40 && words <= 70, `[${name}] “${titles[i]}” is a card, not an essay`, `${words} words`);
-  });
-  // The deck is an ADDITION, not a replacement: the guide's definitions are what
-  // a dot on a desk is checked against, and they stay exactly where they were.
-  ok(html.includes('id="guide"') && html.includes('How to read the demo'),
-    `[${name}] the provenance guide survived the about deck, intact`);
+  for (const label of NOTES) ok(html.includes(`<span>${label}</span>`), `[${name}] the note “${label}” is on the page`);
+  const rows = (html.match(/<div class="vr-note" id="/g) || []).length;
+  const openRows = (html.match(/data-note-toggle aria-expanded="true"/g) || []).length;
+  ok(rows === openRows && !html.includes('aria-expanded="false"'),
+    `[${name}] every note ships open — with scripting off nothing is hidden`, `${openRows}/${rows}`);
+  ok(html.includes('<button type="button" class="vr-note-btn" data-note-toggle')
+    && html.includes('aria-controls="note-guide"'),
+    `[${name}] the reveal is a native button, wired to the pane it controls`);
+  ok(html.includes('[data-fold="on"][data-motion="on"] .vr-fold { transition: grid-template-rows')
+    && html.includes('[data-fold="on"] .vr-note.is-open .vr-fold { grid-template-rows: 1fr; }'),
+    `[${name}] the fold is the 0fr→1fr grid animation the design specifies`);
+  ok(/@media \(prefers-reduced-motion: reduce\) \{\s*\n\s*\[data-fold="on"\]\[data-motion="on"\] \.vr-fold \{ transition: none; \}\s*\n\s*\[data-fold="on"\]\[data-motion="on"\] \.vr-fold-inner \{ transition: none; \}/.test(html),
+    `[${name}] reduced motion turns the fold instant — and drops the hide delay with it`);
+  // CSS OWNS VISIBILITY, so a fold that never animates still ends up hidden.
+  // Double-clicking a row (or holding Enter) opens and closes it inside one
+  // style recalc: grid-template-rows never changes, no transition starts, and a
+  // transitionend-driven hide would never fire — leaving closed content visible
+  // and back in the tab order. Here the hide follows .is-open, delayed by the
+  // length of the fold rather than waiting on an event.
+  ok(html.includes('[data-fold="on"] .vr-fold-inner { visibility: hidden; }')
+    && html.includes('[data-fold="on"] .vr-note.is-open .vr-fold-inner { visibility: visible; transition: visibility 0s 0s; }')
+    && html.includes('[data-fold="on"][data-motion="on"] .vr-fold-inner { transition: visibility 0s 0.28s; }'),
+    `[${name}] closed content is hidden by the stylesheet, from .is-open alone — no transitionend to miss`);
+  const js = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]).join('\n');
+  ok(js.length > 0 && !/style\.visibility|transitionend/.test(js),
+    `[${name}] no script on the page manages visibility or waits for a transition to end`);
+  ok(html.includes('.vr-note.is-open { border-top-color: var(--terra-edge); }'),
+    `[${name}] an open row shows the terracotta edge`);
+  ok(html.includes('a:focus-visible, button:focus-visible { outline: 2px solid var(--terra)'),
+    `[${name}] the focus ring is :focus-visible only, in the accent`);
+  // The listing is the one bold moment, and every desk on it is a row.
+  ok(html.includes('border-top: 4px double var(--rule)'), `[${name}] the desk listing keeps its double rule`);
+  ok((html.match(/<h2 class="vr-deskname">/g) || []).length === 3,
+    `[${name}] all three desks are listed — including the one that cannot run here`,
+    String((html.match(/<h2 class="vr-deskname">/g) || []).length));
+  // The notes are an ADDITION, not a replacement: the guide's definitions are
+  // what a dot on a desk is checked against, and they stay exactly where they
+  // were, rendered from the same table.
+  ok(html.includes('id="guide"') && html.includes('how to read the demo'),
+    `[${name}] the provenance guide survived the redesign, intact`);
   ok(html.indexOf('id="about"') < html.indexOf('id="guide"'),
-    `[${name}] the about deck reads before the guide — what this is, then how to read it`);
+    `[${name}] what-this-is reads before how-to-read-it`);
   ok(html.includes('github.com/footprintjs/visible-reasoning'),
-    `[${name}] the source is reachable from the page body, not only the header rail`);
-  // The flip is progressive: the deck ships flat and the script stacks it, so
-  // scripting off costs a visitor the animation, never the words.
-  ok(html.includes('<div class="ab-deck" data-about-deck>') && !/<div class="ab-deck"[^>]*data-flip/.test(html),
-    `[${name}] the deck ships flat — every back is readable with scripting off`);
+    `[${name}] the source is reachable from the page body, not only the top rail`);
+  ok(html.includes(PAPER_AUTHORS), `[${name}] the paper note credits every author, in order`);
+  ok(html.includes('doi.org/10.1007/978-3-032-30849-8_1'), `[${name}] the paper note cites the DOI`);
 }
 
-// ═══ A4. the cards are build-honest ═════════════════════════════════════════
-// The app-card grid alone — it now ends at the about deck, which sits between
-// the cards and the guide. The slice must stop there or the deck's prose would
-// be read as a card's claim.
-const cardsOf = (html) => html.slice(html.indexOf('<div class="ag-grid">'), html.indexOf('<section class="ag-sec ag-about"'));
-const mockCards = cardsOf(mockGallery);
-const liveCards = cardsOf(liveGallery);
-ok(!mockCards.includes('cd-dot live'), 'mock build: no card dot claims a live source');
-ok(mockCards.includes('cd-dot scripted') && mockCards.includes('cd-dot synthetic'),
-  'mock build: card dots are scripted (+ synthetic where the data is invented by design)');
-ok(liveCards.includes('cd-dot live') && liveCards.includes('cd-dot synthetic'),
-  'live build: card dots are live (+ synthetic by design)');
-ok(!liveCards.includes('cd-dot scripted'), 'live build: no card dot claims a scripted source');
-ok(liveCards.includes(`model: ${MODEL} — streamed token by token`), 'live capability strip names the real model');
-ok(liveCards.includes('tools served over MCP (real protocol frames)'), 'live capability strip claims MCP');
-ok(liveCards.includes('statuses and reply arrive as they happen'), 'live capability strip describes real streaming');
-ok(mockCards.includes('scripted mock — no model, no network'), 'mock capability strip claims no model');
-ok(mockCards.includes('scripted mock tools — no MCP server'), 'mock capability strip does NOT claim MCP');
-ok(mockCards.includes('real event order, paced for reading'), 'mock capability strip is honest about pacing');
-ok((mockCards.match(/every reply: visible reason → re-run without a source → fork/g) || []).length === APPS.length,
-  're-run + fork is claimed on every card, in every build');
-ok(!mockGallery.includes('class="ag-mcp"') && !mockGallery.includes('class="ag-model"'),
-  'the two loose capability lines are gone — the strip replaced them');
+// ═══ A4. the desk listing is build-honest ═══════════════════════════════════
+// The listing alone — it ends where the program notes begin. The slice must stop
+// there or a note's prose would be read as a desk's claim.
+const listingOf = (html) => html.slice(html.indexOf('<section class="vr-desks"'), html.indexOf('<section class="vr-program"'));
+const mockList = listingOf(mockGallery);
+const liveList = listingOf(liveGallery);
+ok(!mockList.includes('cd-dot live'), 'mock build: no source dot claims a live source');
+ok(mockList.includes('cd-dot scripted') && mockList.includes('cd-dot synthetic'),
+  'mock build: source dots are scripted (+ synthetic where the data is invented by design)');
+ok(liveList.includes('cd-dot live') && liveList.includes('cd-dot synthetic'),
+  'live build: source dots are live (+ synthetic by design)');
+ok(!liveList.includes('cd-dot scripted'), 'live build: no source dot claims a scripted source');
+ok(liveList.includes(`model: ${MODEL} — streamed token by token`), 'live desk facts name the real model');
+ok(liveList.includes('tools served over MCP (real protocol frames)'), 'live desk facts claim MCP');
+ok(liveList.includes('statuses and reply arrive as they happen'), 'live desk facts describe real streaming');
+ok(mockList.includes('scripted mock — no model, no network'), 'mock desk facts claim no model');
+ok(mockList.includes('scripted mock tools — no MCP server'), 'mock desk facts do NOT claim MCP');
+ok(mockList.includes('real event order, paced for reading'), 'mock desk facts are honest about pacing');
+ok((mockList.match(/every reply: visible reason → re-run without a source → fork/g) || []).length === APPS.length,
+  're-run + fork is claimed on every desk, in every build');
+// The starters under a desk are the pack's own, not copy written for the page.
+for (const app of APPS) {
+  for (const s of app.starters) {
+    ok(mockList.includes(`“${s.replace(/"/g, '&quot;')}”`),
+      `[${app.id}] the listing shows the pack's real starter “${s.slice(0, 30)}…”`);
+  }
+  // The pack's own words, cased as a sentence by the renderer (the design sets
+  // this line as "Should I hike it?"; the pack writes it lowercase for the
+  // desk's bar). Same words, same order — only the first letter is the page's.
+  const asked = app.tagline.split('—')[0].trim();
+  ok(mockList.includes(`“${question(app)}”`) && question(app).slice(1) === asked.slice(1),
+    `[${app.id}] the one-liner is the pack's own tagline, not new copy — capitalized, not rewritten`,
+    question(app));
+  ok(!mockList.includes(`“${asked}”`), `[${app.id}] …and it is not the uncapitalized copy the design does not show`);
+}
 ok(liveGallery.includes(LIVE_COST_LINE) && !mockGallery.includes(LIVE_COST_LINE),
-  'the live cost line is small print under the lead on live builds only');
+  'the live cost line is the cost note on live builds only');
+ok(mockGallery.includes('This build spends nothing: no model is called and no source is fetched'),
+  'the mock build says it spends nothing, instead of borrowing the live line');
+// The local gallery routes to its own server and opens a deep-linked note; the
+// public home does neither, and carries no second script at all.
+ok(mockGallery.includes("document.querySelectorAll('[data-app]')") && mockGallery.includes("'/app/' + el.dataset.app"),
+  'the local gallery re-points its desk links at the server routes when it is served');
+ok(mockGallery.includes('if (btn && btn.getAttribute(\'aria-expanded\') !== \'true\') btn.click();'),
+  'a deep link (#guide, from a desk’s dialog) opens that note instead of landing on a folded row');
+ok((byokHome.match(/<script\b/g) || []).length === 1
+  && (mockGallery.match(/<script\b/g) || []).length === 2,
+  'the public home carries ONE script (the unfold); the local gallery adds only its routing',
+  `${(byokHome.match(/<script\b/g) || []).length} vs ${(mockGallery.match(/<script\b/g) || []).length}`);
 
 // ═══ A2. every desk is a stage ══════════════════════════════════════════════
 const EMPTY_HINT = 'Ask a question to begin — or send the starter already in the box.';

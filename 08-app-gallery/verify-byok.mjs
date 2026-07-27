@@ -8,19 +8,19 @@
 // pages have no own-origin data path and no query-string configuration, and the
 // model badge says the same honest thing in every mode.
 //
-// The artifact is a BUNDLE, not a page: index.html is a gallery home (cards, the
-// custody contract, the vocabulary — and no key input at all), and each desk is
-// its own page. Every custody assertion below therefore runs over EVERY page
-// that can hold a key, and the home gets its own set: relative links only, no
-// script, no key field, and the honest disabled card for the desk a browser
-// cannot run.
+// The artifact is a BUNDLE, not a page: index.html is the gallery home (the desk
+// listing, the custody contract, the vocabulary — and no key input at all), and
+// each desk is its own page. Every custody assertion below therefore runs over
+// EVERY page that can hold a key, and the home gets its own set: relative links
+// only, ONE script whose every property is asserted from its own bytes, no key
+// field, and the honest not-enterable row for the desk a browser cannot run.
 //
 //   node 08-app-gallery/verify-byok.mjs
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generate, serve } from './byok.js';
-import { HEADER_LINKS, PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
+import { HEADER_LINKS, PAPER_AUTHORS, PROVENANCE_HELP, buildAppPage, buildGalleryPage } from './lib/page.js';
 import { trip } from './apps/trip.js';
 import { APPS } from './apps/index.js';
 
@@ -185,52 +185,92 @@ for (const d of deskPages) {
 // make that safe — it takes no key (nothing to mishandle) and it hardcodes no
 // origin (so the same folder is correct at /visible-reasoning/, at a root, and
 // off file://).
-ok(landing.includes('<h1>Bring your own key · the app gallery</h1>'), '[home] the header names the page');
+ok(landing.includes('<h1 class="vr-h1">Visible Reasoning — the app gallery</h1>'),
+  '[home] the header names the page');
+ok(landing.includes('<span>DEMO · BRING YOUR OWN KEY</span>'),
+  '[home] the top rail says which demo this is');
 ok(!landing.includes('type="password"') && !landing.includes('byok-key') && !landing.includes('byok-arm'),
   '[home] has NO key input — arming happens on the desk the visitor picked');
 ok(!/sessionStorage|localStorage/.test(landing), '[home] touches no storage');
-ok(landing.includes('data-testid="landing-custody"'), '[home] the custody explainer card is on the home');
+ok(landing.includes('<div class="vr-note" id="key" data-note-row>')
+  && landing.includes('<span>the key, in full</span>'),
+  '[home] the custody contract is a note of its own, reachable from the first screen');
 
 // THE LANDING'S ONE SCRIPT. It used to carry none, and "no script" was the
-// cheapest possible proof that it cannot misbehave. The about deck's flip needs
-// aria-pressed and Enter/Space, which is a script — so the proof moves from
-// "there is no code" to "here is all of the code, and here is what it cannot
-// do". Everything below is asserted about the script's own bytes: exactly one,
-// inline (nothing is fetched), and inside it no request, no storage, no key, no
-// URL configuration. The custody claim is unchanged — the key path still has no
-// server of ours in it, and this landing still takes no key at all.
+// cheapest possible proof that it cannot misbehave. The page's one reveal
+// gesture (the note-row unfold) needs aria-expanded, a transitionend and
+// prefers-reduced-motion, which is a script — so the proof moves from "there is
+// no code" to "here is all of the code, and here is what it cannot do".
+// Everything below is asserted about the script's own bytes: exactly one, inline
+// (nothing is fetched), and inside it no request, no storage, no key, no URL
+// reading and no navigation. The custody claim is unchanged — the key path still
+// has no server of ours in it, and this landing still takes no key at all.
 const landingScripts = [...landing.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
-ok(landingScripts.length === 1, '[home] carries exactly ONE script — the about-card flip, nothing else',
+ok(landingScripts.length === 1, '[home] carries exactly ONE script — the note-row unfold, nothing else',
   `${landingScripts.length} script tag(s)`);
 const landingJs = landingScripts.map((m) => m[2]).join('\n');
 ok(landingScripts.every((m) => !/\bsrc=/.test(m[1])),
   '[home] that script is inline — the landing loads no code from anywhere');
-ok(!/fetch\(|XMLHttpRequest|WebSocket|sendBeacon|new Image\(|import\(/.test(landingJs),
+ok(!/fetch\(|XMLHttpRequest|WebSocket|sendBeacon|new Image\(|import\(|navigator\.send/.test(landingJs),
   '[home] the landing script makes no request of any kind');
-ok(!/sessionStorage|localStorage|document\.cookie|indexedDB/.test(landingJs),
+ok(!/sessionStorage|localStorage|document\.cookie|indexedDB|caches\./.test(landingJs),
   '[home] the landing script touches no storage');
 ok(!/apiKey|api\.anthropic|sk-ant|password/i.test(landingJs),
   '[home] the landing script knows nothing about keys');
-ok(!/location|URLSearchParams|history\./.test(landingJs),
+ok(!REAL_KEY_SHAPE.test(landingJs), '[home] the landing script carries no key-shaped literal');
+ok(!/location|URLSearchParams|history\.|window\.open|\.submit\(/.test(landingJs),
   '[home] the landing script reads no URL and navigates nowhere');
-ok(landingJs.includes("deck.setAttribute('data-flip', 'on')") && landing.includes('data-about-deck'),
-  '[home] the script only enhances its own deck — the about cards and nothing outside them');
-// Scripting off must not hide anything: the deck is authored flat (both faces in
-// flow) and the script is what stacks them, so a no-JS visitor still reads it.
-ok(landing.includes('<div class="ab-deck" data-about-deck>') && !/<div class="ab-deck"[^>]*data-flip/.test(landing),
-  '[home] the about deck ships flat — with scripting off every card back is still readable');
+ok(!/eval\(|new Function|document\.write|innerHTML/.test(landingJs),
+  '[home] the landing script evaluates nothing and writes no markup');
+ok(landingJs.includes("querySelectorAll('[data-note-group]')")
+  && landingJs.includes("group.setAttribute('data-fold', 'on')"),
+  '[home] the script only enhances its own note groups — nothing outside them');
+ok(landingJs.includes("btn.setAttribute('aria-expanded'"),
+  '[home] the script drives a native aria-expanded disclosure (Enter/Space are the browser’s)');
+// HIDING IS THE STYLESHEET'S JOB, and the script is smaller for it. It sets
+// .is-open and nothing else; CSS hides closed content from that class, delaying
+// the hide by the length of the fold instead of waiting for a transitionend the
+// browser may never fire. That difference is the bug this pair of checks pins:
+// a double-click (or Enter twice) opens and closes a row inside one style
+// recalc, no transition ever starts, and a JS-managed hide would leave the
+// closed pane visible and back in the tab order.
+ok(!/style\.visibility|transitionend|matchMedia/.test(landingJs),
+  '[home] the script never manages visibility, waits for a transition, or reads a media query');
+ok(landing.includes('[data-fold="on"] .vr-fold-inner { visibility: hidden; }')
+  && landing.includes('[data-fold="on"] .vr-note.is-open .vr-fold-inner { visibility: visible; transition: visibility 0s 0s; }')
+  && landing.includes('[data-fold="on"][data-motion="on"] .vr-fold-inner { transition: visibility 0s 0.28s; }'),
+  '[home] closed content leaves the tab order by CSS, from .is-open alone — after the fold finishes, not before it');
+ok(/@media \(prefers-reduced-motion: reduce\) \{\s*\n\s*\[data-fold="on"\]\[data-motion="on"\] \.vr-fold \{ transition: none; \}\s*\n\s*\[data-fold="on"\]\[data-motion="on"\] \.vr-fold-inner \{ transition: none; \}/.test(landing),
+  '[home] reduced motion drops both the fold and the hide delay — it hides at once');
+ok(landingJs.includes("setAttribute('data-motion', 'on')"),
+  '[home] the transition is armed after the first fold — nothing animates on load');
+// The public home deliberately ships NO deep-link opener: reading location is
+// one more thing a visitor would have to trust, so the BYOK desks carry the
+// definitions inline instead of linking at this page's #guide. (The "reads no
+// URL" assertion above is what enforces it; this one records that the anchors
+// therefore land on a folded row, and that nothing in the bundle links there.)
+ok(!landing.includes('#guide') && deskPages.every((d) => !d.html.includes("'#guide'")),
+  '[home] nothing in the bundle deep-links a note row — the home reads no URL, so a link there would land folded');
+// Scripting off must not hide anything: every row is AUTHORED OPEN and the
+// script is what folds it, so a no-JS visitor reads the whole page.
+const noteRows = (landing.match(/<div class="vr-note" id="/g) || []).length;
+const openRows = (landing.match(/data-note-toggle aria-expanded="true"/g) || []).length;
+ok(noteRows > 0 && openRows === noteRows && !landing.includes('aria-expanded="false"'),
+  '[home] every note ships OPEN — with scripting off the page is still fully readable',
+  `${openRows}/${noteRows} rows`);
 
-// The cards, and where they go.
+// The desk listing, and where it goes.
 for (const id of DESKS) {
   const app = APPS.find((a) => a.id === id);
-  ok(landing.includes(`href="./${id}.html"`), `[home] the ${id} card links at ./${id}.html (relative)`);
-  ok(landing.includes(`<h2 class="ag-title">${app.title}</h2>`), `[home] the ${id} card names the desk`);
+  ok(landing.includes(`href="./${id}.html"`), `[home] the ${id} desk links at ./${id}.html (relative)`);
+  ok(landing.includes(`<h2 class="vr-deskname">${app.title}</h2>`), `[home] the ${id} row names the desk`);
   for (const s of app.starters) {
-    ok(landing.includes(s.replace(/"/g, '&quot;')), `[home] the ${id} card shows the real starter “${s.slice(0, 34)}…”`);
+    ok(landing.includes(`“${s.replace(/"/g, '&quot;')}”`),
+      `[home] the ${id} note shows the real starter “${s.slice(0, 34)}…”`);
   }
 }
-ok((landing.match(/Open the desk →/g) || []).length === DESKS.length,
-  '[home] every runnable desk has a call to action', String((landing.match(/Open the desk →/g) || []).length));
+ok((landing.match(/class="vr-enter"/g) || []).length === DESKS.length,
+  '[home] every runnable desk has a way in', String((landing.match(/class="vr-enter"/g) || []).length));
 for (const line of [
   `model: ${MODEL} — on your key, streamed token by token`,
   'browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between',
@@ -238,18 +278,32 @@ for (const line of [
   'every reply: visible reason → re-run without a source → fork',
 ]) ok(landing.includes(line), `[home] capability line: “${line.slice(0, 44)}…”`);
 
-// The desk that cannot run in a browser: present, disabled, and it says why.
-ok(landing.includes('class="ag-card off"'), '[home] the stock desk gets a card, disabled — not a deletion');
+// The desk that cannot run in a browser: listed, not enterable, and it says why.
+ok(landing.includes('<article class="vr-desk is-off">'),
+  '[home] the stock desk gets a row, not enterable — not a deletion');
 ok(!landing.includes('href="./stocks.html"') && !existsSync(join(outDir, 'stocks.html')),
   '[home] nothing links at a stock page, and none was generated');
-ok(landing.includes('The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo. Run it yourself with npm run gallery:live.'),
-  '[home] the disabled card says why, and where the desk does run');
-ok(landing.includes('Server-only — run it locally'), '[home] the disabled card’s CTA is honest about its state');
+ok(landing.includes('The SEC’s servers don’t allow browser calls, so the stock desk runs only in the server demo.'),
+  '[home] the stock row says why it isn’t here');
+ok(landing.includes('Run it yourself with <code>npm run gallery:live</code>'),
+  '[home] …and the command that does run it');
+// Correction of a claim that was FALSE in the design: run locally, this desk is
+// not "browser-direct like the other two" — it is server-side.
+ok(landing.includes('<strong>server-side</strong>') && landing.includes('local MCP server calls SEC EDGAR and Reddit'),
+  '[home] the stock row is honest about HOW it runs locally — server-side, over a local MCP server');
+ok(!landing.includes('browser-direct calls, streaming replies'),
+  '[home] the stock row does not claim the browser-direct behaviour of the other two desks');
+ok(landing.includes('<span class="vr-badge">runs locally only · needs a server</span>'),
+  '[home] the stock row’s badge is honest about its state');
 
 // The vocabulary, single-sourced from lib/page.js's table — and filtered to what
 // THIS bundle can produce: nothing here is scripted, so that word never appears.
-const guide = landing.slice(landing.indexOf('id="guide"'), landing.indexOf('</section>', landing.indexOf('id="guide"')));
-ok(guide.includes('How to read the demo'), '[home] the guide section is on the home');
+const noteBody = (html, id) => {
+  const start = html.indexOf(`<div class="vr-note" id="${id}"`);
+  return start === -1 ? '' : html.slice(start, html.indexOf('<div class="vr-note"', start + 10));
+};
+const guide = noteBody(landing, 'guide');
+ok(guide.includes('how to read the demo'), '[home] the guide note is on the home');
 for (const state of ['live', 'fallback', 'synthetic', 'not consulted']) {
   const h = PROVENANCE_HELP.find((x) => x.state === state);
   ok(guide.includes(h.label) && guide.includes(h.what),
@@ -258,6 +312,28 @@ for (const state of ['live', 'fallback', 'synthetic', 'not consulted']) {
 for (const cls of ['cd-dot live', 'cd-dot fallback', 'cd-dot synthetic', 'cd-dot notconsulted']) {
   ok(guide.includes(`class="${cls}"`), `[home] #guide paints a real “${cls}” dot (same classes as a desk)`);
 }
+// The type contract: two web fonts, and a fallback for each so a blocked font
+// host costs the page its typeface and nothing else.
+ok(landing.includes('fonts.googleapis.com/css2?family=Newsreader')
+  && landing.includes('family=IBM+Plex+Mono'), '[home] the design’s two typefaces are requested');
+ok(/--serif: 'Newsreader', Georgia, 'Times New Roman', serif;/.test(landing)
+  && /--mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;/.test(landing),
+  '[home] both stacks fall back to a system face if the fonts never arrive');
+// The page tells the truth about its own network: the fonts are the only thing
+// it fetches, and it says so where the custody promise is made — naming BOTH
+// hosts a visitor sees, because the stylesheet comes from fonts.googleapis.com
+// and the font files themselves from fonts.gstatic.com. This page invites people
+// to read their own network log; an unnamed host in it is a broken promise.
+ok(landing.includes('The one thing this page fetches is its web fonts'),
+  '[home] the custody note names the page’s only request');
+for (const host of ['fonts.googleapis.com', 'fonts.gstatic.com']) {
+  ok(landing.includes(`<code>${host}</code>`),
+    `[home] …and names ${host}, which the network log will show`);
+}
+ok(!/its two web fonts|two requests/.test(landing),
+  '[home] the sentence implies no request count the log would contradict');
+ok(landing.includes('<link rel="icon" href="data:image/svg+xml,'),
+  '[home] the tab icon is inline — no /favicon.ico probe in the network log it invites you to read');
 // The body, not the stylesheet: the shared skin defines a paint for every
 // verdict (it is one file), but nothing on this page may CLAIM one it cannot
 // produce. Rendered content is where a claim lives.
@@ -266,30 +342,35 @@ ok(!landingBody.includes('scripted'),
   '[home] nothing rendered says “scripted” — no source in this bundle is');
 ok(landing.includes('github.com/footprintjs/visible-reasoning'), '[home] the source link is on the page');
 
-// The header rail and the about deck — both rendered from lib/page.js, so the
-// two landings cannot drift. Asserted here because this is the PUBLIC page: a
-// visitor who arrives cold gets the way to the code, to the library the desks
-// run on, and to the five program notes.
+// The ways off the page and the program notes — both rendered from lib/page.js,
+// so the two landings cannot drift. Asserted here because this is the PUBLIC
+// page: a visitor who arrives cold gets the way to the code, to the library the
+// desks run on, and to every program note.
 for (const l of HEADER_LINKS) {
   ok(new RegExp(`<a href="${l.href.replace(/[/.]/g, '\\$&')}" target="_blank" rel="noopener"`).test(landing),
-    `[home] the header rail links ${l.label} — new tab, rel=noopener`);
+    `[home] the page links ${l.label} — new tab, rel=noopener`);
 }
-ok((landing.match(/data-testid="about-card"/g) || []).length === 5,
-  '[home] the about deck has five cards', String((landing.match(/data-testid="about-card"/g) || []).length));
-ok((landing.match(/role="button" tabindex="0" aria-pressed="false"/g) || []).length === 5,
-  '[home] every about card ships un-flipped, keyboard-reachable, with aria-pressed on it',
-  String((landing.match(/role="button" tabindex="0" aria-pressed="false"/g) || []).length));
-ok(landing.includes('doi.org/10.1007/978-3-032-30849-8_1'),
-  '[home] the about deck cites the paper by DOI');
+for (const label of [
+  'what is visible reasoning?', 'the key, in full', 'how to read the demo', 'what the buttons do',
+  'what a reply costs', 'why this isn’t the model explaining itself',
+  'what the scores mean — and don’t', 'where the data comes from', 'the paper &amp; the libraries',
+]) ok(landing.includes(`<span>${label}</span>`), `[home] the note “${label}” is on the page`);
+ok(!landing.includes('take it with you'),
+  '[home] the public page does not point at itself — the take-home note is the local gallery’s');
+ok(landing.includes('doi.org/10.1007/978-3-032-30849-8_1'), '[home] the paper note cites the DOI');
+ok(landing.includes(PAPER_AUTHORS), '[home] the paper note names every author, in order');
 for (const lib of ['footprintjs', 'agentfootprint', 'agentthinkingui']) {
-  ok(landing.includes(`https://www.npmjs.com/package/${lib}`), `[home] the about deck links ${lib}`);
+  ok(landing.includes(`https://www.npmjs.com/package/${lib}`), `[home] the paper note links ${lib}`);
 }
 // The two build-specific facts: this bundle is two browser desks over keyless
-// public APIs. A card that claimed three desks or a network it never touches
-// would be exactly the dishonesty the rest of this file exists to prevent.
-ok(landing.includes('Two desks run in your browser'), '[home] the about deck says TWO desks, not three');
+// public APIs. A note that claimed three runnable desks or a network it never
+// touches would be exactly the dishonesty the rest of this file exists to stop.
+ok(landing.includes('Two of the three run here, in your browser; the third needs a server'),
+  '[home] the page says TWO of the three run here');
+ok(landing.includes('Two of them run right here in your browser'),
+  '[home] …and says it again in the lead, where a visitor decides');
 ok(landing.includes('called straight from your tab'),
-  '[home] the about deck describes browser-side tool calls, not a server’s');
+  '[home] the data note describes browser-side tool calls, not a server’s');
 
 // ═══ (f) same-tab navigation, without losing anything silently ══════════════
 const LEAVE_CONFIRM = 'Leaving resets this conversation — your key stays per your “remember” choice.';

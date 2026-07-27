@@ -37,8 +37,8 @@ import { dirname, join } from 'node:path';
 // imported, never re-authored, so a card here and a card in the local gallery
 // are the same element with different truths in it.
 import {
-  GALLERY_CSS, PROVENANCE_CSS, ICON, aboutSection, galleryCard, guideSection, headerRail,
-  provenanceHelpScript,
+  PROVENANCE_CSS, buildHome, codeSeg, deskNote, orderForHome, programNotes, provenanceHelpScript,
+  question, t as tSeg,
 } from './page.js';
 
 const require = createRequire(import.meta.url);
@@ -151,51 +151,22 @@ const SKIN = `
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
- * The BUILD-TIME twin of the page script's richLine(): one rich-text line of
- * copy → one <p>. The landing renders no React (its one script only turns the
- * about cards over), so its copy is rendered here from the SAME segment arrays
- * the desks render in React — the sentences cannot drift between the two
- * surfaces because there is only one of each.
- */
-const richLineHtml = (segs) => `<p>${segs.map((s) => {
-  if (s.b !== undefined) return `<strong>${esc(s.b)}</strong>`;
-  if (s.code !== undefined) return `<code>${esc(s.code)}</code>`;
-  if (s.em !== undefined) return `<em>${esc(s.em)}</em>`;
-  return esc(s.t);
-}).join('')}</p>`;
-
-// The landing's own chrome — everything else is lib/page.js's gallery skin.
-const LANDING_CSS = `
-  .by-custody { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px;
-    background: var(--soft); padding: 15px 17px; }
-  .by-custody h2 { font-size: 15px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .by-copy p { font-size: 13px; line-height: 1.62; color: var(--ink); margin: 0 0 8px; }
-  .by-copy p:last-child { margin-bottom: 0; }
-  .by-copy code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
-  .by-travel { margin: 12px 0 0; padding-top: 11px; border-top: 1px solid var(--line); }
-  /* a desk this build honestly cannot run: readable, not a link, and it says why */
-  .ag-card.off { opacity: .72; background: var(--soft); }
-  .ag-card.off .ag-cta { background: none; color: var(--muted); border: 1px dashed var(--line); }
-  .ag-cardnote { font-size: 12.5px; line-height: 1.55; color: #8A4A22; margin: 0 0 14px; }
-`;
-
-/**
  * THE GALLERY HOME — out/byok/index.html.
  *
- * Cards first, key entry never: a visitor arriving cold reads what this is and
- * where their key would go, then picks a desk and arms it there. Zero absolute
- * paths — it is honest under a subpath, at a root, and off file://.
+ * The desks are listed, key entry never happens here: a visitor arriving cold
+ * reads what this is and where their key would go, then picks a desk and arms it
+ * there. Zero absolute paths — it is honest under a subpath, at a root, and off
+ * file://.
  *
- * ONE script rides along, and only one: the about deck's flip (lib/page.js's
- * ABOUT_FLIP_SCRIPT), which turns a card over on click or Enter/Space. It makes
- * no request, touches no storage and knows nothing about keys — the custody
- * guarantees are unchanged and verify-byok.mjs asserts each of those properties
- * about the script itself, not just about the page. Scripting off leaves the
- * deck flat and fully readable.
+ * ONE script rides along, and only one: lib/page.js's NOTE_UNFOLD_SCRIPT, the
+ * page's single reveal gesture. It makes no request, touches no storage, reads
+ * no URL and knows nothing about keys — the custody guarantees are unchanged and
+ * verify-byok.mjs asserts each of those properties about the script's own bytes,
+ * not just about the page. Scripting off leaves every note open and readable.
  *
  * @param opts.apps   page-safe slices of the packs the bundle carries, in order
- * @param opts.stock  the page-safe slice of the desk that CANNOT run here; it
- *   gets a card anyway, disabled, saying why — the alternative is pretending the
+ * @param opts.stock  the page-safe slice of the desk that CANNOT run here; it is
+ *   listed anyway, not enterable, saying why — the alternative is pretending the
  *   third desk never existed
  * @param opts.model  the model id every desk in this bundle will send
  */
@@ -203,80 +174,113 @@ export function buildByokLanding({ apps, stock, model }) {
   // Four capability lines, all true of THIS bundle: a real model on the
   // visitor's key, a key path with no server of ours in it, real arrival
   // streaming, and the re-run/fork machinery every reply carries.
-  const caps = [
-    { icon: ICON.model, text: `model: ${model} — on your key, streamed token by token` },
-    { icon: ICON.direct, text: 'browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between' },
-    { icon: ICON.stream, text: 'statuses and reply arrive as they happen' },
-    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
+  const facts = [
+    [tSeg(`model: ${model} — on your key, streamed token by token`)],
+    [tSeg('browser-direct: every Claude call goes from your tab to api.anthropic.com — no server in between')],
+    [tSeg('statuses and reply arrive as they happen')],
+    [tSeg('every reply: visible reason → re-run without a source → fork')],
   ];
   // Nothing on these desks is scripted: every tool is a real browser fetcher, so
-  // a card dot may claim live — except the source that is synthetic by design.
+  // a dot may claim live — except the source that is synthetic by design.
   const dotState = (tool) => (tool.alwaysSynthetic ? 'synthetic' : 'live');
 
-  const cards = apps.map((app) => galleryCard({
-    app, caps, dotState, href: `./${app.id}.html`,
-  })).join('');
+  const runnable = orderForHome(apps).map((app, i) => ({
+    n: String(i + 1).padStart(2, '0'),
+    name: app.title,
+    oneLiner: question(app),
+    href: `./${app.id}.html`,
+    note: deskNote(app, { facts, dotState }),
+  }));
 
-  // The disabled card carries no tool dots and no starter prompts: dots would
-  // claim a source state nothing here can produce, and a starter you cannot send
-  // is an invitation to a dead end.
-  const stockCard = galleryCard({
-    app: { ...stock, tools: [], starters: [] },
-    caps: [{ icon: ICON.tools, text: 'runs in the server demo only — SEC EDGAR + Reddit over MCP' }],
+  // The desk that cannot run in a browser is listed, not deleted — and it gets
+  // no starter questions and no source dots, because a starter you cannot send
+  // is a dead end and a dot would claim a verdict nothing here can produce.
+  const offDesk = {
+    n: String(runnable.length + 1).padStart(2, '0'),
+    name: stock.title,
+    oneLiner: question(stock),
     href: null,
-    cta: 'Server-only — run it locally',
-    note: `${STOCK_NOTE} Run it yourself with npm run gallery:live.`,
+    badge: 'runs locally only · needs a server',
+    note: {
+      id: `desk-${stock.id}`,
+      label: 'why it isn’t here · how to run it',
+      body: [
+        { p: [tSeg(`${STOCK_NOTE} A browser cannot fetch a filing from EDGAR, and this page has no `
+          + 'server of ours behind it to fetch one on your behalf — so the desk is not here, and it '
+          + 'will not pretend.')] },
+        { p: [tSeg('Where it does run, it runs '), { b: 'server-side' },
+          tSeg(' — which is the honest difference from the two desks above. In the local demo a '
+            + 'local MCP server calls SEC EDGAR and Reddit over the real protocol, and that server, '
+            + 'not your browser, calls the model.')] },
+        { p: [tSeg('Run it yourself with '), codeSeg('npm run gallery:live'), tSeg(', then open '),
+          codeSeg('http://localhost:4175'), tSeg('.')] },
+      ],
+    },
+  };
+
+  return buildHome({
+    docTitle: 'Bring your own key — the app gallery',
+    description: 'Two small advisors you can chat with on your own Anthropic key — visible reasons, '
+      + 'verified what-if re-runs, all in your browser.',
+    favicon: FAVICON,
+    kicker: 'DEMO · BRING YOUR OWN KEY',
+    heading: 'Visible Reasoning — the app gallery',
+    lead: [tSeg('Three real chat desks share one machine; every reply can be re-run without a source, '
+      + 'to see what that source really changed.')],
+    sub: [tSeg('Two of them run right here in your browser, on your own Anthropic API key — '),
+      { em: 'the key never leaves this tab.' }],
+    topNotes: [
+      {
+        id: 'about',
+        label: 'what is visible reasoning?',
+        body: [
+          { p: [tSeg('Three chat desks that answer a question and then show why: the sources that '
+            + 'shaped the answer, ranked — each one droppable, so the same turn can be re-run without '
+            + 'it and compared. A working companion to a published paper, not a product.')] },
+          { p: [tSeg('None of them narrates its own reasoning. Each one records it: every source the '
+            + 'agent consults is a tool call, and the record of which tools ran, what came back and '
+            + 'what it changed survives the reply.')] },
+          { p: [tSeg('Two of the three run here, in your browser; the third needs a server, and its '
+            + 'row below says so. The paper and the method are under '), { em: 'program notes' },
+          tSeg(', below. Everything — the stock desk included — runs from '),
+          { href: 'https://github.com/footprintjs/visible-reasoning', label: 'source on GitHub' },
+          tSeg('. Every file here — this page, the desks, the vendored library bytes — is generated '
+            + 'from that repo and served as-is.')] },
+        ],
+      },
+      {
+        id: 'key',
+        label: 'the key, in full',
+        body: [
+          // The custody contract, verbatim: the same segment arrays the desks
+          // render, so a sentence cannot be true on one surface and edited on
+          // the other. The last line — "don't take our word for it" — is the
+          // design's ruled closing aside.
+          ...CUSTODY_COPY.slice(0, -1).map((segs) => ({ p: segs })),
+          { p: KEY_TRAVEL_COPY },
+          // BOTH font hosts are named, and no request count is implied. This
+          // page tells visitors to open DevTools → Network and read it, and what
+          // they see there is a stylesheet from fonts.googleapis.com plus the
+          // font files themselves from fonts.gstatic.com — a host the old
+          // sentence never mentioned.
+          { p: [tSeg('The one thing this page fetches is its web fonts, from '),
+            codeSeg('fonts.googleapis.com'), tSeg(' and '), codeSeg('fonts.gstatic.com'),
+            tSeg(' — a stylesheet and a few font files, no key, no data of yours, and if those '
+              + 'requests fail you get your system fonts and the same page. Nothing else leaves it: '
+              + 'this page takes no key at all.')] },
+          { aside: CUSTODY_COPY[CUSTODY_COPY.length - 1] },
+        ],
+      },
+    ],
+    desks: [...runnable, offDesk],
+    programNotes: programNotes({
+      states: BYOK_STATES,
+      cost: [{ p: COST_COPY }, { p: SCOPE_COPY }],
+      sources: 'Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from '
+        + 'iTunes — keyless public APIs, called straight from your tab.',
+    }),
+    footLeft: 'a plain static page — it takes no key and stores nothing',
   });
-
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bring your own key — the app gallery</title>
-<meta name="description" content="Two small advisors you can chat with on your own Anthropic key — visible reasons, verified what-if re-runs, all in your browser.">
-<link rel="icon" href="${FAVICON}">
-<style>${SKIN}${GALLERY_CSS}${PROVENANCE_CSS}${LANDING_CSS}
-</style></head>
-<body>
-<div class="ag-wrap">
-${headerRail()}
-  <header class="ag-head">
-    <h1>Bring your own key · the app gallery</h1>
-    <p>Two real chat desks share one machine: every context source is a tool the agent calls, and
-    every reply can be re-run without a source to see what that source really changed. They run
-    entirely in your browser, on your own Anthropic key — pick a desk to start.</p>
-  </header>
-
-  <section class="ag-sec" id="custody">
-    <div class="by-custody" data-testid="landing-custody">
-      <h2>Where your key goes</h2>
-      <div class="by-copy">${CUSTODY_COPY.map(richLineHtml).join('\n      ')}
-        <div class="by-travel" data-testid="landing-key-travel">${richLineHtml(KEY_TRAVEL_COPY)}</div>
-      </div>
-    </div>
-  </section>
-
-  <div class="ag-grid" data-testid="landing-cards">${cards}${stockCard}</div>
-${aboutSection({
-    // Both facts as this bundle really is: two desks in the tab and a third that
-    // says why it isn't, and tools that are real browser fetches — nothing here
-    // is a rehearsal, and the SEC line is the same honest limit the card states.
-    desks: 'Two desks run in your browser — a trip advisor and a movie desk — over one machine; '
-      + 'the third gets a card that says why it can’t run here.',
-    sources: 'Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from '
-      + 'iTunes — keyless public APIs, called straight from your tab.',
-  })}
-${guideSection(BYOK_STATES)}
-
-  <section class="ag-sec" id="notes">
-    <h2>What a reply costs</h2>
-    <div class="by-copy">${[COST_COPY, SCOPE_COPY].map(richLineHtml).join('\n      ')}
-    </div>
-  </section>
-
-  <p class="ag-foot ag-src">Every file here — this page, the desks, the vendored library bytes — is
-  generated from the repo and served as-is.
-  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener noreferrer">github.com/footprintjs/visible-reasoning</a></p>
-</div>
-</body></html>`;
 }
 
 /**

@@ -1,6 +1,11 @@
 // The gallery's two page shapes, both GENERATED from real run data:
-//   buildGalleryPage(apps)      → out/gallery.html   (the cards landing page)
+//   buildGalleryPage(apps)      → out/gallery.html   (the home: desk listing + notes)
 //   buildAppPage(app, data)     → out/<app>.html     (one chat desk per app)
+//
+// The home's components — its skin, its one reveal gesture, the desk listing and
+// the program notes — live in this file too (see THE HOME PAGE, below) and are
+// shared with the public BYOK home in lib/byok-page.js, so the two landings are
+// the same page with different facts in it.
 //
 // The chat page is 07-chat-desk's page shell generalized by app pack: same light
 // conference skin, same React + agentthinkingui module shim, same HAS_SERVER
@@ -88,6 +93,27 @@ export const PROVENANCE_EXAMPLE =
  * guide at build time too, and must not invent a second mapping.
  */
 export const provDotClass = (state) => `cd-dot ${PROVENANCE_DOT_CLASS[state] || 'unknown'}`;
+
+/**
+ * THE verdicts a build of the local gallery can honestly produce — the fact
+ * `dotState()` already encodes for the landing's static dots, widened to what a
+ * DESK in that build can report once a reply exists (a source it could not reach
+ * → `fallback`; a source this turn didn't use → `not consulted`).
+ *
+ * Both surfaces of a build read it, so neither can name a verdict the build
+ * cannot produce: the landing's guide (which defines the words) and the desk's
+ * dialog (whose tooltips explain the word a turn actually reported). A mock
+ * build calls nothing, so `live` and `fallback` are impossible; a live build
+ * runs the real fetchers, so `scripted` is.
+ *
+ * `replay` is deliberately absent — it is a re-run artifact, not a source
+ * verdict, which is why PROVENANCE_HELP has no entry for it either. The BYOK
+ * bundle keeps its own list (BYOK_STATES) for the same reason: every tool there
+ * is a real browser fetcher, so nothing on it is ever scripted.
+ */
+export const statesForBuild = (live) => (live
+  ? ['live', 'fallback', 'synthetic', 'not consulted']
+  : ['scripted', 'synthetic', 'not consulted']);
 
 /**
  * The legend + its explanation dialog, as CSS. Imported by BOTH page shells so
@@ -338,16 +364,12 @@ function ProvLegend(props) {
 `;
 };
 
-// ─── The shared skin (07's tokens, verbatim) ────────────────────────────────
-const SKIN = `
-  :root {
-    --bg: #FFFFFF; --panel-bg: #FFFFFF; --soft: #F6F4F0; --ink: #1E1A15; --muted: #786D5E;
-    --line: #E9E3DA; --accent: #C0531F; --accent-dk: #95380F; --user: #EFEAE1; --whatif: #C9932B;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
-
+/**
+ * The paints for a provenance verdict. ONE copy, shared by the desks' skin
+ * (below) and the home's (HOME_CSS): a definition dot on the home is literally
+ * the same element, with the same paint, as the dot on a desk.
+ */
+export const DOT_CSS = `
   /* provenance dots — one style per honest verdict */
   .cd-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
   .cd-dot.live { background: #3E9C4D; }
@@ -359,36 +381,35 @@ const SKIN = `
   .cd-dot.unknown { background: #fff; border: 1.5px solid #CDBFA9; }
 `;
 
-// ─── THE LANDING'S OWN VOCABULARY (static — nothing here changes at runtime) ─
-// Tiny inline icons: decorative (aria-hidden), currentColor, zero requests.
-const svg = (body) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" `
-  + `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+// ─── The shared skin (07's tokens, verbatim) ────────────────────────────────
+const SKIN = `
+  :root {
+    --bg: #FFFFFF; --panel-bg: #FFFFFF; --soft: #F6F4F0; --ink: #1E1A15; --muted: #786D5E;
+    --line: #E9E3DA; --accent: #C0531F; --accent-dk: #95380F; --user: #EFEAE1; --whatif: #C9932B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+${DOT_CSS}`;
 
-export const ICON = {
-  // ✦ model — a chip
-  model: svg('<rect x="7.5" y="7.5" width="9" height="9" rx="2"/><path d="M10 3.5v4M14 3.5v4M10 16.5v4M14 16.5v4'
-    + 'M3.5 10h4M3.5 14h4M16.5 10h4M16.5 14h4"/>'),
-  // → browser-direct — a window with an arrow leaving it (the BYOK key path)
-  direct: svg('<path d="M13 20.5H4.5a1.5 1.5 0 0 1-1.5-1.5V5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 19 5v4"/>'
-    + '<path d="M3 8.2h16"/><path d="M13.5 16.5h7"/><path d="M17.8 13.2l3.2 3.3-3.2 3.3"/>'),
-  // ⌁ tools — a plug
-  tools: svg('<path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2v4.3"/>'),
-  // ≋ streaming — three offset waves
-  stream: svg('<path d="M2.5 7.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/>'
-    + '<path d="M4.5 12.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0"/>'
-    + '<path d="M2.5 17.5c1.9-2 3.9-2 5.8 0s3.9 2 5.8 0 3.9-2 5.8 0"/>'),
-  // ⑂ re-run + fork — a branch
-  branch: svg('<circle cx="6.5" cy="5" r="2.2"/><circle cx="6.5" cy="19" r="2.2"/><circle cx="17.5" cy="9" r="2.2"/>'
-    + '<path d="M6.5 7.2v9.6"/><path d="M17.5 11.2c0 3.4-3.4 4.2-6.6 5.1"/>'),
-  // the ranked bar list the "visible reason" button opens
-  bars: svg('<path d="M4 6h15M4 12h10M4 18h6"/>'),
-  // leaving a source out
-  ignore: svg('<path d="M3 3l18 18"/><path d="M10.6 5.3A9.3 9.3 0 0 1 12 5.2c5.2 0 9 4.5 9 6.8 0 .9-.7 2.3-1.9 3.6"/>'
-    + '<path d="M6.4 7.1C4 8.7 3 10.9 3 12c0 2.3 3.8 6.8 9 6.8 1.5 0 2.8-.4 4-.9"/>'
-    + '<path d="M9.6 9.9a3 3 0 0 0 4.3 4.2"/>'),
-  // running the same question again
-  rerun: svg('<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 4v5h-5"/>'),
-};
+// ─── THE HOME PAGE — one design, two landings ───────────────────────────────
+// Two landings exist — the local rehearsal gallery (buildGalleryPage, below) and
+// the public bring-your-own-key home (lib/byok-page.js). They are the SAME page,
+// built from the components in this section; only the FACTS differ, and every
+// fact is passed in by the landing that can honestly claim it.
+//
+// The design (a Claude Design project, approved by the site owner) has one
+// reveal gesture and no other: the note row. A full-width row between hairline
+// rules, mono lowercase label on the left, a terracotta +/− on the right;
+// activating it unfolds its content in place and turns the row's top rule
+// terracotta. Rows are independent. It is a native button[aria-expanded], the
+// fold is grid-template-rows 0fr→1fr, reduced motion degrades to instant, and
+// closed content is out of the tab order. There is no second gesture.
+//
+// Type: Newsreader (everything a human reads) + IBM Plex Mono (the machine
+// voice: model ids, [source: …] labels, commands, row labels). Both come from
+// Google Fonts and both fall back to a system serif / system mono, so a blocked
+// or failed font request costs the page nothing but the typeface.
 
 /** The live-build cost fact — a capability of the build, not of any one turn. */
 export const LIVE_COST_LINE =
@@ -396,235 +417,35 @@ export const LIVE_COST_LINE =
   + 're-runs replay frozen tool results, so they cost model calls but zero new fetches.';
 
 /**
- * What each control on a desk does. This is teaching, so it lives on the
- * landing: it reads exactly the same before the first message and after the
- * hundredth, which is the test for "not runtime".
+ * What each control on a desk does. This is teaching, so it lives on the home:
+ * it reads exactly the same before the first message and after the hundredth,
+ * which is the test for "not runtime".
  */
 export const BUTTON_HELP = [
-  { name: 'visible reason', icon: ICON.bars,
+  { name: 'visible reason',
     what: 'opens a ranked list of exactly which sources shaped that reply' },
-  { name: 'ignore a source', icon: ICON.ignore,
+  { name: 'ignore a source',
     what: 'inside that panel, pick a source to leave out' },
-  { name: 're-run', icon: ICON.rerun,
+  { name: 're-run',
     what: 'answers the same question again without it — over the frozen tool results of the original turn, zero new fetches' },
-  { name: 'Continue from this version', icon: ICON.branch, solid: true,
+  { name: 'Continue from this version',
     what: 'forks a new session from the what-if reply; the ignored source stays ignored for every later turn' },
 ];
 
-// ─── THE LANDING'S DESIGN LANGUAGE, SHARED ─────────────────────────────────
-// Two landings exist — the local gallery (below) and the BYOK gallery
-// (lib/byok-page.js). They are the same page shape with different truths, so
-// the CSS, the card and the guide section live HERE and are imported there.
-// Forking them would let a card on one landing drift from a card on the other.
-export const GALLERY_CSS = `
-  .ag-wrap { max-width: 1040px; margin: 0 auto; padding: 46px 22px 60px; }
+// ─── The paper ──────────────────────────────────────────────────────────────
+const PAPER_TITLE = 'Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems';
+const PAPER_WHERE = 'HCII 2026 · LNCS 16745 · pp. 3–21 · ';
+const PAPER_DOI = 'https://doi.org/10.1007/978-3-032-30849-8_1';
+/** Every author, in the order they appear on the paper. */
+export const PAPER_AUTHORS = 'Anbalagan, Nie, Kommalapati, Kanamarlapudi, Radhakrishnan, Zhao, Mohan';
 
-  /* the header rail — quiet text links out of the demo, not buttons and not
-     chips: the apps are the page, these are just the ways off it */
-  .ag-rail { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 18px;
-    margin: -16px 0 24px; font-size: 12.5px; line-height: 1.6; }
-  .ag-rail a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
-  .ag-rail a:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  .ag-rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
-  @media (max-width: 560px) { .ag-rail { justify-content: flex-start; gap: 4px 14px; } }
-
-  .ag-head { text-align: center; margin: 0 0 34px; }
-  .ag-head h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 10px; }
-  .ag-head p { font-size: 15px; line-height: 1.65; color: var(--muted); margin: 0 auto; max-width: 640px; }
-  .ag-cost { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 12px auto 0; max-width: 640px; }
-  .ag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
-  .ag-card { display: flex; flex-direction: column; text-decoration: none; color: inherit;
-    border: 1px solid var(--line); border-radius: 14px; padding: 0 18px 18px; background: var(--bg);
-    overflow: hidden; transition: box-shadow .18s ease, transform .18s ease; }
-  a.ag-card:hover { box-shadow: 0 8px 26px rgba(40,30,20,.10); transform: translateY(-2px); }
-  .ag-rule { display: block; height: 4px; margin: 0 -18px 16px; background: var(--accent); }
-  .ag-title { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
-  .ag-tag { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; line-height: 1.5; }
-  .ag-tools { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 0 0 12px; }
-  .ag-tool { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
-  /* the capability strip — one icon+line per thing this build can actually do */
-  .ag-caps { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px;
-    padding: 10px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
-  .ag-cap { display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
-  .ag-cap svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
-  .ag-chips { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
-  .ag-chip { font-size: 12px; color: var(--muted); background: var(--soft); border: 1px solid var(--line);
-    border-radius: 999px; padding: 5px 11px; line-height: 1.4; }
-  .ag-cta { margin-top: auto; align-self: flex-start; font-size: 13px; font-weight: 700;
-    color: #fff; background: var(--accent); border-radius: 999px; padding: 8px 16px; }
-  a.ag-card:hover .ag-cta { background: var(--accent-dk); }
-
-  /* the program notes: how to read the demo, what the buttons do, take-it-home */
-  .ag-sec { margin: 34px auto 0; max-width: 760px; }
-  #guide, #about, #buttons, #byok { scroll-margin-top: 18px; }
-  .ag-sec h2 { font-size: 16px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .ag-sec p { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 10px; }
-  .ag-defs { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
-  .ag-defs .cd-help-item { margin-bottom: 8px; }
-  .ag-note { font-size: 12.5px; line-height: 1.65; color: var(--muted); margin: 0 0 8px; }
-  .ag-btn-strip { display: flex; flex-wrap: wrap; gap: 10px; }
-  .ag-btn-item { flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px;
-    padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-  .ag-btn-head { display: flex; align-items: center; gap: 8px; }
-  .ag-btn-head svg { flex: 0 0 auto; color: var(--accent); }
-  .ag-btn-what { font-size: 12px; line-height: 1.55; color: var(--muted); }
-  .ag-fakebtn { font-size: 11.5px; font-weight: 600; color: var(--muted); background: none;
-    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
-  .ag-fakebtn.solid { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 700; }
-  .ag-byok { padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--whatif, #C9932B);
-    border-radius: 11px; background: var(--soft); }
-  .ag-byok p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
-  .ag-byok strong { color: var(--ink); }
-  .ag-byok a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
-  .ag-byok a:hover { text-decoration: underline; }
-
-  .ag-foot { margin: 34px auto 0; max-width: 720px; font-size: 12.5px; line-height: 1.7; color: var(--muted); text-align: center; }
-  .ag-foot code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  /* the body's own way to the source — both landings carry one, styled once */
-  .ag-src { margin-top: 26px; }
-  .ag-src a { color: var(--accent); font-weight: 700; text-decoration: none; }
-  .ag-src a:hover { text-decoration: underline; }
-
-  /* ── the about deck: index cards you turn over ─────────────────────────────
-     Deliberately quieter than an app card — hairline border, one accent hairline
-     on the front edge, no fill, no resting shadow. The apps are the stars; this
-     is the program note you pick up on the way past. */
-  .ab-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 14px; }
-  .ab-head h2 { margin: 0; }
-  .ab-hint { font-size: 12.5px; color: var(--muted); margin: 0; }
-  /* Two up, in the program-notes column — narrower than the app grid on purpose,
-     and wide enough that a card's back is a few lines rather than a column of
-     text taller than its own front. The last card takes the full row. */
-  .ab-deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
-  .ab-card:last-child { grid-column: 1 / -1; }
-  .ab-card { border-radius: 12px; }
-  .ab-flip { display: block; width: 100%; text-align: left; font: inherit; color: inherit;
-    background: none; border: 0; padding: 0; border-radius: 12px; }
-  .ab-inner { display: grid; gap: 10px; border-radius: 12px; }
-  .ab-face { display: flex; flex-direction: column; gap: 7px; padding: 14px 15px 12px;
-    border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
-  .ab-front { border-left: 2px solid var(--ab-accent, var(--accent)); }
-  .ab-title { font-size: 14.5px; font-weight: 700; letter-spacing: -0.005em; margin: 0; line-height: 1.4; }
-  .ab-teaser { font-size: 12.5px; line-height: 1.55; color: var(--muted); margin: 0; }
-  .ab-body { font-size: 12.5px; line-height: 1.62; color: var(--muted); margin: 0; }
-  .ab-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
-  .ab-body a:hover { border-bottom-color: var(--accent); }
-  .ab-body a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-  .ab-turn { margin-top: auto; padding-top: 4px; font-size: 11.5px; color: var(--muted); }
-
-  /* Script on: the two faces stack in one grid cell and the card turns.
-     Script off: they stay in flow, one above the other — the note still reads. */
-  .ab-deck[data-flip="on"] .ab-flip { cursor: pointer; }
-  .ab-deck[data-flip="on"] .ab-flip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .ab-deck[data-flip="on"] .ab-flip:hover .ab-turn { color: var(--accent); }
-  .ab-deck[data-flip="on"] .ab-inner { gap: 0; transform-style: preserve-3d;
-    transition: transform 450ms cubic-bezier(.22,.61,.36,1); }
-  .ab-deck[data-flip="on"] .ab-face { grid-area: 1 / 1; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-  .ab-deck[data-flip="on"] .ab-back { transform: rotateY(180deg); }
-  .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: rotateY(180deg); }
-  /* the paper-card lift: the shadow rises at the halfway point and settles back.
-     It lives on the un-rotated shell, so it stays under the card, not on it. */
-  .ab-deck[data-flip="on"] .ab-card { perspective: 1200px; }
-  .ab-deck[data-flip="on"] .ab-card.is-turning { animation: ab-lift 450ms ease-out; }
-  @keyframes ab-lift {
-    0%   { box-shadow: 0 0 0 rgba(40,30,20,0); }
-    45%  { box-shadow: 0 9px 20px rgba(40,30,20,.13); }
-    100% { box-shadow: 0 0 0 rgba(40,30,20,0); }
-  }
-
-  /* Reduced motion: nothing rotates and nothing lifts — the back simply takes
-     the front's place. Same control, same content, no movement. */
-  @media (prefers-reduced-motion: reduce) {
-    .ab-deck[data-flip="on"] .ab-inner { transition: none; transform: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-inner { transform: none; }
-    .ab-deck[data-flip="on"] .ab-face { backface-visibility: visible; -webkit-backface-visibility: visible; }
-    .ab-deck[data-flip="on"] .ab-back { transform: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="false"] .ab-back { display: none; }
-    .ab-deck[data-flip="on"] .ab-flip[aria-pressed="true"] .ab-front { display: none; }
-    .ab-deck[data-flip="on"] .ab-card.is-turning { animation: none; }
-  }
-`;
-
+// ─── THE WAYS OFF THIS PAGE ─────────────────────────────────────────────────
 /**
- * ONE gallery card. Both landings render THIS — the local gallery's live/mock
- * desks and the BYOK gallery's browser desks, including the one that honestly
- * cannot run in a browser at all.
- *
- * @param o.app    a page-safe app slice (id/title/tagline/accent/tools/starters)
- * @param o.caps   the capability strip, already icon+text — each landing owns
- *                 its own truths here (an MCP subprocess is not a browser fetch)
- * @param o.dotState  tool → provenance state this build can honestly claim
- * @param o.href   where the card goes; null makes it a non-link (a dead card
- *                 would be worse than a card that says why it is dead)
- * @param o.note   the honest reason a card is not a link
- */
-export function galleryCard({ app, caps, dotState = () => 'scripted', href = null, dataApp = false, cta = 'Open the desk →', note = null }) {
-  // Empty rows are omitted, not rendered hollow: a card with no tool dots and no
-  // starters (the desk that cannot run here) must not carry the gaps where they
-  // would have been.
-  const tools = (app.tools ?? []).map((t) => `
-        <span class="ag-tool" title="${esc(t.description)}">
-          <span class="${provDotClass(dotState(t))}"></span>${esc(t.legendLabel)}
-        </span>`).join('');
-  const chips = (app.starters ?? []).map((s) => `<span class="ag-chip">${esc(s)}</span>`).join('');
-  const capStrip = caps.map((c) => `
-        <span class="ag-cap">${c.icon}<span>${esc(c.text)}</span></span>`).join('');
-  const row = (cls, body) => (body ? `
-      <div class="${cls}">${body}</div>` : '');
-  const tag = href ? 'a' : 'div';
-  const attrs = [
-    `class="ag-card${href ? '' : ' off'}"`,
-    dataApp ? `data-app="${esc(app.id)}"` : '',
-    href ? `href="${esc(href)}"` : '',
-    `style="--accent: ${esc(app.accent)}; --accent-dk: ${esc(app.accentDark)}"`,
-  ].filter(Boolean).join(' ');
-  return `
-    <${tag} ${attrs}>
-      <span class="ag-rule"></span>
-      <h2 class="ag-title">${esc(app.title)}</h2>
-      <p class="ag-tag">${esc(app.tagline)}</p>${note ? `
-      <p class="ag-cardnote">${esc(note)}</p>` : ''}${row('ag-tools', tools)}${row('ag-caps', capStrip)}${row('ag-chips', chips)}
-      <span class="ag-cta">${esc(cta)}</span>
-    </${tag}>`;
-}
-
-/**
- * "How to read the demo" — the vocabulary section, rendered from the SAME table
- * the desks' dots and the BYOK dialog read. A definition here and a dot on a
- * desk cannot drift apart.
- *
- * @param states  the verdicts THIS build can honestly produce. The local
- *   gallery shows all five; the BYOK gallery has no scripted source anywhere,
- *   so it must not teach a word its desks can never say.
- */
-export function guideSection(states = PROVENANCE_HELP.map((h) => h.state)) {
-  const defs = PROVENANCE_HELP.filter((h) => states.includes(h.state)).map((h) => `
-      <div class="cd-help-item">
-        <span class="${provDotClass(h.state)}"></span>
-        <span><b>${esc(h.label)}</b> — ${esc(h.what)}</span>
-      </div>`).join('');
-  return `
-  <section class="ag-sec" id="guide">
-    <h2>How to read the demo</h2>
-    <p>Next to each desk's tools you'll see a dot. The dot is the demo's honest core — it names where
-    that tool's data actually came from on the latest reply:</p>
-    <div class="ag-defs">${defs}
-    </div>
-    <p class="ag-note">${esc(PROVENANCE_CLOSING)}</p>
-    <p class="ag-note">${esc(PROVENANCE_PHILOSOPHY)}</p>
-    <p class="ag-note">${esc(PROVENANCE_EXAMPLE)}</p>
-  </section>`;
-}
-
-// ─── THE HEADER RAIL — the quiet ways off this page ────────────────────────
-/**
- * Three text links, in the order a visitor needs them: the code behind the page,
- * the library the desks actually run on, then the rest of the family. Text, not
- * buttons: the apps are the page's call to action and nothing here competes with
- * them. Both landings render THIS — same links, same labels, one list.
- *
- * `↗` is decorative (aria-hidden) and target=_blank keeps a running desk or a
- * half-read landing where the visitor left it.
+ * Three links, in the order a visitor needs them: the code behind the page, the
+ * library the desks actually run on, then the rest of the family. Both landings
+ * render THIS list — in the header (the first one, as GITHUB) and in the footer
+ * (all three). `↗` is decorative and target=_blank keeps a half-read page where
+ * the visitor left it.
  */
 export const HEADER_LINKS = [
   { href: 'https://github.com/footprintjs/visible-reasoning', label: 'source',
@@ -635,286 +456,702 @@ export const HEADER_LINKS = [
     title: 'The rest of the ecosystem' },
 ];
 
-export function headerRail() {
-  const links = HEADER_LINKS.map((l) => `
-      <a href="${esc(l.href)}" target="_blank" rel="noopener" title="${esc(l.title)}"
-        >${esc(l.label)} <span aria-hidden="true">↗</span></a>`).join('');
-  return `
-  <nav class="ag-rail" aria-label="Project links">${links}
-  </nav>`;
-}
+// ─── Rich text ──────────────────────────────────────────────────────────────
+// One segment vocabulary for every sentence on the home. lib/byok-page.js
+// authors its custody copy in exactly these segments and renders it through
+// richHtml too, so the custody sentences land in the page verbatim.
+export const richHtml = (segs) => segs.map((s) => {
+  if (s.b !== undefined) return `<strong>${esc(s.b)}</strong>`;
+  if (s.code !== undefined) return `<code>${esc(s.code)}</code>`;
+  if (s.em !== undefined) return `<em>${esc(s.em)}</em>`;
+  if (s.href !== undefined) {
+    return `<a href="${esc(s.href)}" target="_blank" rel="noopener">${esc(s.label)}</a>`;
+  }
+  return esc(s.t);
+}).join('');
 
-// ─── THE ABOUT DECK — five index cards you turn over ───────────────────────
-// The five things a visitor asks after looking at the app cards, in the order
-// they ask them. Every claim is something this build actually does, so the two
-// facts that differ between the local gallery and the browser bundle — how many
-// desks there are, and where the data comes from — are passed IN. Everything
-// else is one text, rendered on both landings.
+/** Segment constructors — `t`ext, `b`old, `code`, `em`phasis, `a`nchor. */
+export const t = (s) => ({ t: s });
+export const b = (s) => ({ b: s });
+export const codeSeg = (s) => ({ code: s });
+export const em = (s) => ({ em: s });
+export const a = (href, label) => ({ href, label });
+
+// ─── Note bodies ────────────────────────────────────────────────────────────
+// A note body is a list of blocks. Every block is a shape the design actually
+// draws — there is no free-form HTML anywhere on this page, so a note cannot
+// invent chrome the design never specified.
 //
-// A body part is either a string (escaped) or { href, label } (a link). Only the
-// last card has links; they are keyboard-reachable when the card is turned and
-// inert when it is not.
-const aboutPart = (p) => (typeof p === 'string'
-  ? esc(p)
-  : `<a href="${esc(p.href)}" target="_blank" rel="noopener">${esc(p.label)}</a>`);
-
-const PAPER_DOI = 'https://doi.org/10.1007/978-3-032-30849-8_1';
-
-/** The front-edge hairlines: the three desks' own accents, in desk order. */
-const ABOUT_ACCENTS = ['#C0531F', '#7A4CBF', '#2E7D4F'];
+//   { p: segs }            a paragraph
+//   { aside: segs }        the ruled closing line (italic)
+//   { kicker: 'STARTERS' } a small mono section label
+//   { q: 'question' }      a starter question, quoted and italic
+//   { lines: [segs] }      the small stacked fact lines
+//   { defs: [{state,label,what}] }  provenance definitions, painted with REAL dots
+//   { rows: [[name, what]] }        name → meaning rows (the buttons)
+//   { cite: 'title' } / { meta: segs }  the paper's title and its mono line
+const noteBlock = (bl) => {
+  if (bl.p) return `<p>${richHtml(bl.p)}</p>`;
+  if (bl.aside) return `<p class="vr-aside">${richHtml(bl.aside)}</p>`;
+  if (bl.kicker) return `<div class="vr-kicker">${esc(bl.kicker)}</div>`;
+  if (bl.q) return `<p class="vr-q">“${esc(bl.q)}”</p>`;
+  if (bl.cite) return `<p class="vr-cite">${esc(bl.cite)}</p>`;
+  if (bl.meta) return `<p class="vr-meta">${richHtml(bl.meta)}</p>`;
+  if (bl.lines) return `<div class="vr-lines">${bl.lines.map((l) => `
+              <div>${richHtml(l)}</div>`).join('')}
+            </div>`;
+  if (bl.defs) {
+    return bl.defs.map((d) => `<div class="vr-defrow">
+              <span class="vr-defname"><span class="${provDotClass(d.state)}"></span>${esc(d.label)}</span>
+              <span>${esc(d.what)}</span>
+            </div>`).join('\n            ');
+  }
+  if (bl.rows) {
+    return bl.rows.map(([name, what]) => `<div class="vr-defrow">
+              <span class="vr-rowname">${esc(name)}</span>
+              <span>${esc(what)}</span>
+            </div>`).join('\n            ');
+  }
+  throw new Error(`noteBlock: unknown block shape ${JSON.stringify(Object.keys(bl))}`);
+};
 
 /**
- * @param o.desks    one sentence naming the desks THIS landing actually offers
- * @param o.sources  one sentence naming where THIS build's data really comes from
+ * ONE note row — the page's only reveal gesture.
+ *
+ * It SHIPS OPEN: aria-expanded="true", the − mark, content in flow. The script
+ * is what folds it, so scripting off costs a visitor the gesture and never the
+ * words. `id` is the deep-link anchor (a desk's dialog links the home's #guide).
  */
-export function aboutCards({ desks, sources }) {
+export function noteRow({ id, label, body }) {
+  return `
+      <div class="vr-note" id="${esc(id)}" data-note-row>
+        <button type="button" class="vr-note-btn" data-note-toggle aria-expanded="true" aria-controls="note-${esc(id)}">
+          <span>${esc(label)}</span>
+          <span class="vr-mark" aria-hidden="true" data-note-mark>−</span>
+        </button>
+        <div class="vr-fold" data-note-fold>
+          <div class="vr-fold-inner" id="note-${esc(id)}" data-note-pane>
+            <div class="vr-body">
+            ${body.map(noteBlock).join('\n            ')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+}
+
+/** A ruled group of independent rows. */
+export function noteGroup(rows) {
+  if (!rows.length) return '';
+  return `
+    <div class="vr-notes" data-note-group>${rows.map(noteRow).join('')}
+    </div>`;
+}
+
+/**
+ * THE DESK LISTING — the page's one bold moment (double rule, large names).
+ *
+ * @param d.n         the printed index ("01")
+ * @param d.name/oneLiner  the desk's own title and its question
+ * @param d.href      where it goes; null makes it a non-link, which is how a
+ *                    desk that honestly cannot run here is shown
+ * @param d.dataApp   stamp data-app so the local gallery can re-point the link
+ *                    at its server route
+ * @param d.badge     the honest reason a desk is not enterable
+ * @param d.note      the row under it (starters, sources, what it runs on)
+ */
+export function deskListing(desks) {
+  const items = desks.map((d) => {
+    const name = `<h2 class="vr-deskname">${esc(d.name)}</h2>`;
+    const head = d.href
+      ? `<a class="vr-desklink" href="${esc(d.href)}"${d.dataApp ? ` data-app="${esc(d.dataApp)}"` : ''}>${name}</a>`
+      : name;
+    const way = d.href
+      ? `
+            <a class="vr-enter" href="${esc(d.href)}"${d.dataApp ? ` data-app="${esc(d.dataApp)}"` : ''}>enter →</a>`
+      : `
+            <p class="vr-badgerow"><span class="vr-badge">${esc(d.badge)}</span></p>`;
+    return `
+        <article class="vr-desk${d.href ? '' : ' is-off'}">
+          <div class="vr-num">${esc(d.n)}</div>
+          <div class="vr-deskmain">
+            ${head}
+            <p class="vr-deskone">“${esc(d.oneLiner)}”</p>${way}
+            <div class="vr-desknote">${noteGroup([d.note])}
+            </div>
+          </div>
+        </article>`;
+  }).join('');
+  return `
+    <section class="vr-desks" aria-label="The desks">
+      <div class="vr-seckick">THE DESKS</div>
+      <div class="vr-listing">${items}
+      </div>
+    </section>`;
+}
+
+/**
+ * The program notes both landings carry, in the order a visitor asks them.
+ * Everything that differs between the two builds is a parameter — a landing can
+ * only say what its own build does.
+ *
+ * @param o.states  the provenance verdicts THIS build can honestly produce
+ * @param o.cost    the blocks under "what a reply costs"
+ * @param o.sources one sentence naming where THIS build's data really comes from
+ * @param o.extra   landing-specific rows, spliced in before the paper
+ */
+export function programNotes({ states = PROVENANCE_HELP.map((h) => h.state), cost, sources, extra = [] }) {
+  const defs = PROVENANCE_HELP.filter((h) => states.includes(h.state));
   return [
     {
-      title: 'What you’re looking at',
-      teaser: 'Real chat apps sharing one machine that records why each answer happened.',
-      body: [`${desks} None of them narrates its own reasoning. Each one records it: every source `
-        + 'the agent consults is a tool call, and the record of which tools ran, what came back and '
-        + 'what it changed survives the reply.'],
-    },
-    {
-      title: 'Why this isn’t the model explaining itself',
-      teaser: 'The framework owns the trace; the model is never asked to narrate its reasons.',
-      body: ['The paper calls this a third paradigm. Instead of asking the model to narrate its '
-        + 'reasons — which cannot be checked — or asking a second model to judge it, the substrate '
-        + 'that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed '
-        + 'events captured as the run happens, not a story told afterwards.'],
-    },
-    {
-      title: 'What the scores mean (and don’t)',
-      teaser: 'A ranking is a lead, not a verdict.',
-      body: ['The visible-reason panel ranks each source by semantic alignment: a deterministic '
-        + 'score comparing what that source said with what the answer said. It is a proxy for '
-        + 'influence, not a proof — a high score means “this reads like it mattered”. Only the '
-        + 're-run convicts: drop a source, answer again over the frozen tool results, and see '
-        + 'whether the decision actually changes.'],
-    },
-    {
-      title: 'Where the data comes from',
-      teaser: 'Every sentence carries the label of where it came from.',
-      body: [`${sources} Every tool sentence carries its own [source: …] label, and the dot beside `
-        + 'a tool names what really happened on the latest reply. The trip advisor’s crowd estimate '
-        + 'is invented by design — modeled, never measured — and always says so.'],
-    },
-    {
-      title: 'The paper and the libraries',
-      teaser: 'Where this comes from, and what it is built on.',
+      id: 'guide',
+      label: 'how to read the demo',
       body: [
-        'Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems — HCII 2026, '
-        + 'LNCS volume 16745, pages 3–21 (',
-        { href: PAPER_DOI, label: 'doi.org/10.1007/978-3-032-30849-8_1' },
-        '). The machinery is three MIT-licensed libraries: ',
-        { href: 'https://www.npmjs.com/package/footprintjs', label: 'footprintjs' },
-        ' records the run, ',
-        { href: 'https://www.npmjs.com/package/agentfootprint', label: 'agentfootprint' },
-        ' turns that recording into agents, influence rankings and re-runs, and ',
-        { href: 'https://www.npmjs.com/package/agentthinkingui', label: 'agentthinkingui' },
-        ' draws the panels you are clicking.',
+        { p: [t('Next to each desk’s sources you’ll see a dot. The dot is the demo’s honest '
+          + 'core — it names where that source’s data actually came from on the latest reply:')] },
+        { defs },
+        { p: [t(PROVENANCE_CLOSING)] },
+        { p: [t(PROVENANCE_PHILOSOPHY)] },
+        { p: [t(PROVENANCE_EXAMPLE)] },
+      ],
+    },
+    {
+      id: 'buttons',
+      label: 'what the buttons do',
+      body: [{ rows: BUTTON_HELP.map((x) => [x.name, x.what]) }],
+    },
+    { id: 'cost', label: 'what a reply costs', body: cost },
+    {
+      id: 'why',
+      label: 'why this isn’t the model explaining itself',
+      body: [
+        { p: [t('Ask a model why it said something and you get a story about itself — fluent, '
+          + 'plausible, unverified. Here the why is established outside the model: remove a source, '
+          + 'run the same turn again, read what changed.')] },
+        { p: [t('The paper calls this a third paradigm. Instead of asking the model to narrate its '
+          + 'reasons — which cannot be checked — or asking a second model to judge it, the substrate '
+          + 'that runs the work keeps the record. Tool calls, sources, scores and re-runs are typed '
+          + 'events captured as the run happens, not a story told afterwards.')] },
+      ],
+    },
+    {
+      id: 'scores',
+      label: 'what the scores mean — and don’t',
+      body: [
+        { p: [t('The visible-reason panel ranks each source by semantic alignment: a deterministic '
+          + 'score comparing what that source said with what the answer said. It is a proxy for '
+          + 'influence, not a proof — a high score means “this reads like it mattered”.')] },
+        { p: [t('Only the re-run convicts: drop a source, answer again over the frozen tool results, '
+          + 'and see whether the decision actually changes.')] },
+      ],
+    },
+    {
+      id: 'data',
+      label: 'where the data comes from',
+      body: [
+        { p: [t(sources)] },
+        // The count is DERIVED, never written: this note sits two rows under the
+        // guide it points at, and the guide renders one row per verdict THIS
+        // build can produce — so a hardcoded number would be wrong on the build
+        // that has one fewer. verify-ia re-counts the rendered rows against it.
+        { p: [t('Every tool sentence carries its own '), codeSeg('[source: …]'),
+          t(' label, and the dot beside a source names what really happened on the latest reply. '
+            + `The ${defs.length} labels are spelled out in `), em('how to read the demo'), t(', above.')] },
+      ],
+    },
+    ...extra,
+    {
+      id: 'paper',
+      label: 'the paper & the libraries',
+      body: [
+        { cite: PAPER_TITLE },
+        { meta: [t(PAPER_WHERE), a(PAPER_DOI, 'doi.org/10.1007/978-3-032-30849-8_1')] },
+        { meta: [t(PAPER_AUTHORS)] },
+        { p: [t('The machinery is three MIT-licensed libraries: '),
+          a('https://www.npmjs.com/package/footprintjs', 'footprintjs'), t(' records the run, '),
+          a('https://www.npmjs.com/package/agentfootprint', 'agentfootprint'),
+          t(' turns that recording into agents, influence rankings and re-runs, and '),
+          a('https://www.npmjs.com/package/agentthinkingui', 'agentthinkingui'),
+          t(' draws the panels you are clicking. The whole site is open: '),
+          a('https://github.com/footprintjs/visible-reasoning', 'source on GitHub'), t('.')] },
       ],
     },
   ];
 }
 
+// ─── THE ONE REVEAL SCRIPT ──────────────────────────────────────────────────
 /**
- * The ONE flip behaviour, shipped with the markup that needs it.
+ * The note-row unfold, and nothing else. It is the only script the public BYOK
+ * home carries, so it is deliberately small enough to read in one sitting:
  *
- * Progressive by construction: the deck is authored flat (both faces in flow, the
- * whole note readable), and this script is what turns it into cards. Scripting
- * off ⇒ nothing is hidden behind a flip that never happens.
+ *   · it touches nothing but rows inside a [data-note-group];
+ *   · it makes no request of any kind, reads and writes no storage, reads no
+ *     URL and navigates nowhere;
+ *   · rows are independent — opening one never closes another;
+ *   · the control is a native <button aria-expanded>, so Enter and Space are
+ *     the browser's, not ours;
+ *   · it never reads location — a deep link does NOT open the row it points at.
+ *     That is the public home's choice, not an oversight: reading the URL is one
+ *     more thing a visitor would have to trust, so the BYOK desks carry the
+ *     provenance definitions inline (provenanceHelpScript with defs: true)
+ *     instead of linking at the home's #guide. Only the LOCAL gallery, whose
+ *     desk dialogs do link at #guide, adds the opener — in its own second
+ *     script (GALLERY_ROUTING_SCRIPT), which the public home does not ship;
+ *   · closed content is out of the tab order and out of the accessibility tree,
+ *     and the script does not do that either: HOME_CSS hides it from .is-open
+ *     alone, and delays the hide by the length of the fold so the animation is
+ *     never cut short. A fold that never animates (double-click, or Enter twice
+ *     inside one style recalc) therefore still ends up hidden — there is no
+ *     transitionend to miss;
+ *   · reduced motion drops that delay, so it hides at once;
+ *   · the transition is armed one frame after the first fold, so nothing
+ *     animates on load and the page never re-lays-out behind the visitor.
  *
- * It is also the only script the BYOK landing carries, so it is deliberately
- * small enough to read: no network, no storage, no timers beyond the one that
- * ends the shadow lift, and it never touches anything outside its own deck.
+ * verify-byok.mjs asserts each of those properties against this script's own
+ * bytes (and, for the ones CSS owns, against the stylesheet's), not against
+ * prose about it.
  */
-export const ABOUT_FLIP_SCRIPT = `<script>
+export const NOTE_UNFOLD_SCRIPT = `<script>
 (function () {
-  var deck = document.querySelector('[data-about-deck]');
-  if (!deck) return;
-  deck.setAttribute('data-flip', 'on');
-  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-
-  Array.prototype.forEach.call(deck.querySelectorAll('.ab-flip'), function (card) {
-    var shell = card.parentNode;
-    var front = card.querySelector('.ab-front');
-    var back = card.querySelector('.ab-back');
-    var timer = 0;
-
-    // The hidden face is not just invisible: it is out of the tab order and out
-    // of the accessibility tree, so a link on the back of a card you can't see
-    // can't be tabbed into. inert does it where it exists; the tabindex sweep is
-    // the fallback that works everywhere.
-    function conceal(face, hidden) {
-      if (hidden) { face.setAttribute('inert', ''); face.setAttribute('aria-hidden', 'true'); }
-      else { face.removeAttribute('inert'); face.removeAttribute('aria-hidden'); }
-      Array.prototype.forEach.call(face.querySelectorAll('a'), function (a) {
-        if (hidden) a.setAttribute('tabindex', '-1'); else a.removeAttribute('tabindex');
+  var groups = document.querySelectorAll('[data-note-group]');
+  if (!groups.length) return;
+  Array.prototype.forEach.call(groups, function (group) {
+    group.setAttribute('data-fold', 'on');
+    Array.prototype.forEach.call(group.querySelectorAll('[data-note-row]'), function (row) {
+      var btn = row.querySelector('[data-note-toggle]');
+      // The fold and its pane are not touched — the stylesheet drives both from
+      // .is-open. They are looked up only to leave a malformed row alone.
+      var fold = row.querySelector('[data-note-fold]');
+      var pane = row.querySelector('[data-note-pane]');
+      var mark = row.querySelector('[data-note-mark]');
+      if (!btn || !fold || !pane || !mark) return;
+      function paint(open) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        mark.textContent = open ? '\\u2212' : '+';
+        row.classList.toggle('is-open', open);
+      }
+      btn.addEventListener('click', function () {
+        paint(btn.getAttribute('aria-expanded') !== 'true');
       });
-    }
-    function show(flipped) {
-      card.setAttribute('aria-pressed', flipped ? 'true' : 'false');
-      conceal(front, flipped);
-      conceal(back, !flipped);
-    }
-    function turn() {
-      show(card.getAttribute('aria-pressed') !== 'true');
-      if (reduce && reduce.matches) return;
-      shell.classList.remove('is-turning');
-      void shell.offsetWidth;              // restart the lift on a fast re-flip
-      shell.classList.add('is-turning');
-      window.clearTimeout(timer);
-      timer = window.setTimeout(function () { shell.classList.remove('is-turning'); }, 460);
-    }
-
-    show(false);
-    card.addEventListener('click', function (ev) {
-      // A link on the back stays a link — clicking it must not also turn the card.
-      if (ev.target.closest && ev.target.closest('a')) return;
-      turn();
-    });
-    card.addEventListener('keydown', function (ev) {
-      if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
-      if (ev.target !== card) return;      // Enter on a link inside is that link's
-      ev.preventDefault();                 // Space must not scroll the page
-      turn();
+      paint(false);
     });
   });
+  var arm = function () {
+    Array.prototype.forEach.call(groups, function (g) { g.setAttribute('data-motion', 'on'); });
+  };
+  if (window.requestAnimationFrame) window.requestAnimationFrame(arm); else arm();
 }());
 </script>`;
 
+// ─── THE HOME'S SKIN ────────────────────────────────────────────────────────
+// Paper #FAF7F2 · ink #211E19 · body #3A352C · muted #57503F · faint #8A8274 ·
+// hairline #DCD5C9 · terracotta #A8461F (marks, open edges, focus) · green
+// #3F6B4E (the way in) · purple #5D4E8C (synthetic). Accents are edges and
+// glyphs, never fills. The provenance dots keep the desks' paints exactly — a
+// definition dot here IS the dot on a desk, byte for byte.
+export const HOME_CSS = `
+  :root {
+    --paper: #FAF7F2; --ink: #211E19; --body: #3A352C; --muted: #57503F; --faint: #8A8274;
+    --hair: #DCD5C9; --hair-soft: #EFE9DD; --rule: #C3BBAA;
+    --terra: #A8461F; --terra-edge: #C77B52; --terra-hover: #9C4423;
+    --green: #3F6B4E; --green-dk: #2E523B; --green-soft: #A9C2AF;
+    --serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); }
+  body { font-family: var(--serif); font-size: 17px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  a { color: var(--green); }
+  a:hover { color: var(--green-dk); }
+  ::selection { background: #EAD9CB; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--terra); outline-offset: 3px; border-radius: 1px; }
+  a:focus:not(:focus-visible), button:focus:not(:focus-visible) { outline: none; }
+
+  .vr-page { min-height: 100dvh; padding: 0 clamp(20px, 5.5vw, 72px) 56px; }
+  .vr-col { max-width: 768px; }
+
+  /* header — the demo's own label, the way to the code, the venue */
+  .vr-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
+    gap: 4px 16px; padding: 16px 2px 10px; border-bottom: 1px solid var(--hair);
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; color: var(--faint); }
+  .vr-top-right { display: flex; gap: 20px; align-items: baseline; }
+  .vr-top-right > * { white-space: nowrap; }
+  .vr-top a { color: var(--green); text-decoration: none; }
+  .vr-top a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .vr-h1 { margin: clamp(30px, 6vh, 54px) 0 0; font-size: clamp(27px, 4.8vw, 38px);
+    font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; }
+  .vr-lead { margin: 14px 0 0; font-size: clamp(17.5px, 2.2vw, 19.5px); line-height: 1.6;
+    max-width: 56ch; color: var(--body); }
+  .vr-sub { margin: 16px 0 22px; font-size: 16.5px; max-width: 56ch; color: var(--muted); }
+
+  /* THE ONE GESTURE — a note row between hairlines */
+  .vr-notes { border-bottom: 1px solid var(--hair); }
+  .vr-note { border-top: 1px solid var(--hair); scroll-margin-top: 18px; }
+  .vr-note.is-open { border-top-color: var(--terra-edge); }
+  .vr-note-btn { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    width: 100%; min-height: 46px; padding: 11px 2px; margin: 0; background: transparent; border: none;
+    cursor: pointer; text-align: left; font-family: var(--mono); font-size: 13.5px;
+    letter-spacing: 0.01em; color: #6E675C; }
+  .vr-note-btn:hover { color: var(--ink); }
+  .vr-mark { font-size: 16px; line-height: 1; color: var(--terra); flex: none; }
+  /* Authored open, folded by script: with no script every note is simply read. */
+  .vr-fold { display: grid; grid-template-rows: 1fr; }
+  .vr-fold-inner { overflow: hidden; min-height: 0; }
+  [data-fold="on"] .vr-fold { grid-template-rows: 0fr; }
+  [data-fold="on"] .vr-fold-inner { visibility: hidden; }
+  [data-fold="on"] .vr-note.is-open .vr-fold { grid-template-rows: 1fr; }
+  /* CLOSED CONTENT IS HIDDEN BY CSS, NOT BY THE SCRIPT. The script only sets
+     .is-open; visibility follows from it, so a fold that never animates (a
+     double-click, or Enter twice inside one style recalc) still ends hidden and
+     out of the tab order. Closing waits out the fold with a pure delay (the
+     0.28s below) instead of a transitionend the browser may never fire; opening
+     cancels that delay (0s 0s, higher specificity), so the content appears the
+     moment the row opens. */
+  [data-fold="on"] .vr-note.is-open .vr-fold-inner { visibility: visible; transition: visibility 0s 0s; }
+  [data-fold="on"][data-motion="on"] .vr-fold { transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+  [data-fold="on"][data-motion="on"] .vr-fold-inner { transition: visibility 0s 0.28s; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-fold="on"][data-motion="on"] .vr-fold { transition: none; }
+    [data-fold="on"][data-motion="on"] .vr-fold-inner { transition: none; }
+  }
+
+  .vr-body { padding: 4px 2px 30px; max-width: 62ch; font-size: 16.5px; line-height: 1.62;
+    color: var(--body); overflow-wrap: anywhere; }
+  .vr-body p { margin: 0 0 12px; }
+  .vr-body p:last-child { margin-bottom: 0; }
+  .vr-body code { font-family: var(--mono); font-size: 0.85em; color: var(--ink); }
+  .vr-aside { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--hair-soft); font-style: italic; }
+  .vr-aside code { font-style: normal; }
+  .vr-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--faint);
+    margin: 20px 0 8px; }
+  .vr-body > .vr-kicker:first-child { margin-top: 4px; }
+  .vr-q { margin: 0 0 6px; font-style: italic; font-size: 17.5px; }
+  .vr-lines { display: grid; gap: 6px; font-size: 15.5px; color: var(--muted); margin: 0 0 12px; }
+  .vr-cite { margin: 0 0 6px; font-style: italic; font-size: 18px; }
+  .vr-meta { margin: 0 0 6px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .vr-defrow { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 4px 14px;
+    align-items: start; padding: 8px 0; border-top: 1px solid var(--hair-soft); font-size: 15.5px; }
+  .vr-defrow + p { margin-top: 12px; }
+  .vr-defname { display: inline-flex; align-items: flex-start; gap: 7px; font-family: var(--mono);
+    font-size: 12.5px; color: var(--ink); }
+  .vr-defname .cd-dot { margin-top: 4px; }
+  .vr-rowname { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+  @media (max-width: 460px) { .vr-defrow { grid-template-columns: minmax(0, 1fr); } }
+  /* a phone: the header rail is three mono labels, so it gets a tighter track
+     rather than a broken word */
+  @media (max-width: 520px) {
+    .vr-top { font-size: 10.5px; letter-spacing: 0.09em; gap: 10px; }
+    .vr-top-right { gap: 12px; }
+  }
+
+  /* the section labels */
+  .vr-seckick { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.16em;
+    color: var(--faint); margin: 0 0 10px; }
+
+  /* THE ONE BOLD MOMENT — the desk listing */
+  .vr-desks { margin-top: clamp(44px, 8vh, 80px); }
+  .vr-listing { border-top: 4px double var(--rule); border-bottom: 1px solid var(--hair); }
+  .vr-desk { display: grid; grid-template-columns: clamp(44px, 7vw, 84px) minmax(0, 1fr);
+    column-gap: clamp(10px, 2vw, 18px); padding-top: clamp(20px, 3.5vw, 30px); }
+  .vr-desk + .vr-desk { border-top: 1px solid var(--hair); }
+  .vr-num { font-family: var(--mono); font-size: 13px; color: var(--faint); padding-top: 12px; }
+  .vr-deskmain { min-width: 0; }
+  .vr-deskname { margin: 0; font-size: clamp(30px, 6.5vw, 52px); font-weight: 500;
+    line-height: 1.04; letter-spacing: -0.015em; }
+  a.vr-desklink { color: inherit; text-decoration: none; display: inline-block; }
+  a.vr-desklink:hover .vr-deskname { color: var(--terra-hover); }
+  .vr-deskone { margin: 10px 0 2px; font-style: italic; font-size: clamp(17.5px, 2.4vw, 19.5px);
+    color: var(--muted); }
+  .vr-enter { display: inline-block; padding: 10px 0; font-family: var(--mono); font-size: 13.5px;
+    color: var(--green); text-decoration: underline; text-underline-offset: 5px;
+    text-decoration-thickness: 1px; text-decoration-color: var(--green-soft); }
+  .vr-enter:hover { color: var(--green-dk); text-decoration-color: var(--green-dk); }
+  .vr-badgerow { margin: 8px 0 0; }
+  .vr-badge { display: inline-block; padding: 6px 10px; border: 1px dashed #C4BCAD; border-radius: 2px;
+    font-family: var(--mono); font-size: 12.5px; color: #7A7265; }
+  .vr-desk.is-off .vr-deskname { color: #6F6A60; }
+  .vr-desk.is-off .vr-deskone { color: #7A7265; }
+  /* a desk's own note: the same row, no bottom rule of its own */
+  .vr-desknote { margin-top: 12px; }
+  .vr-desknote .vr-notes { border-bottom: none; }
+
+  .vr-program { margin-top: clamp(48px, 8vh, 88px); }
+
+  .vr-foot { margin-top: clamp(56px, 10vh, 96px); border-top: 1px solid var(--hair);
+    padding: 16px 2px 8px; display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: space-between;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  .vr-foot a { color: var(--green); text-decoration: none; }
+  .vr-foot a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  /* A DELIBERATE DEPARTURE FROM THE DESIGN, recorded so it is not "restored":
+     the design paints the provenance vocabulary as bordered pill badges and
+     gives the synthetic verdict a purple (#5D4E8C). Both are dropped here. A
+     definition on this page must be THE SAME ELEMENT as the dot on a desk —
+     that is the whole point of one shared DOT_CSS — so the definitions wear the
+     desks' dots, and the desks' amber dashed synthetic comes with them. Purple
+     is therefore absent from the home on purpose; there is no --purple token to
+     find, and adding one would re-open the drift DOT_CSS exists to close. */
+${DOT_CSS}`;
+
 /**
- * The about section — five cards, and the script that makes them turn. Rendered
- * on both landings from one call, so a card here and a card there are the same
- * element with the same words in it.
+ * The home's tab icon: the page's own mark — a terracotta + on paper. Inline, so
+ * it costs no request AND stops the browser's automatic /favicon.ico probe,
+ * which would otherwise be a 404 in the network log of a page that invites
+ * visitors to read that log.
  */
-export function aboutSection({ desks, sources }) {
-  const cards = aboutCards({ desks, sources }).map((c, i) => `
-      <div class="ab-card" style="--ab-accent: ${ABOUT_ACCENTS[i % ABOUT_ACCENTS.length]}">
-        <div class="ab-flip" role="button" tabindex="0" aria-pressed="false" data-testid="about-card">
-          <div class="ab-inner">
-            <div class="ab-face ab-front">
-              <h3 class="ab-title">${esc(c.title)}</h3>
-              <p class="ab-teaser">${esc(c.teaser)}</p>
-              <span class="ab-turn">read <span aria-hidden="true">↻</span></span>
-            </div>
-            <div class="ab-face ab-back">
-              <p class="ab-body">${c.body.map(aboutPart).join('')}</p>
-              <span class="ab-turn">back <span aria-hidden="true">↺</span></span>
-            </div>
-          </div>
-        </div>
-      </div>`).join('');
-  return `
-  <section class="ag-sec ag-about" id="about">
-    <div class="ab-head">
-      <h2>About this demo</h2>
-      <p class="ab-hint">Five cards — turn one over to read the rest.</p>
-    </div>
-    <div class="ab-deck" data-about-deck>${cards}
-    </div>
-  </section>
-${ABOUT_FLIP_SCRIPT}`;
+export const HOME_FAVICON = 'data:image/svg+xml,'
+  + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    + '<rect width="32" height="32" rx="4" fill="#FAF7F2"/>'
+    + '<path d="M4 9h24M4 23h24" stroke="#DCD5C9" stroke-width="1.5"/>'
+    + '<path d="M16 10.5v11M10.5 16h11" stroke="#A8461F" stroke-width="3" stroke-linecap="round"/></svg>',
+  );
+
+// The two web fonts — a stylesheet from fonts.googleapis.com whose font files
+// come from fonts.gstatic.com, which is why the BYOK home's custody note names
+// BOTH hosts: a visitor reading their own network log sees both. Each stack
+// falls back to a system face, so a blocked or slow font host costs the page its
+// typeface and nothing else.
+const FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">`;
+
+/**
+ * THE HOME PAGE. Both landings are this function; everything that could be
+ * false on the other build is an argument.
+ *
+ * @param o.docTitle/description  the tab and the search snippet
+ * @param o.favicon      an inline data: icon, or null
+ * @param o.kicker       the mono label at the top left — what THIS build is
+ * @param o.venue        the mono label at the top right
+ * @param o.heading/lead/sub   the header
+ * @param o.topNotes     the rows above the desks
+ * @param o.desks        the desk listing
+ * @param o.programNotes the rows below it
+ * @param o.footLeft     one honest sentence about the page itself
+ * @param o.scripts      extra scripts (the local gallery's routing); the unfold
+ *                       script is always present and always first
+ */
+export function buildHome({
+  docTitle, description = null, favicon = null, lang = 'en',
+  kicker, venue = 'HCII 2026', heading, lead, sub,
+  topNotes = [], desks = [], programNotes: notes = [], footLeft, scripts = '',
+}) {
+  const source = HEADER_LINKS[0];
+  const footLinks = HEADER_LINKS.map((l) => `<a href="${esc(l.href)}" target="_blank" rel="noopener"
+      title="${esc(l.title)}">${esc(l.label)}</a>`).join(' · ');
+  return `<!DOCTYPE html><html lang="${esc(lang)}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(docTitle)}</title>${description ? `
+<meta name="description" content="${esc(description)}">` : ''}${favicon ? `
+<link rel="icon" href="${favicon}">` : ''}
+${FONT_LINKS}
+<style>${HOME_CSS}
+</style></head>
+<body>
+<div class="vr-page">
+  <div class="vr-col">
+
+    <header>
+      <div class="vr-top">
+        <span>${esc(kicker)}</span>
+        <span class="vr-top-right"><a href="${esc(source.href)}" target="_blank" rel="noopener"
+          title="${esc(source.title)}">GITHUB <span aria-hidden="true">↗</span></a><span>${esc(venue)}</span></span>
+      </div>
+      <h1 class="vr-h1">${esc(heading)}</h1>
+      <p class="vr-lead">${richHtml(lead)}</p>
+      <p class="vr-sub">${richHtml(sub)}</p>
+    </header>
+${noteGroup(topNotes)}
+${deskListing(desks)}
+
+    <section class="vr-program" aria-label="Program notes">
+      <div class="vr-seckick">PROGRAM NOTES</div>${noteGroup(notes)}
+    </section>
+
+    <footer class="vr-foot">
+      <span id="vr-foot-note">${esc(footLeft)}</span>
+      <span>${footLinks}</span>
+    </footer>
+
+  </div>
+</div>
+${NOTE_UNFOLD_SCRIPT}${scripts}
+</body></html>`;
 }
 
-// ─── THE CARDS LANDING PAGE ────────────────────────────────────────────────
+// ─── THE LOCAL REHEARSAL GALLERY ────────────────────────────────────────────
 /**
  * @param apps  the app packs, in gallery order
  * @param opts.live  true only when the real MCP client is serving the tools
  *   (stdio subprocess → mcp-server.js). Under the default `npm run gallery` the
  *   tools come from agentfootprint's in-memory mockMcpClient — no subprocess and
- *   no protocol frames — so the card must NOT claim MCP. Same honesty rule as
+ *   no protocol frames — so the page must NOT claim MCP. Same honesty rule as
  *   every tool sentence: the label names what actually happened.
- * @param opts.model  the model id live turns actually send. Shown only when
- *   `live` — a mock desk calls no model, and the card says exactly that rather
+ * @param opts.model  the model id live turns actually send. Named only when
+ *   `live` — a mock desk calls no model, and the page says exactly that rather
  *   than borrowing a real model's name.
  */
 export function buildGalleryPage(apps, { live = false, model = null } = {}) {
-  // The capability strip, per card. Every line is build-honest: a mock build
-  // names no model and claims no MCP, because neither one happened.
-  const capLines = [
-    { icon: ICON.model, text: live && model ? `model: ${model} — streamed token by token` : 'scripted mock — no model, no network' },
-    { icon: ICON.tools, text: live ? 'tools served over MCP (real protocol frames)' : 'scripted mock tools — no MCP server' },
-    { icon: ICON.stream, text: live ? 'statuses and reply arrive as they happen' : 'real event order, paced for reading' },
-    { icon: ICON.branch, text: 'every reply: visible reason → re-run without a source → fork' },
+  // The facts under each desk, all build-honest: a mock build names no model and
+  // claims no MCP, because neither one happened.
+  const facts = [
+    [t(live && model ? `model: ${model} — streamed token by token` : 'scripted mock — no model, no network')],
+    [t(live ? 'tools served over MCP (real protocol frames)' : 'scripted mock tools — no MCP server')],
+    [t(live ? 'statuses and reply arrive as they happen' : 'real event order, paced for reading')],
+    [t('every reply: visible reason → re-run without a source → fork')],
   ];
-  // The card dot IS the guide dot: same table, same class function, and it
-  // reports what THIS build can actually do — live tools on a live build,
-  // scripted on a mock one, synthetic where the data is invented by design.
-  const dotState = (t) => (t.alwaysSynthetic ? 'synthetic' : (live ? 'live' : 'scripted'));
-  const cards = apps.map((app) => galleryCard({
-    app, caps: capLines, dotState, href: `./${app.id}.html`, dataApp: true,
-  })).join('');
+  // The dot under a desk IS the dot in the guide: same table, same class
+  // function, reporting what THIS build can actually do.
+  const dotState = (tool) => (tool.alwaysSynthetic ? 'synthetic' : (live ? 'live' : 'scripted'));
+  // …and the guide defines only the verdicts this build can reach. A mock build
+  // that explained “live — real data fetched from the internet just now” would
+  // be teaching a word its own desks can never say.
+  const states = statesForBuild(live);
 
-  // The two about-deck facts that are NOT the same on both landings. Same honesty
-  // rule as every card line: a mock build fetched nothing, so it says so and
-  // names what a live run would reach instead.
-  const desks = 'Three desks, three sets of sources — a trip advisor, a movie desk, a stock desk — '
-    + 'and one machine underneath.';
+  const desks = orderForHome(apps).map((app, i) => ({
+    n: String(i + 1).padStart(2, '0'),
+    name: app.title,
+    oneLiner: question(app),
+    href: `./${app.id}.html`,
+    dataApp: app.id,
+    note: deskNote(app, { facts, dotState }),
+  }));
+
+  const cost = live
+    ? [{ p: [t(LIVE_COST_LINE)] }]
+    : [{ p: [t('This build spends nothing: no model is called and no source is fetched — every reply '
+        + 'is rehearsal data written into the demo.')] },
+      { p: [t('Run it live with '), codeSeg('npm run gallery:live'), t(' and each reply costs a handful '
+        + 'of small model calls on the key in your .env, plus the real fetches its sources make.')] }];
+
   const sources = live
     ? 'Weather comes from Open-Meteo, plots and reception from Wikipedia, prices from iTunes, '
       + 'filings from SEC EDGAR — real public sources, called as tools.'
     : 'This build answers from rehearsal data written into the demo — no network. Run it live and '
       + 'the same tool calls reach the real sources: Open-Meteo, Wikipedia, iTunes, SEC EDGAR.';
 
-  const buttons = BUTTON_HELP.map((b) => `
-      <div class="ag-btn-item">
-        <span class="ag-btn-head">${b.icon}<span class="ag-fakebtn${b.solid ? ' solid' : ''}">${esc(b.name)}</span></span>
-        <span class="ag-btn-what">${esc(b.what)}</span>
-      </div>`).join('');
+  const takeItHome = {
+    id: 'byok',
+    label: 'take it with you — bring your own key',
+    body: [
+      { p: [b('Two of these desks run as a public page entirely in your browser'),
+        t(', on your own Anthropic key. The key goes only to '), codeSeg('api.anthropic.com'),
+        t('; the page’s host never receives it. The stock desk stays here — it needs a server.')] },
+      { p: [a('https://footprintjs.github.io/visible-reasoning', 'footprintjs.github.io/visible-reasoning')] },
+    ],
+  };
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The app gallery — one visible-reason machine, three apps</title>
-<style>${SKIN}${GALLERY_CSS}${PROVENANCE_CSS}
-</style></head>
-<body>
-<div class="ag-wrap">
-${headerRail()}
-  <header class="ag-head">
-    <h1>The app gallery — one visible-reason machine, three apps</h1>
-    <p>Three real chat desks share one machine: every context source is a tool the agent calls, and
-    every reply can be re-run without a source to see what that source really changed. Everything
-    below is the program — open a desk to watch it live.</p>${live ? `
-    <p class="ag-cost" data-testid="gallery-cost">${esc(LIVE_COST_LINE)}</p>` : ''}
-  </header>
-  <div class="ag-grid">${cards}</div>
-${aboutSection({ desks, sources })}
-${guideSection()}
-
-  <section class="ag-sec" id="buttons">
-    <h2>What the buttons do</h2>
-    <div class="ag-btn-strip">${buttons}
-    </div>
-  </section>
-
-  <section class="ag-sec" id="byok">
-    <div class="ag-byok">
-      <p><strong>Take it with you — bring your own key.</strong> Two of these desks run as a public
-      page entirely in your browser, on your own Anthropic key. The key goes only to
-      api.anthropic.com; the page's host never receives it.
-      <a href="https://footprintjs.github.io/visible-reasoning" target="_blank" rel="noopener noreferrer">→ footprintjs.github.io/visible-reasoning</a></p>
-    </div>
-  </section>
-
-  <p class="ag-foot" id="ag-foot"></p>
-  <p class="ag-foot ag-src">This page and the desks behind it are generated from the repo — every
-  sentence on them is something the code does.
-  <a href="https://github.com/footprintjs/visible-reasoning" target="_blank" rel="noopener">github.com/footprintjs/visible-reasoning</a></p>
-</div>
-<script>
-// Served by the local server → route through it; opened as a file → keep the
-// sibling .html artifacts so the gallery still walks card → app offline.
-if (location.protocol === 'http:' || location.protocol === 'https:') {
-  document.querySelectorAll('.ag-card').forEach(function (a) { a.setAttribute('href', '/app/' + a.dataset.app); });
-} else {
-  document.getElementById('ag-foot').innerHTML =
-    'Static preview — chatting needs the local server: run <code>npm run gallery</code> and open http://localhost:4175';
+  return buildHome({
+    docTitle: 'The app gallery — one visible-reason machine, three apps',
+    favicon: HOME_FAVICON,
+    kicker: live ? 'DEMO · LIVE RUN · REAL SOURCES' : 'DEMO · REHEARSAL · SCRIPTED DATA',
+    heading: 'Visible Reasoning — the app gallery',
+    lead: [t('Three real chat desks share one machine; every reply can be re-run without a source, '
+      + 'to see what that source really changed.')],
+    sub: live
+      ? [t('This build is live: a real model answers and the sources are really fetched — '),
+        em('open a desk to watch it happen.')]
+      : [t('This build is the rehearsal: scripted data, no model and no network — '),
+        em('the machinery is the same, and every label says which it is.')],
+    topNotes: [{
+      id: 'about',
+      label: 'what is visible reasoning?',
+      body: [
+        { p: [t('Three chat desks that answer a question and then show why: the sources that shaped '
+          + 'the answer, ranked — each one droppable, so the same turn can be re-run without it and '
+          + 'compared. A working companion to a published paper, not a product.')] },
+        { p: [t('None of them narrates its own reasoning. Each one records it: every source the '
+          + 'agent consults is a tool call, and the record of which tools ran, what came back and '
+          + 'what it changed survives the reply.')] },
+        { p: [t('All three run here, on this machine. The paper and the method are under '),
+          em('program notes'), t(', below. This page and the desks behind it are generated from '),
+          a(HEADER_LINKS[0].href, 'source on GitHub'), t(' — every sentence on them is something '
+            + 'the code does.')] },
+      ],
+    }],
+    desks,
+    programNotes: programNotes({ states, cost, sources, extra: [takeItHome] }),
+    footLeft: 'generated from the repo — every sentence on this page is something the code does',
+    scripts: GALLERY_ROUTING_SCRIPT,
+  });
 }
-</script>
-</body></html>`;
+
+// The local gallery's own wiring, and the only reason it carries a second
+// script: served by the local server → route the desk links through it; opened
+// as a file → keep the sibling .html artifacts and say so. It also opens the row
+// a deep link points at, because a desk's dialog links this page's #guide and
+// arriving at a folded row would be a dead end.
+const GALLERY_ROUTING_SCRIPT = `<script>
+(function () {
+  var served = location.protocol === 'http:' || location.protocol === 'https:';
+  if (served) {
+    document.querySelectorAll('[data-app]').forEach(function (el) {
+      el.setAttribute('href', '/app/' + el.dataset.app);
+    });
+  } else {
+    document.getElementById('vr-foot-note').innerHTML =
+      'static preview — chatting needs the local server: run <code>npm run gallery</code> and open http://localhost:4175';
+  }
+  var target = location.hash ? document.getElementById(location.hash.slice(1)) : null;
+  if (target && target.hasAttribute('data-note-row')) {
+    var btn = target.querySelector('[data-note-toggle]');
+    if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
+    target.scrollIntoView();
+  }
+}());
+</script>`;
+
+// ─── the pieces both landings build a desk row from ─────────────────────────
+/** The design's reading order for the listing: trip, movies, then the stock desk. */
+const HOME_ORDER = ['trip', 'movies', 'stocks'];
+export const orderForHome = (apps) => [...apps].sort(
+  (x, y) => HOME_ORDER.indexOf(x.id) - HOME_ORDER.indexOf(y.id),
+);
+
+/**
+ * A desk's one-liner, taken from the pack's own tagline ("buy or hold? — with
+ * visible reasons" → "Buy or hold?"), so the listing cannot describe a desk as
+ * something the desk itself doesn't claim.
+ *
+ * The capital is the RENDERER's, not the copy's: the design sets this line as a
+ * sentence ("Should I hike it?") while a pack's tagline is written lowercase for
+ * the desk's own bar. Casing the first letter here keeps both — the words are
+ * still the pack's, byte for byte.
+ */
+export const question = (app) => {
+  const q = String(app.tagline).split('—')[0].trim();
+  return q.charAt(0).toUpperCase() + q.slice(1);
+};
+
+/**
+ * ONE desk's note row: its real starter questions, its sources with the dot this
+ * build can honestly paint, and what it runs on.
+ *
+ * @param o.facts     the capability lines, already segments
+ * @param o.dotState  tool → the provenance verdict this build can claim
+ */
+export function deskNote(app, { facts, dotState }) {
+  const starters = (app.starters ?? []).map((s) => ({ q: s }));
+  const sources = (app.tools ?? []).map((tool) => ({
+    state: dotState(tool), label: tool.legendLabel, what: tool.description,
+  }));
+  return {
+    id: `desk-${app.id}`,
+    label: 'starter questions · what this desk runs on',
+    body: [
+      { kicker: 'STARTER QUESTIONS' },
+      ...starters,
+      // Build-scoped on purpose. The guide's sentence is about a REPLY ("where
+      // that source's data actually came from on the latest reply"); these dots
+      // are painted at build time, before any reply exists, so the kicker says
+      // which of the two this is — otherwise a live desk that cannot reach a
+      // source would report `fallback` where the landing showed `live`.
+      { kicker: 'SOURCES — AND THE VERDICT THIS BUILD CAN REPORT' },
+      { defs: sources },
+      { kicker: 'THIS DESK' },
+      { lines: facts },
+    ],
+  };
 }
 
 // ─── ONE APP'S CHAT DESK ───────────────────────────────────────────────────
@@ -937,9 +1174,9 @@ export function buildAppPage(app, data) {
   .cd-main { height: 100%; display: flex; flex-direction: column; transition: margin-right .28s ease; }
 
   /* top bar — runtime chrome only: gallery link, brand, model badge, session
-     tabs. The tagline lives on the gallery card: it is the same words before
-     the first message and after the hundredth, so it is program notes, not
-     stage. */
+     tabs. The tagline lives on the gallery's desk listing: it is the same words
+     before the first message and after the hundredth, so it is program notes,
+     not stage. */
   .cd-bar { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line); }
   .cd-back { font-size: 12.5px; font-weight: 600; color: var(--muted); text-decoration: none; white-space: nowrap; }
   .cd-back:hover { color: var(--accent); }
@@ -1075,8 +1312,9 @@ var GALLERY_HREF = HAS_SERVER ? '/' : './gallery.html';
 var NEED_SERVER = 'Chatting needs the local server — run  npm run gallery  and open http://localhost:4175';
 ${/* A desk's dialog is runtime-only: this reply's sources, then the way to the
       gallery's guide. The vocabulary itself is rendered on the landing from the
-      same PROVENANCE_HELP table, so the two cannot drift. */
-  provenanceHelpScript(['live', 'scripted', 'fallback', 'synthetic', 'not consulted'],
+      same PROVENANCE_HELP table AND the same per-build state list, so the words
+      this desk can put in a tooltip are exactly the words that guide defines. */
+  provenanceHelpScript(statesForBuild(data.live),
     { defs: false, guideHref: "GALLERY_HREF + '#guide'" })}
 function parseSeed(lines) {
   var uP = 'User: ', aP = DATA.app.assistantLabel + ': ';
