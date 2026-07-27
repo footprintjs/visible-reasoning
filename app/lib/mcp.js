@@ -132,3 +132,27 @@ export function provenanceFromToolLog(toolLog, toolNames) {
   }
   return out;
 }
+
+/**
+ * toolName → the sentence's OWN `[source: …]` text, verbatim — "live — Wikipedia
+ * — Mission Peak", "synthetic fallback — HTTP 404", "synthetic — modeled crowd
+ * estimate, not measured".
+ *
+ * The verdict above is a WORD; this is the REASON behind it, and without it a
+ * visitor looking at a hollow fallback dot can only learn WHY by reading code.
+ * It is read off the same sentence tail with the same regex agentthinkingui uses
+ * on a source snippet, so the legend and the influence panel cannot disagree
+ * about what a source said about itself. Null when a tool went unconsulted (or
+ * returned a sentence with no label at all — there is nothing to report, and
+ * inventing something is the failure mode this file exists to prevent).
+ */
+export function sourceLabelsFromToolLog(toolLog, toolNames) {
+  const byName = new Map();
+  for (const [key, value] of toolLog) byName.set(key.split('::')[0], value);
+  const out = {};
+  for (const name of toolNames) {
+    const m = /\[source:\s*([^\]]+)\]/i.exec(String(byName.get(name) ?? ''));
+    out[name] = m ? m[1].trim() : null;
+  }
+  return out;
+}

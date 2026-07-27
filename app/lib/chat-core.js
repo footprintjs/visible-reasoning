@@ -16,7 +16,8 @@ import {
   applyAblations, embeddingCache, listInfluenceStrategies, llmCallIdsFromEvents,
   recordedChat, removableSources, semanticAlignmentStrategy,
 } from 'agentfootprint/debug';
-import { metrics, provenanceFromToolLog } from './mcp.js';
+import { metrics, provenanceFromToolLog, sourceLabelsFromToolLog } from './mcp.js';
+import { debugForTurn } from './debug-view.js';
 
 // `makeProvider` is the browser seam: the BYOK page (08-app-gallery/byok/) hands
 // in a factory that returns a fresh `browserAnthropic({ apiKey })` reading the
@@ -161,8 +162,12 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       liveEventSink = opts.onEvent ?? null;
       try {
         const turn = await session.chat.send(userMessage);
-        const provenance = provenanceFromToolLog(toolLog, pack.tools.map((t) => t.name));
-        session.meta[turn.index] = { toolLog, provenance, system, entity };
+        const names = pack.tools.map((t) => t.name);
+        const provenance = provenanceFromToolLog(toolLog, names);
+        // The verdict WORD and the reason behind it are recorded together, so a
+        // fallback can never reach the screen without the reason it fell back for.
+        const sourceLabels = sourceLabelsFromToolLog(toolLog, names);
+        session.meta[turn.index] = { toolLog, provenance, sourceLabels, system, entity };
         if (live) {
           console.log(`[live][${pack.id}] ${entity}: `
             + Object.entries(provenance).map(([k, v]) => `${k}=${v}`).join(' '));
@@ -312,6 +317,25 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
     });
   }
 
+  // ═══ The debug view — a pure read of turn K's recording ═══════════════════
+  // No agent, no model, no fetch: lib/debug-view.js derives both views from the
+  // events recordedChat already froze on the turn. It rides the SAME response
+  // the reply arrives in (and the page data of a pre-run story), so opening the
+  // modal costs the page nothing at all — there is no debug endpoint to call.
+  function debugFor(session, k) {
+    const turn = session.chat.turns[k];
+    if (!turn) return null;
+    return debugForTurn({
+      turn,
+      toolMeta: session.pack.tools.map((t) => ({
+        name: t.name, legendLabel: t.legendLabel, description: t.description,
+        alwaysSynthetic: t.alwaysSynthetic === true,
+      })),
+      assistantLabel: session.pack.assistantLabel,
+      excludedIds: session.excludedIds,
+    });
+  }
+
   /** A removable source's human label, for the what-if bubble. */
   function labelsFor(report, ids) {
     const src = removableSources(report);
@@ -327,7 +351,9 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
       turns: s.chat.turns.map((t) => ({
         index: t.index, userMessage: t.userMessage, reply: t.reply,
         provenance: s.meta[t.index]?.provenance ?? null,
+        sourceLabels: s.meta[t.index]?.sourceLabels ?? null,
         entity: s.meta[t.index]?.entity ?? s.entity,
+        debug: debugFor(s, t.index),
       })),
     };
   }
@@ -335,5 +361,6 @@ export function createChatCore({ live = false, model = 'claude-haiku-4-5-2025100
   return {
     sessions, embedder, getPending, makeChat, newSession, chatTurn,
     getReport, reasonAbout, rerunTurnK, forkFrom, labelsFor, sessionToData,
+    debugFor,
   };
 }

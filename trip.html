@@ -11,6 +11,7 @@
     "agentfootprint/debug": "./vendor/agentfootprint/dist/esm/debug.js",
     "agentfootprint/llm-providers": "./vendor/agentfootprint/dist/esm/llm-providers.js",
     "agentfootprint/memory": "./vendor/agentfootprint/dist/esm/memory/index.js",
+    "agentfootprint/observe": "./vendor/agentfootprint/dist/esm/observe.js",
     "agentfootprint/tool-providers": "./vendor/agentfootprint/dist/esm/tool-providers/index.js",
     "footprintjs": "./vendor/footprintjs/dist/esm/index.js",
     "footprintjs/advanced": "./vendor/footprintjs/dist/esm/advanced.js",
@@ -1368,6 +1369,86 @@
   }
 
 
+  /* the quiet entry — one small control in the top bar, nothing else */
+  .cd-debugbtn { font: inherit; font-size: 11.5px; font-weight: 600; color: var(--muted);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+  .cd-debugbtn:hover, .cd-debugbtn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .cd-debugbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-debugbtn:disabled { opacity: .45; cursor: not-allowed; }
+
+  .cd-dbg { position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(1060px, calc(100vw - 32px)); height: min(84vh, 820px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(40,30,20,.18); }
+  .cd-dbg:focus { outline: none; }
+  .cd-dbg-head { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 11px 10px 11px 16px; border-bottom: 1px solid var(--line); }
+  .cd-dbg-title { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--accent); }
+  .cd-dbg-turn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--muted); }
+  .cd-dbg-turn select { font: inherit; font-size: 11.5px; padding: 3px 7px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); max-width: 46vw; }
+  .cd-dbg-tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 9px 16px 0; }
+  .cd-dbg-tab { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 14px; border-radius: 999px;
+    cursor: pointer; border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+  .cd-dbg-tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent-dk); color: #fff; }
+  .cd-dbg-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cd-dbg-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 16px 16px; }
+  .cd-dbg-body:focus { outline: none; }
+  /* the player owns its panel: it lays itself out to the height it is given */
+  .cd-dbg-body.player { overflow: hidden; padding: 0; }
+  .cd-dbg-player { height: 100%; min-height: 380px; }
+  .cd-dbg-foot { flex: 0 0 auto; padding: 8px 16px 10px; border-top: 1px solid var(--line);
+    font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+  /* the trace view */
+  .cd-tr-head { display: flex; flex-wrap: wrap; gap: 5px 8px; margin: 0 0 12px; }
+  .cd-tr-fact { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--soft);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .cd-tr-sec { margin: 0 0 18px; }
+  .cd-tr-sec h3 { margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--ink); }
+  .cd-tr-sub { margin: 0 0 9px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+  .cd-tr-step { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+  .cd-tr-n { flex: 0 0 auto; width: 22px; font-size: 11px; font-weight: 700; color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding-top: 2px; }
+  .cd-tr-main { flex: 1 1 auto; min-width: 0; }
+  .cd-tr-what { font-size: 12.5px; font-weight: 700; color: var(--ink); margin: 0 0 3px; }
+  .cd-tr-meta { font-size: 11px; color: var(--muted); margin: 0 0 4px; overflow-wrap: anywhere; }
+  .cd-tr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px;
+    padding: 5px 8px; margin: 0 0 5px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .cd-tr-said { font-size: 12.5px; line-height: 1.55; color: var(--ink); margin: 0 0 4px;
+    overflow-wrap: anywhere; }
+  .cd-tr-src { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cd-tr-tool { display: flex; gap: 9px; padding: 9px 0; border-top: 1px solid var(--line); }
+  .cd-tr-tool .cd-dot { margin-top: 5px; }
+  .cd-tr-name { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+  .cd-tr-state { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    border-radius: 999px; padding: 2px 8px; margin-left: 7px; }
+  .cd-tr-state.used { background: #E3F1DE; color: #2C6B22; }
+  .cd-tr-state.offered { background: #EEE8DD; color: #6E5C49; }
+  .cd-tr-state.absent { background: #F6E5DA; color: #8A4A22; }
+  .cd-tr-why { font-size: 12px; line-height: 1.55; color: var(--muted); margin: 3px 0 0; }
+  .cd-tr-notes { margin: 0; padding: 0 0 0 17px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+  .cd-tr-notes li { margin: 0 0 5px; }
+  .cd-tr-empty { font-size: 12.5px; line-height: 1.6; color: var(--muted); font-style: italic; }
+
+  @media (max-width: 720px) {
+    /* phone: the workbench is the screen */
+    .cd-dbg { top: 0; left: 0; transform: none; width: 100%; height: 100%; max-height: 100%;
+      border-radius: 0; border: 0; }
+    /* two rows, not three: the title keeps the × beside it and the turn picker
+       takes the full second line, where a long question has room to be read */
+    .cd-dbg-head .cd-dbg-title { flex: 1 1 auto; }
+    .cd-dbg-head .cd-modal-close { order: 2; }
+    .cd-dbg-turn { order: 3; margin-left: 0; flex: 1 1 100%; }
+    .cd-dbg-turn select { max-width: 100%; flex: 1 1 auto; }
+  }
+
+
   .cd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%);
     background: var(--panel-bg); border-left: 1px solid var(--line); box-shadow: -10px 0 34px rgba(40,30,20,.10);
     transform: translateX(100%); transition: transform .28s ease; z-index: 50; display: flex; flex-direction: column; }
@@ -1427,6 +1508,12 @@
     .cd-backdrop.show { opacity: 1; pointer-events: auto; }
     .cd-tagline { display: none; }
     .cd-tab { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* This bar carries one thing the desks' does not: a badge that names the
+       model AND the key's four characters. It cannot be dropped on a phone (it
+       is a custody signal) and it cannot be ellipsized without lying, so the bar
+       wraps instead — every control stays on screen and reachable. */
+    .cd-bar { flex-wrap: wrap; row-gap: 8px; }
+    .cd-model { white-space: normal; }
   }
 </style></head>
 <body><div id="root"></div>
@@ -18650,20 +18737,28 @@ function provDot(state) {
   return React.createElement('span', { className: provDotClass(state) });
 }
 
-/** "live: real data fetched from the internet just now (…)" — no tool name. */
-function provBody(tool, p) {
+/**
+ * "live: real data fetched from the internet just now (…)" — no tool name.
+ *
+ * @param detail  the sentence's OWN "[source: …]" text for THIS turn, when the
+ *   turn recorded one (lib/mcp.js sourceLabelsFromToolLog). The verdict is the
+ *   word; this is the reason behind it — "synthetic fallback — HTTP 404" — and
+ *   without it a hollow fallback dot is a dead end for anyone not reading code.
+ */
+function provBody(tool, p, detail) {
   var body = p
     ? p + (PROV_WORDS[p] ? ': ' + PROV_WORDS[p] : '')
     : 'not used yet: waiting for the first reply';
   if (tool.alwaysSynthetic && p !== 'synthetic') {
     body += ' · this source is always synthetic by design — modeled, never measured';
   }
+  if (detail) body += ' · this reply: ' + detail;
   return body;
 }
 
 /** "wiki_plot — live: real data fetched from the internet just now (…)" */
-function provTitle(tool, p) {
-  return tool.name + ' — ' + provBody(tool, p);
+function provTitle(tool, p, detail) {
+  return tool.name + ' — ' + provBody(tool, p, detail);
 }
 
 var PROV_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -18708,13 +18803,15 @@ function ProvHelpModal(props) {
 
   var tools = props.tools || [];
   var prov = props.provenance || null;
+  var labels = props.sourceLabels || null;
   var sources = prov
     ? tools.map(function (t) {
         var p = prov[t.name];
-        return React.createElement('div', { key: t.name, className: 'cd-help-item' },
+        return React.createElement('div', { key: t.name, className: 'cd-help-item',
+            'data-testid': 'legend-help-source-' + t.name },
           provDot(p),
           React.createElement('span', null,
-            React.createElement('b', null, t.name), ' — ', provBody(t, p)));
+            React.createElement('b', null, t.name), ' — ', provBody(t, p, labels && labels[t.name])));
       })
     : React.createElement('p', { className: 'cd-help-none', 'data-testid': 'legend-help-noreply' },
         'no reply yet — sources appear here after you ask something');
@@ -18766,12 +18863,15 @@ function ProvLegend(props) {
   }
   var tools = props.tools || [];
   var prov = props.provenance || null;
+  var labels = props.sourceLabels || null;
   return React.createElement('div', { className: 'cd-legend', 'data-testid': 'tool-legend' },
     React.createElement('div', { className: 'cd-legend-row' },
       React.createElement('span', { className: 'cd-entity' }, props.entityLabel + ': ' + props.entityValue),
       tools.map(function (t) {
         var p = prov && prov[t.name];
-        return React.createElement('span', { key: t.name, className: 'cd-leg-item', title: provTitle(t, p) },
+        return React.createElement('span', { key: t.name, className: 'cd-leg-item',
+            'data-testid': 'leg-item-' + t.name,
+            title: provTitle(t, p, labels && labels[t.name]) },
           provDot(p), t.legendLabel + (p ? '' : ' —'));
       }),
       React.createElement('button', { type: 'button', className: 'cd-help-btn', ref: btnRef,
@@ -18779,7 +18879,269 @@ function ProvLegend(props) {
         'aria-expanded': open ? 'true' : 'false', 'aria-controls': 'cd-legend-help',
         onClick: function () { setOpen(true); } },
         React.createElement('span', { 'aria-hidden': 'true' }, 'ⓘ'), 'what do these mean?')),
-    open ? React.createElement(ProvHelpModal, { tools: tools, provenance: prov, onClose: close }) : null);
+    open ? React.createElement(ProvHelpModal, { tools: tools, provenance: prov,
+      sourceLabels: labels, onClose: close }) : null);
+}
+
+
+// ─── generated from lib/page.js — do not hand-edit in a page shell ──────────
+var DBG_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+var DBG_FOOT = 'Everything above is read from this turn\u2019s own recording. '
+  + 'Opening it called no model, ran no tool, made no request and stored nothing.';
+
+function dbgMs(v) { return v == null ? null : v + ' ms'; }
+
+/** "place: Mission Peak" — a tool call's arguments, as typed by the model. */
+function dbgArgs(args) {
+  var keys = Object.keys(args || {});
+  if (!keys.length) return '(no arguments)';
+  return keys.map(function (k) {
+    var v = args[k];
+    return k + ': ' + (typeof v === 'string' ? v : JSON.stringify(v));
+  }).join('  \u00b7  ');
+}
+
+/** One model call: what it was offered, what it asked for, what it cost. */
+function DbgLlmStep(props) {
+  var s = props.step;
+  var facts = [];
+  if (s.messagesCount != null) facts.push(s.messagesCount + ' messages in view');
+  if (s.systemPromptChars != null) facts.push(s.systemPromptChars + '-character system prompt');
+  if (s.tokensIn != null) facts.push(s.tokensIn + ' tokens in');
+  if (s.tokensOut != null) facts.push(s.tokensOut + ' tokens out');
+  if (s.ms != null) facts.push(dbgMs(s.ms));
+  if (s.atMs != null) facts.push('at ' + s.atMs + ' ms');
+  if (s.stopReason) facts.push('stop: ' + s.stopReason);
+  if (s.stage) facts.push(s.stage);
+  return React.createElement('div', { className: 'cd-tr-step', 'data-testid': 'dbg-step-' + s.n },
+    React.createElement('div', { className: 'cd-tr-n' }, s.n),
+    React.createElement('div', { className: 'cd-tr-main' },
+      React.createElement('p', { className: 'cd-tr-what' },
+        'model call' + (s.iteration ? ' ' + s.iteration : '') + ' \u2014 '
+        + (s.answered ? 'wrote the reply' : 'asked for ' + (s.asked.join(', ') || 'nothing'))),
+      React.createElement('p', { className: 'cd-tr-meta' },
+        'offered ' + s.offered.length + ' tool' + (s.offered.length === 1 ? '' : 's') + ': '
+        + (s.offered.join(', ') || 'none')),
+      facts.length ? React.createElement('p', { className: 'cd-tr-meta' }, facts.join(' \u00b7 ')) : null,
+      s.answered && s.content
+        ? React.createElement('p', { className: 'cd-tr-said' }, s.content)
+        : null));
+}
+
+/** One tool call: the arguments, the sentence it returned, its own source label. */
+function DbgToolStep(props) {
+  var s = props.step;
+  var facts = [];
+  if (s.ms != null) facts.push(dbgMs(s.ms));
+  if (s.atMs != null) facts.push('at ' + s.atMs + ' ms');
+  if (s.stage) facts.push(s.stage);
+  return React.createElement('div', { className: 'cd-tr-step', 'data-testid': 'dbg-step-' + s.n },
+    React.createElement('div', { className: 'cd-tr-n' }, s.n),
+    React.createElement('div', { className: 'cd-tr-main' },
+      React.createElement('p', { className: 'cd-tr-what' }, 'tool call \u2014 ' + s.name),
+      React.createElement('p', { className: 'cd-tr-mono' }, dbgArgs(s.args)),
+      s.result
+        ? React.createElement('p', { className: 'cd-tr-said', 'data-testid': 'dbg-result-' + s.name },
+            s.sentence || s.result)
+        : React.createElement('p', { className: 'cd-tr-meta' }, 'the recording carries no result for this call'),
+      s.sourceLabel
+        ? React.createElement('p', { className: 'cd-tr-src', 'data-testid': 'dbg-label-' + s.name },
+            '[source: ' + s.sourceLabel + ']')
+        : React.createElement('p', { className: 'cd-tr-meta' },
+            'this sentence carries no [source: \u2026] label \u2014 nothing here says where it came from'),
+      s.error ? React.createElement('p', { className: 'cd-tr-meta' }, 'error: ' + s.error) : null,
+      facts.length ? React.createElement('p', { className: 'cd-tr-meta' }, facts.join(' \u00b7 ')) : null));
+}
+
+/**
+ * The trace view: the run's structure, and the per-tool verdict that answers
+ * "why was this source used, and why wasn't that one?" — with the recording's
+ * silence stated as silence, never filled in.
+ */
+function DebugTraceView(props) {
+  var t = props.trace;
+  var facts = [];
+  facts.push(t.llmCalls + ' model call' + (t.llmCalls === 1 ? '' : 's'));
+  facts.push(t.toolCalls + ' tool call' + (t.toolCalls === 1 ? '' : 's'));
+  if (t.model) facts.push('model: ' + t.model);
+  if (t.provider) facts.push('provider: ' + t.provider);
+  facts.push(t.timingRecorded && t.wallMs != null ? 'run took ' + t.wallMs + ' ms' : 'no timing recorded');
+  if (t.runId) facts.push(t.runId);
+
+  return React.createElement('div', { 'data-testid': 'debug-trace' },
+    React.createElement('div', { className: 'cd-tr-head' },
+      facts.map(function (f, i) {
+        return React.createElement('span', { key: i, className: 'cd-tr-fact' }, f);
+      })),
+
+    React.createElement('section', { className: 'cd-tr-sec' },
+      React.createElement('h3', null, 'Step by step'),
+      React.createElement('p', { className: 'cd-tr-sub' },
+        'Every model call and every tool call this turn made, in the order the recording has them.'),
+      t.steps.length
+        ? t.steps.map(function (s) {
+            return s.kind === 'llm'
+              ? React.createElement(DbgLlmStep, { key: s.n, step: s })
+              : React.createElement(DbgToolStep, { key: s.n, step: s });
+          })
+        : React.createElement('p', { className: 'cd-tr-empty' }, 'the recording has no steps for this turn')),
+
+    React.createElement('section', { className: 'cd-tr-sec' },
+      React.createElement('h3', null, 'Every source, and whether it contributed'),
+      React.createElement('p', { className: 'cd-tr-sub' },
+        'One row per source this desk carries \u2014 asked for, offered and passed over, or not offered at all.'),
+      t.tools.map(function (tool) {
+        return React.createElement('div', { key: tool.name, className: 'cd-tr-tool',
+            'data-testid': 'dbg-tool-' + tool.name },
+          provDot(tool.provenance || 'not consulted'),
+          React.createElement('div', { className: 'cd-tr-main' },
+            React.createElement('p', { className: 'cd-tr-what' },
+              React.createElement('span', { className: 'cd-tr-name' }, tool.label),
+              React.createElement('span', { className: 'cd-tr-state ' + tool.state,
+                'data-testid': 'dbg-state-' + tool.name },
+                tool.state === 'used' ? 'used' : tool.state === 'offered' ? 'offered, not asked' : 'not offered')),
+            React.createElement('p', { className: 'cd-tr-meta' }, tool.name + ' \u2014 ' + tool.description),
+            React.createElement('p', { className: 'cd-tr-why' }, tool.why),
+            tool.result
+              ? React.createElement('p', { className: 'cd-tr-said' }, tool.sentence || tool.result)
+              : null,
+            tool.sourceLabel
+              ? React.createElement('p', { className: 'cd-tr-src' }, '[source: ' + tool.sourceLabel + ']')
+              : null));
+      })),
+
+    React.createElement('section', { className: 'cd-tr-sec' },
+      React.createElement('h3', null, 'What this view cannot tell you'),
+      React.createElement('ul', { className: 'cd-tr-notes', 'data-testid': 'debug-notes' },
+        t.notes.map(function (n, i) { return React.createElement('li', { key: i }, n); }))));
+}
+
+/**
+ * The dialog. Two views over ONE recorded turn: the story (agentthinkingui's
+ * player over the trace agentfootprint's own recorder built from this turn's
+ * events) and the trace (the run's structure, above).
+ *
+ * Accessibility: role=dialog + aria-modal, focus moves in on open, Tab is
+ * trapped, Escape / backdrop / \u00d7 all close, and the caller returns focus
+ * to the control that opened it.
+ */
+function DebugModal(props) {
+  var boxRef = React.useRef(null);
+  var closeRef = React.useRef(props.onClose);
+  closeRef.current = props.onClose;
+  var turns = props.turns || [];
+  var v0 = React.useState('story'); var view = v0[0], setView = v0[1];
+  // Newest turn by default — the one a visitor just watched go wrong.
+  var k0 = React.useState(turns.length ? turns[turns.length - 1].index : 0);
+  var pick = k0[0], setPick = k0[1];
+
+  React.useEffect(function () {
+    var box = boxRef.current;
+    if (box) box.focus();
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); closeRef.current(); return; }
+      if (ev.key !== 'Tab' || !box) return;
+      var items = Array.prototype.slice.call(box.querySelectorAll(DBG_FOCUSABLE))
+        .filter(function (el) { return !el.disabled && el.getClientRects().length > 0; });
+      if (!items.length) { ev.preventDefault(); box.focus(); return; }
+      var first = items[0];
+      var last = items[items.length - 1];
+      var here = document.activeElement;
+      var inside = box.contains(here) && here !== box;
+      if (ev.shiftKey) {
+        if (!inside || here === first) { ev.preventDefault(); last.focus(); }
+      } else if (!inside || here === last) { ev.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', onKey, true);
+    return function () { document.removeEventListener('keydown', onKey, true); };
+  }, []);
+
+  var turn = null;
+  for (var i = 0; i < turns.length; i += 1) if (turns[i].index === pick) turn = turns[i];
+  if (!turn && turns.length) turn = turns[turns.length - 1];
+  var dbg = turn && turn.debug;
+
+  var tab = function (id, label) {
+    return React.createElement('button', { type: 'button', key: id, role: 'tab',
+      className: 'cd-dbg-tab', id: 'cd-dbg-tab-' + id, 'data-testid': 'debug-tab-' + id,
+      'aria-selected': view === id ? 'true' : 'false', 'aria-controls': 'cd-dbg-panel',
+      onClick: function () { setView(id); } }, label);
+  };
+
+  var body;
+  if (!dbg) {
+    body = React.createElement('p', { className: 'cd-tr-empty', 'data-testid': 'debug-empty' },
+      turns.length
+        ? 'This turn was recorded before the debug view existed, so there is nothing to replay for it.'
+        : 'Nothing has been asked yet \u2014 there is no recorded turn to look inside.');
+  } else if (view === 'story') {
+    body = React.createElement('div', { className: 'cd-dbg-player', 'data-testid': 'debug-story' },
+      React.createElement(AgentThinkingUI, {
+        trace: dbg.story,
+        // the rack shows every tool the model SAW on that call, the asked-for one
+        // lit — the menu, next to the reasoning, which is the whole question here
+        toolMenu: 'rack',
+        // no persistence: the one thing on this page that would write to storage
+        storageKey: null,
+        mobile: props.narrow,
+        style: { height: '100%' },
+      }));
+  } else {
+    body = React.createElement(DebugTraceView, { trace: dbg.trace });
+  }
+
+  return React.createElement('div', { className: 'cd-dbg-wrap' },
+    React.createElement('div', { className: 'cd-modal-backdrop', 'data-testid': 'debug-backdrop',
+      onClick: function () { closeRef.current(); } }),
+    React.createElement('div', { className: 'cd-dbg', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'cd-dbg-title', id: 'cd-debug', 'data-testid': 'debug-modal',
+        tabIndex: -1, ref: boxRef },
+      React.createElement('div', { className: 'cd-dbg-head' },
+        React.createElement('h2', { className: 'cd-dbg-title', id: 'cd-dbg-title' },
+          'What actually happened'),
+        turns.length > 1
+          ? React.createElement('label', { className: 'cd-dbg-turn' }, 'turn',
+              React.createElement('select', { 'data-testid': 'debug-turn', value: String(pick),
+                onChange: function (ev) { setPick(Number(ev.target.value)); } },
+                turns.map(function (t) {
+                  return React.createElement('option', { key: t.index, value: String(t.index) },
+                    (t.index + 1) + ' \u00b7 ' + t.userMessage);
+                })))
+          : null,
+        React.createElement('button', { type: 'button', className: 'cd-modal-close',
+          'data-testid': 'debug-close', 'aria-label': 'close',
+          onClick: function () { closeRef.current(); } }, '\u00d7')),
+      React.createElement('div', { className: 'cd-dbg-tabs', role: 'tablist',
+        'aria-label': 'how to read this turn' }, tab('story', 'story'), tab('trace', 'trace')),
+      React.createElement('div', { className: 'cd-dbg-body' + (dbg && view === 'story' ? ' player' : ''),
+        id: 'cd-dbg-panel', role: 'tabpanel', 'aria-labelledby': 'cd-dbg-tab-' + view,
+        tabIndex: -1 }, body),
+      React.createElement('p', { className: 'cd-dbg-foot', 'data-testid': 'debug-foot' }, DBG_FOOT)));
+}
+
+/**
+ * The control in the top bar. Owns the open state and gives focus back to
+ * itself on close. Disabled (and honest about it) until a turn exists.
+ */
+function DebugControl(props) {
+  var o0 = React.useState(false); var open = o0[0], setOpen = o0[1];
+  var btnRef = React.useRef(null);
+  var narrow = false;
+  try { narrow = !!(window.matchMedia && window.matchMedia('(max-width: 720px)').matches); } catch (err) {}
+  var turns = props.turns || [];
+  function close() {
+    setOpen(false);
+    if (btnRef.current) btnRef.current.focus();
+  }
+  return React.createElement(React.Fragment, null,
+    React.createElement('button', { type: 'button', className: 'cd-debugbtn', ref: btnRef,
+      'data-testid': 'debug-open', 'aria-haspopup': 'dialog', 'aria-controls': 'cd-debug',
+      'aria-expanded': open ? 'true' : 'false', disabled: !turns.length,
+      title: turns.length
+        ? 'Look inside the last reply: the story it played out, and the trace it ran'
+        : 'Nothing has been asked yet',
+      onClick: function () { setOpen(true); } }, 'debug'),
+    open ? React.createElement(DebugModal, { turns: turns, narrow: narrow, onClose: close }) : null);
 }
 
 
@@ -19101,8 +19463,11 @@ function Byok() {
       patch(function (d) {
         var sessions = Object.assign({}, d.sessions);
         var s = Object.assign({}, sessions[j.sessionId]);
+        // The debug payload came back with the reply, from the turn's own
+        // recording — computed in this tab, never requested, never stored.
         s.turns = s.turns.concat([{ index: j.turnIndex, userMessage: msg, reply: j.reply,
-          provenance: j.provenance, entity: j.entity }]);
+          provenance: j.provenance, sourceLabels: j.sourceLabels || null, entity: j.entity,
+          debug: j.debug || null }]);
         if (j.entity) s.entity = j.entity;
         sessions[j.sessionId] = s;
         d.sessions = sessions;
@@ -19251,14 +19616,20 @@ function Byok() {
 
   // The newest turn that recorded a verdict map drives the dots — and the same
   // shared ProvLegend the desk pages render draws them (see lib/page.js).
+  // The verdict and its reason come off the SAME turn — never a word from one
+  // reply explained by another reply's label.
   var lastProv = null;
+  var lastLabels = null;
   var tks = (sess && sess.turns) || [];
-  for (var li = tks.length - 1; li >= 0; li -= 1) { if (tks[li].provenance) { lastProv = tks[li].provenance; break; } }
+  for (var li = tks.length - 1; li >= 0; li -= 1) {
+    if (tks[li].provenance) { lastProv = tks[li].provenance; lastLabels = tks[li].sourceLabels || null; break; }
+  }
   var legend = e(ProvLegend, {
     entityLabel: APP.entityLabel,
     entityValue: (sess && sess.entity) || APP.entityDefault,
     tools: APP.tools,
     provenance: lastProv,
+    sourceLabels: lastLabels,
   });
 
   // ═══ custody panel / armed strip ════════════════════════════════════════
@@ -19322,6 +19693,8 @@ function Byok() {
         e('span', { className: 'cd-brand' }, 'Bring your own key ', e('span', { className: 'cd-mark' }, '·'), ' ', APP.title),
         e('span', { className: 'cd-tagline' }, APP.tagline),
         badge,
+        // One small control; everything it opens lives inside the dialog.
+        e(DebugControl, { turns: (sess && sess.turns) || [] }),
         e('div', { className: 'cd-tabs' }, tabs)),
       e('div', { className: 'cd-scroll' },
         e('div', { className: 'cd-col' },
