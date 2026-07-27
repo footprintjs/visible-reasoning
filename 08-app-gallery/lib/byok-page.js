@@ -390,6 +390,18 @@ ${STARTERS_CSS}
   .cd-panel-close:hover { background: var(--soft); color: var(--ink); }
   .cd-panel-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 14px 24px; }
 
+  /* the re-run's status row (lib/page.js's, duplicated per the freeze-and-copy
+     convention): the same pulse + one muted sentence as the chat status line,
+     pinned to the top of the panel so it cannot scroll out of sight. The pulse
+     inherits .cd-status's reduced-motion rule. */
+  .cd-rerun-status { position: sticky; top: -10px; z-index: 2; margin: 0 0 8px;
+    padding: 8px 10px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; }
+  .cd-rerun-err { margin: 0 0 8px; padding: 9px 11px; font-size: 12.5px; line-height: 1.5;
+    color: #8A2B14; background: #FDEDE7; border: 1px solid #F3C9BA; border-radius: 10px; }
+  .cd-inf.busy .inf-bar-ignore, .cd-inf.busy .inf-toggle, .cd-inf.busy .inf-rerun {
+    pointer-events: none; opacity: .45; }
+  .cd-inf.busy { cursor: progress; }
+
   .cd-composer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--bg); }
   .cd-composer-col { max-width: 720px; margin: 0 auto; padding: 13px 22px 18px; }
   .cd-inputrow { display: flex; gap: 10px; align-items: center; }
@@ -700,6 +712,57 @@ function makeLiveSink() {
   };
 }
 
+// ═══ THE RE-RUN'S STATUS LINE — the counterfactual, narrated ════════════════
+// A re-run here is 2×samples real Anthropic calls made from this tab over the
+// turn's frozen tool log, and it takes tens of seconds. atui's own footer says
+// "this can take a moment" once, at the bottom of a scrollable panel — and it
+// erases that sentence the instant an ignore toggle is tapped. So the panel gets
+// the same honest line the chat thread has.
+//
+// The event→status map is run.js's rerunStatusMapper, duplicated per the
+// freeze-and-copy convention. Two host phases the probe really has (the frozen
+// world being armed, and each seeded run starting — chat-core emits both from
+// the run itself) plus the SAME agent events the chat sink maps. No tokens: a
+// probe's prose is a counterfactual and must never type itself into the
+// transcript. Nothing is paced — a re-run's phases are what the visitor is
+// waiting on, and holding a finished one on screen would misreport the work.
+var LAST_RERUN = null;   // what the headless drive reads (window.__byok.lastRerun)
+
+/** One raw event → at most one status line. Real events only. @param show (status) => void */
+function makeRerunSink(labels, show) {
+  var nameOf = {};
+  var without = labels.length > 0 ? labels.join(', ') : 'the selected sources';
+  return function (ev) {
+    var p = ev.payload || {};
+    var s = null;
+    if (ev.type === 'vr.rerun.start') {
+      s = { kind: 'removing', removed: p.removed,
+        label: 'removing ' + without + ' \\u2014 the original turn\\u2019s tool results stay frozen' };
+    } else if (ev.type === 'vr.rerun.probe') {
+      var text = p.phase === 'baseline'
+        ? 'baseline run ' + p.run + ' of ' + p.samples + ' \\u2014 nothing removed'
+        : p.phase === 'without'
+          ? 're-run ' + p.run + ' of ' + p.samples + ' without ' + without
+          // Unclassifiable: an ignored id this pack serves no tool for. Say the
+          // one thing we do know rather than guess which probe this is.
+          : 'seeded re-run ' + p.run;
+      s = { kind: 'probe', phase: p.phase || null, run: p.run, of: p.samples, label: text };
+    } else if (ev.type === 'agentfootprint.stream.llm_start') {
+      s = { kind: 'thinking', label: 'thinking\\u2026' };
+    } else if (ev.type === 'agentfootprint.stream.tool_start') {
+      nameOf[p.toolCallId] = p.toolName;
+      s = { kind: 'tool', tool: p.toolName,
+        label: 'replaying ' + plainTool(p.toolName) + ' from the original turn \\u2014 no new fetch' };
+    } else if (ev.type === 'agentfootprint.stream.tool_end' && p.error) {
+      var name = nameOf[p.toolCallId] || 'a source';
+      s = { kind: 'tool', tool: name, label: plainTool(name) + ' hit an error \\u2014 this run answers without it' };
+    }
+    if (!s) return;
+    if (LAST_RERUN) LAST_RERUN.statuses.push(s);
+    show(s);
+  };
+}
+
 /** Render one rich-text line of the custody copy. */
 function richLine(segs, key) {
   return e('p', { key: key }, segs.map(function (s, i) {
@@ -734,6 +797,9 @@ function Byok() {
   // the reply writing itself from Anthropic's own arrival cadence.
   var v0 = React.useState(null); var liveTurn = v0[0], setLiveTurn = v0[1];
   SET_LIVE = setLiveTurn;
+  // The in-flight re-run: which panel it belongs to, the sources it is removing,
+  // the latest real status, and — if it failed — the honest note.
+  var x0 = React.useState(null); var rerunLive = x0[0], setRerunLive = x0[1];
   var keyRef = React.useRef(null);
   // Which turn the reason panel is showing, tracked in a ref as well as in
   // state: a re-run fired in the same tick as the reason that opened the panel
@@ -781,7 +847,11 @@ function Byok() {
     panelRef.current = null;
     patch(function (d) { d.panelKey = null; return d; });
   }
-  var fail = function (err) {
+  // Split in two: failMessage builds the plain-words sentence, fail shows it
+  // in a dialog. The re-run reuses the SENTENCE inside the panel — a failed
+  // counterfactual must leave the map and the toggles standing, and a modal that
+  // has to be dismissed before you can look at either is the wrong shape for it.
+  var failMessage = function (err) {
     var raw = String((err && err.message) || err);
     var status = err && err.status;
     var lead = null;
@@ -795,8 +865,9 @@ function Byok() {
     } else if (/Failed to fetch|NetworkError|load failed/i.test(raw)) {
       lead = 'The call to api.anthropic.com could not be made — check the network. Your key never left this tab.';
     }
-    window.alert(lead ? lead + '\\n\\n(Anthropic said: ' + raw + ')' : raw);
+    return lead ? lead + '\\n\\n(Anthropic said: ' + raw + ')' : raw;
   };
+  var fail = function (err) { window.alert(failMessage(err)); };
 
   // ═══ arming / forgetting ════════════════════════════════════════════════
   function arm() {
@@ -869,12 +940,30 @@ function Byok() {
     }).catch(fail);
   }
 
+  /** The words the map itself used for these ids — never an id in prose. */
+  function labelsForIds(key, ids) {
+    var srcs = (desk.reason[key] && desk.reason[key].map && desk.reason[key].map.sources) || [];
+    return ids.map(function (id) {
+      for (var i = 0; i < srcs.length; i += 1) if (srcs[i].id === id) return srcs[i].label;
+      return id;
+    });
+  }
+
   function doRerun(ids) {
     var key = desk.panelKey || panelRef.current;
     if (!key) return;
     var parts = key.split(':'), sid = parts[0], ti = Number(parts[1]);
     var before = metrics.toolDispatches;
-    return api.rerunTurn({ appId: APP.id, sessionId: sid, turnIndex: ti, ignore: ids }).then(function (j) {
+    var labels = labelsForIds(key, ids);
+    LAST_RERUN = { key: key, ids: ids, statuses: [], finalReceived: false };
+    setRerunLive({ key: key, labels: labels, status: null, error: null });
+    // Only the panel this re-run belongs to may be repainted by it.
+    var show = function (s) {
+      setRerunLive(function (r) { return r && r.key === key ? { key: key, labels: labels, status: s, error: null } : r; });
+    };
+    return api.rerunTurn({ appId: APP.id, sessionId: sid, turnIndex: ti, ignore: ids,
+      onEvent: makeRerunSink(labels, show) }).then(function (j) {
+      LAST_RERUN.finalReceived = true;
       var dispatched = metrics.toolDispatches - before;
       patch(function (d) {
         d.reruns = Object.assign({}, d.reruns);
@@ -882,8 +971,14 @@ function Byok() {
           result: j.result, dispatched: dispatched };
         return d;
       });
+      setRerunLive(null);
       return j.result;   // the af RerunWithoutSourcesResult, verbatim, for atui's own panel
-    }).catch(fail);
+    }, function (err) {
+      // The panel stays alive and the map stays exactly as it was — the note
+      // names what was being removed and what failed, and Re-run works again.
+      setRerunLive({ key: key, labels: labels, status: null, error: failMessage(err) });
+      throw err;
+    });
   }
 
   function doFork(sid, ti, rerunId) {
@@ -917,6 +1012,8 @@ function Byok() {
     getState: function () { return { appId: APP.id, desk: desk, armed: armed, tail: tail }; },
     // What the last send really saw on the in-tab event channel.
     get lastStream() { return LAST_STREAM; },
+    // The same, for the last re-run: every status in arrival order.
+    get lastRerun() { return LAST_RERUN; },
     // Everything the page holds, deep-serialized — the assertion that the key
     // never entered the recorded state, run against real bytes.
     dump: function () {
@@ -1047,6 +1144,30 @@ function Byok() {
         view: 'bars', strategyControl: 'dropdown', brand: APP.title })
     : null;
 
+  // ── the panel while a re-run is in flight (lib/page.js's, verbatim) ───────
+  // The map NEVER goes away: it is the thing the re-run is about. What changes
+  // is that the three controls that would invalidate the running probe freeze,
+  // and one sticky line at the top says where the work actually is. Freezing is
+  // not decoration: atui resets its own re-run state on any ignore toggle, so a
+  // tap mid-flight erased the only "running" sentence AND let the finished
+  // result land under a caption naming a different set of sources.
+  var rerunOnThisPanel = !!(rerunLive && rerunLive.key === desk.panelKey);
+  var rerunBusy = rerunOnThisPanel && !rerunLive.error;
+  var freezeWhileRerunning = function (ev) {
+    if (!rerunBusy) return;
+    var hit = ev.target && ev.target.closest ? ev.target.closest('.inf-bar-ignore, .inf-toggle, .inf-rerun') : null;
+    if (!hit) return;
+    ev.preventDefault(); ev.stopPropagation();
+  };
+  var rerunNote = !rerunOnThisPanel ? null : (rerunLive.error
+    ? e('div', { className: 'cd-rerun-err', 'data-testid': 'rerun-error' },
+        'the re-run without ' + rerunLive.labels.join(', ') + ' did not finish \\u2014 ' + rerunLive.error
+        + ' This map and your ignore toggles are unchanged, so Re-run works again.')
+    : e('div', { className: 'cd-status cd-rerun-status', 'data-testid': 'rerun-status', role: 'status',
+        'aria-live': 'polite' },
+        e('span', { className: 'cd-pulse' }),
+        rerunLive.status ? rerunLive.status.label : 're-run requested \\u2014 waiting for the first status'));
+
   var hasContent = sess && ((sess.turns && sess.turns.length) || (sess.seed && sess.seed.length) || liveTurn);
   var conversation = hasContent
     ? e('div', { className: 'cd-thread' }, thread)
@@ -1106,7 +1227,12 @@ function Byok() {
       e('div', { className: 'cd-panel-head' },
         e('span', { className: 'cd-panel-title' }, 'Visible reason'),
         e('button', { className: 'cd-panel-close', 'aria-label': 'close', onClick: closePanel }, '×')),
-      e('div', { className: 'cd-panel-body' }, panelInner)),
+      e('div', { className: 'cd-panel-body' },
+        rerunNote,
+        e('div', { className: 'cd-inf' + (rerunBusy ? ' busy' : ''),
+          'aria-busy': rerunBusy ? 'true' : null,
+          onClickCapture: freezeWhileRerunning, onKeyDownCapture: freezeWhileRerunning },
+          panelInner))),
     e('div', { className: 'cd-backdrop' + (panelOpen ? ' show' : ''), onClick: closePanel }));
 }
 

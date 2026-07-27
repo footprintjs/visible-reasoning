@@ -267,7 +267,8 @@ ok(!desk.includes("tab('trace'"), 'the hand-rendered trace tab is gone');
 // real recorder in the real bundle, on the exact event that took the desk down:
 // a null-payload `llm_end`, which the debugger reads a wall clock out of.
 const modal = new Function('React',
-  `${debugModalScript()}\nreturn { dbgLensModel: dbgLensModel, dbgLensSafe: dbgLensSafe };`,
+  `${debugModalScript()}\nreturn { dbgLensModel: dbgLensModel, dbgLensSafe: dbgLensSafe,`
+  + ' dbgOverlayFromCommitLog: dbgOverlayFromCommitLog };',
 )({ Component: function ReactComponent() {}, createElement: () => null, Fragment: 'Fragment' });
 
 const CORRUPT = { type: 'agentfootprint.stream.llm_end', payload: null, meta: null };
@@ -318,6 +319,96 @@ ok(phone.includes('.cd-dbg-dev[data-testid="debug-view-flowchart"] > * { min-wid
 ok(phone.includes('.cd-dbg-dev[data-testid="debug-view-flowchart"] { overflow-x: auto'),
   'and the panel around it pans, so the whole chart is reachable on a phone');
 
+// ═══ 7. the inspector lights its chart from the RECORDING ═══════════════════
+// The chart is coloured by exactly one input — footprint-explainable-ui's
+// runtime overlay — and the shell was never handed one, so nothing ever lit up.
+// The overlay is not privileged information though: it is the order the stages
+// ran in, and the run's own commit log IS that order. So the page derives it,
+// and these checks hold the derivation to the same standard the live builder
+// meets: same steps, same ids, nothing invented.
+ok(desk.includes('function dbgOverlayFromCommitLog(commitLog) {'),
+  'the page carries the overlay derivation, in the page a visitor actually gets');
+ok(desk.includes('runtimeOverlay: overlay,'),
+  'and hands it to the inspector — the one prop that colours the chart');
+
+// The derivation itself, run over the REAL recording this gate just made.
+const overlay = modal.dbgOverlayFromCommitLog(art.snapshot.commitLog);
+const distinct = [];
+const seenRsid = new Set();
+for (const b of art.snapshot.commitLog) {
+  if (typeof b.runtimeStageId !== 'string' || !b.runtimeStageId || seenRsid.has(b.runtimeStageId)) continue;
+  seenRsid.add(b.runtimeStageId);
+  distinct.push(b.runtimeStageId);
+}
+ok(overlay.executionOrder.length === distinct.length
+  && overlay.executionOrder.every((s, i) => s.runtimeStageId === distinct[i]),
+  'the derived path is one step per executed stage, in the commit log\'s own order',
+  `${overlay.executionOrder.length} steps of ${art.snapshot.commitLog.length} commit bundles`);
+ok(overlay.executionOrder.every((s) => s.stageName && s.timestampMs === 0),
+  'every step is named by its own bundle, and carries no invented clock (timestampMs 0)');
+ok(overlay.errors instanceof Map && overlay.errors.size === 0 && overlay.running === false,
+  'and it says what it knows: no errors claimed, the run is over');
+
+// The ids have to be the CHART's ids or the colour lands on nothing. lens
+// path-qualifies its node ids, which is exactly what the overlay's stageIds are.
+const quiet = console.warn;
+console.warn = (first, ...rest) => {
+  if (typeof first === 'string' && first.startsWith('[traceStructureRecorder] onSubflowMounted')) return;
+  quiet(first, ...rest);
+};
+let graph = null;
+try { graph = views.lens.structureGraphFromSpec(art.blueprint, { decorate: false }); }
+finally { console.warn = quiet; }
+const nodeIds = new Set((graph?.nodes ?? []).map((n) => n.id));
+const executedIds = [...new Set(overlay.executionOrder.map((s) => s.stageId))];
+const orphans = executedIds.filter((id) => !nodeIds.has(id));
+ok(orphans.length === 0 && executedIds.length > 0,
+  'every stage on that path is a node of the chart it lights — no id translation, no near-misses',
+  orphans.length ? `unmatched: ${orphans.join(', ')}` : `${executedIds.length} of ${nodeIds.size} nodes executed`);
+
+// …and the library's OWN slicer, the one the chart calls, lights a real node at
+// every position of the scrubber. This is the defect's before/after, measured.
+const { sliceOverlay } = await import('footprint-explainable-ui/flowchart');
+const { toVisualizationSnapshots } = await import('footprint-explainable-ui');
+const rail = toVisualizationSnapshots(art.snapshot);
+let litEverywhere = rail.length > 0;
+let maxLit = 0;
+for (let i = 0; i < rail.length; i += 1) {
+  const idx = overlay.executionOrder.findIndex((s) => s.runtimeStageId === rail[i].runtimeStageId);
+  const slice = sliceOverlay(overlay, idx);
+  const lit = [...slice.executedStageIds].filter((id) => nodeIds.has(id));
+  maxLit = Math.max(maxLit, lit.length);
+  if (idx < 0 || !slice.activeStageId || !nodeIds.has(slice.activeStageId) || lit.length === 0) litEverywhere = false;
+}
+ok(litEverywhere, 'at every position of the scrubber the chart has a lit node, and a real one',
+  `${rail.length} positions · up to ${maxLit} nodes lit`);
+ok(sliceOverlay({ executionOrder: [], errors: new Map(), running: false }, 0).executedStageIds.size === 0,
+  'and with no overlay at all nothing lights — which is exactly what the defect looked like');
+
+// ═══ 8. one token sheet themes both views ═══════════════════════════════════
+// Both libraries fall back to a dark slate skin; the desk is paper. They share
+// the --fp-* vocabulary, so ONE sheet on the container they mount into re-skins
+// both — including the tokens eui reads but its own presets never emit, without
+// which the Insights body and the lens cards stay dark whatever else is set.
+const sheet = desk.slice(desk.indexOf('.cd-dbg-dev {\n'), desk.indexOf('.cd-dbg-dev {\n') + 1400);
+ok(desk.includes('.cd-dbg-dev {\n'), 'the dev-view container carries a token sheet of its own');
+for (const token of ['--fp-bg-primary', '--fp-text-primary', '--fp-border', '--fp-color-primary',
+  '--fp-node-visited', '--fp-node-cursor']) {
+  ok(sheet.includes(`${token}:`), `it sets ${token} — the shared token both libraries read`);
+}
+for (const drifted of ['--fp-accent', '--fp-accent-bg', '--fp-bg', '--fp-success', '--fp-bg-elevated']) {
+  ok(new RegExp(`${drifted}\\s*:`).test(sheet),
+    `it also sets ${drifted} — read by the views, emitted by no preset of theirs`);
+}
+ok(sheet.includes('--fp-color-primary: var(--accent)') && sheet.includes('--fp-node-cursor: var(--accent)'),
+  'and the accent is the DESK\'S accent, so each app lights its own chart in its own colour');
+
+// The props stay unpassed on purpose: an inline preset from either library
+// would beat the inherited sheet and take the desk back to somebody else's grey.
+const script = debugModalScript();
+ok(!/\btraceTheme\b/.test(script), 'no traceTheme prop reaches the inspector — the sheet is the theme');
+ok(!/\btheme\s*:/.test(script), 'and no theme prop reaches the lens view either');
+
 const scratchByok = mkdtempSync(join(tmpdir(), 'vr-dev-views-byok-'));
 const byok = generate({ quiet: true, outDir: scratchByok });
 const byokDesk = byok.pages['movies.html'];
@@ -330,6 +421,13 @@ ok(byokDesk.includes('api.artifacts({'),
 const boot = byokDesk.slice(byokDesk.lastIndexOf('<script type="module">'));
 ok(!/fetch\(\s*['"`]\//.test(boot) && !boot.includes("'/app/"),
   '[byok] the new views added no own-origin data path — the custody claim is unchanged');
+// The dialog is ONE dialog: the BYOK page imports the same script and the same
+// paint from lib/page.js, so a lit chart and a paper-skinned view are not a
+// desk-only story. Asserted from the generated bytes rather than from that.
+ok(byokDesk.includes('runtimeOverlay: overlay,') && byokDesk.includes('function dbgOverlayFromCommitLog(commitLog) {'),
+  '[byok] the inspector lights its chart there too, from the same derivation');
+ok(byokDesk.includes('--fp-node-cursor: var(--accent)') && byokDesk.includes('--fp-bg-elevated:'),
+  '[byok] and wears the same token sheet, with the same per-app accent');
 for (const name of [OUT_JS, OUT_CSS]) {
   const f = join(scratchByok, 'vendor', name);
   ok(statSync(f).size > 8e3, `[byok] ${name} is in the generated bundle`, kb(statSync(f).size));

@@ -175,6 +175,56 @@ function statusMapper(plain, frame) {
   };
 }
 
+/**
+ * Build the event→frame mapper for one streamed RE-RUN.
+ *
+ * Same rule as the turn's mapper, one vocabulary wider: a re-run is not one
+ * model pass but 2×samples of them, and the phase boundaries are real (af builds
+ * one agent per seeded run, baseline probe first). So the frames are the two
+ * host phases chat-core emits plus the SAME agent events the chat stream maps —
+ * and nothing else. There are deliberately no `token` frames: a probe's prose is
+ * a counterfactual, and it must never type itself into a visitor's transcript.
+ *
+ * @param plain   toolName → the pack's human label
+ * @param frame   (name, payload) => void — writes one SSE frame
+ * @param labels  the removable sources' own labels, resolved from the report
+ */
+function rerunStatusMapper(plain, frame, labels) {
+  const nameOf = new Map();  // toolCallId → toolName, learned on tool_start
+  const label = (name) => plain.get(name) ?? String(name).replace(/_/g, ' ');
+  const without = labels.length > 0 ? labels.join(', ') : 'the selected sources';
+  return (e) => {
+    const p = e.payload ?? {};
+    if (e.type === 'vr.rerun.start') {
+      frame('status', {
+        kind: 'removing', removed: p.removed,
+        label: `removing ${without} — the original turn’s tool results stay frozen`,
+      });
+    } else if (e.type === 'vr.rerun.probe') {
+      const of = p.samples;
+      const text = p.phase === 'baseline'
+        ? `baseline run ${p.run} of ${of} — nothing removed`
+        : p.phase === 'without'
+          ? `re-run ${p.run} of ${of} without ${without}`
+          // Unclassifiable: an ignored id this pack serves no tool for. Say the
+          // one thing we do know rather than guess which probe this is.
+          : `seeded re-run ${p.run}`;
+      frame('status', { kind: 'probe', phase: p.phase ?? null, run: p.run, of, label: text });
+    } else if (e.type === 'agentfootprint.stream.llm_start') {
+      frame('status', { kind: 'thinking', label: 'thinking…' });
+    } else if (e.type === 'agentfootprint.stream.tool_start') {
+      nameOf.set(p.toolCallId, p.toolName);
+      frame('status', {
+        kind: 'tool', tool: p.toolName,
+        label: `replaying ${label(p.toolName)} from the original turn — no new fetch`,
+      });
+    } else if (e.type === 'agentfootprint.stream.tool_end' && p.error) {
+      const name = nameOf.get(p.toolCallId) ?? 'a source';
+      frame('status', { kind: 'tool', tool: name, label: `${label(name)} hit an error — this run answers without it` });
+    }
+  };
+}
+
 /** Mock serve: pre-run each app's scripted story so every page opens mid-story. */
 async function buildStories(perApp) {
   const out = new Map();
@@ -396,6 +446,56 @@ async function serveMode() {
           return;
         }
 
+        // ─── POST /app/<id>/rerun-turn-stream — the SSE sibling of /rerun-turn ─
+        // Same request body, same final payload, same failures. A live re-run is
+        // 2×samples real model passes over a frozen tool log and takes tens of
+        // seconds; this endpoint is the only honest way for the panel to say
+        // WHAT is happening while it does. Every frame is a projection of a real
+        // phase or a real agent event (rerunStatusMapper) — the server never
+        // delays, pads or invents one.
+        if (api[2] === 'rerun-turn-stream') {
+          const session = resolve();
+          if (!session.chat.turns[body.turnIndex]) throw new Error('unknown session/turn');
+          const ids = Array.isArray(body.ignore) ? body.ignore : [];
+          // Everything that can fail BEFORE a stream header does, exactly like
+          // /chat-stream: an unknown session, an unknown turn, an empty ignore
+          // list, or a report that will not resolve these ids all leave as plain
+          // JSON 4xx through the outer catch. (The plain endpoint reaches af's
+          // own "ignore is empty" error for the third one; the wording differs,
+          // the outcome — a 4xx with a sentence — does not.)
+          if (ids.length === 0) throw new Error('ignore must name at least one source');
+          const labels = core.labelsFor(await core.getReport(session, body.turnIndex), ids);
+
+          res.writeHead(200, {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          });
+          // Past this point the outer try/catch must never answer — it would
+          // write JSON into an open event stream. This branch owns its errors.
+          const frame = (name, payload) => {
+            if (!res.writableEnded && !res.destroyed) res.write(encodeSSE(name, payload));
+          };
+          const onEvent = rerunStatusMapper(plainToolNames(app), frame, labels);
+          try {
+            // A disconnected client does NOT abort the probe: it finishes inside
+            // the serialized queue (frames are dropped by the guard above), so
+            // the plain-POST fallback the page falls back to runs against a
+            // settled world rather than racing this one.
+            const { rerunId, result } = await core.rerunTurnK(session, body.turnIndex, ids, { onEvent });
+            frame('final', { rerunId, ignoredLabels: labels, result });
+          } catch (err) {
+            // The error names WHAT was being removed: a failure with no subject
+            // is the thing this page exists not to ship.
+            frame('error', {
+              error: String(err && err.message ? err.message : err),
+              ignoredIds: ids, ignoredLabels: labels,
+            });
+          }
+          res.end();
+          return;
+        }
+
         if (api[2] === 'fork') {
           const session = resolve();
           const fork = core.forkFrom(session, body.turnIndex, body.rerunId); // throws on unknown rerunId
@@ -420,6 +520,7 @@ async function serveMode() {
     console.log('POST /app/<id>/chat {message} · /reason {sessionId,turnIndex} · /rerun-turn {sessionId,turnIndex,ignore} · /fork {sessionId,turnIndex,rerunId}');
     console.log('GET  /app/<id>/turn/<k>/artifacts?session=<id> → the turn\'s frozen recording (the debug modal\'s library views read it) · /vendor/vr-dev-views.iife.{js,css}');
     console.log('POST /app/<id>/chat-stream {message} → text/event-stream: session · status · token · final|error (the page falls back to /chat if it fails)');
+    console.log('POST /app/<id>/rerun-turn-stream {sessionId,turnIndex,ignore} → text/event-stream: status · final|error (the page falls back to /rerun-turn if it fails)');
   });
 
   // stdio MCP servers die with their parent, but close the client explicitly so
