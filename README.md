@@ -1,5 +1,7 @@
 # Visible Reasoning — runnable reference implementations
 
+**Free author manuscript:** [arXiv:2610.35483](https://arxiv.org/abs/2610.35483) · **Published chapter:** [Springer DOI](https://doi.org/10.1007/978-3-032-30849-8_1) · **Start here:** [reproduce an example and cite the paper](REPRODUCING.md)
+
 ## Try it online
 
 **→ [footprintjs.github.io/visible-reasoning](https://footprintjs.github.io/visible-reasoning/)**
@@ -18,13 +20,15 @@ Both libraries and the rest of the family live at [footprintjs.github.io](https:
 
 ## What this is
 
-The reference implementation of the paper *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Eight self-contained examples, each behind a single `run.js`, each printing a summary that is byte-checked against a recorded `expected-output.txt`.
+Public reference examples related to *Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems*. Eight self-contained examples, each behind a single `run.js`, each printing a summary that is byte-checked against a recorded `expected-output.txt`.
+
+These are independent illustrative implementations of recorded evidence and user-facing transparency. They do not reproduce the paper's original Bedrock/Titan scoring experiments or its 50-participant study; those original experimental artifacts and participant data are not included. [REPRODUCING.md](REPRODUCING.md) separates what you can verify here from the paper's reported results.
 
 ## The paper
 
 Anbalagan, S. K., Nie, X., Kommalapati, A., Kanamarlapudi, V. K., Radhakrishnan, S., Zhao, X., & Mohan, U. (2026). Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems. In *Artificial Intelligence in HCI (HCII 2026)*, Lecture Notes in Computer Science vol. 16745, pp. 3–21. Springer, Cham. https://doi.org/10.1007/978-3-032-30849-8_1
 
-The ideas in this repository were developed with those co-authors and published in that paper. The paper states the argument; this repository makes it runnable.
+The paper develops Filtered Decision Logs and reports its experiments with the co-authors listed above. This repository provides related, later examples. Cite the paper using [CITATION.cff](CITATION.cff) or [CITATION.bib](CITATION.bib); the [arXiv author manuscript](https://arxiv.org/abs/2610.35483) provides free reading access.
 
 *This repository is an independent, personal open-source project. It is built on the author's own MIT-licensed libraries and is not affiliated with, sponsored by, or endorsed by any employer.*
 
@@ -52,7 +56,7 @@ npm run live           # about two small Haiku calls; requires Node 20.6+ (--env
 
 ### 1 — The substrate owns the trace
 
-**What it shows:** the paper's core move — a decider run's entire "why" reconstructed from the engine's own record (commit log + typed decision evidence), with no model asked to explain anything.
+**What it shows:** a recorded-decision example — a decider run's evidence read from the engine's own record (commit log + typed decision evidence), with no model asked to explain anything.
 
 **Run it:** `npm run example:1`
 
@@ -81,7 +85,7 @@ const { commitLog } = executor.getSnapshot();   // one typed bundle per executed
 
 ### 2 — One recording, three readers
 
-**What it shows:** the paper's claim that one recording serves every audience — a human narrative, a cheap model answering "why?" from the trace alone, and a training-data export, all from one `agent.run()` with zero re-runs.
+**What it shows:** one recording consumed in three different ways — a human narrative, a cheap model answering "why?" from the trace alone, and a training-data export, all from one `agent.run()` with zero re-runs.
 
 **Run it:** `npm run example:2`
 
@@ -108,7 +112,7 @@ const trajectory = assembleTrajectory({ snapshot, events });                // r
 
 ### 3 — User-facing "why"
 
-**What it shows:** the paper's user-facing end — a real run emits a self-contained page an end user can scrub beat-by-beat and tap for a "why this answer" board, with the chain computed from the recording, not hand-authored.
+**What it shows:** an illustrative user-facing replay — a recorded mock-provider run emits a self-contained page an end user can scrub beat-by-beat and tap for a "why this answer" board, with the chain computed from the recording, not hand-authored.
 
 **Run it:** `npm run example:3`
 
@@ -143,7 +147,7 @@ const backtrack = toBacktrackTrace(report, {     // → <BacktrackOverlay trace=
 
 ### 4 — Honest absence
 
-**What it shows:** the paper's honesty requirement — the same query layer returns PROVEN for a value it can trace to its origin and CANNOT PROVE for one whose input it could not see, instead of inventing the edge.
+**What it shows:** an explicit missing-evidence boundary — the same query layer returns PROVEN for a value it can trace to its origin and CANNOT PROVE for one whose input it could not see, instead of inventing the edge.
 
 **Run it:** `npm run example:4`
 
@@ -170,7 +174,7 @@ console.log(formatSlice(slice));          // the safe renderer — never JSON.st
 
 ### 5 — Prove by replay
 
-**What it shows:** the paper's causal claim — a wrong answer localized to the one piece of context that caused it, then confirmed by rerunning with that piece ablated. The verdict comes from the replay, not from asking a model.
+**What it shows:** a controlled mock intervention — a context source is localized and the scripted agent is rerun with that source ablated. The resulting verdict describes this example's controlled run; it does not establish general causal attribution.
 
 **Run it:** `npm run example:5`
 
@@ -206,7 +210,7 @@ const culprit = report.suspects.find((s) => s.verdict?.verdict === 'confirmed');
 
 ### 6 — The stock desk (interactive)
 
-**What it shows:** the paper's finale made tap-able — an influence map a non-technical person can drive: suspect a source, ignore it, re-run the agent for real, and watch BUY become HOLD. Scores suggest; the re-run convicts.
+**What it shows:** an interactive evidence panel for a scripted stock scenario: inspect a source, ignore it, rerun the mock agent, and watch BUY become HOLD. Scores prioritize candidates; the rerun measures this example's response.
 
 **Run it:**
 
@@ -245,7 +249,7 @@ const result = await rerunWithoutSources({
 
 ### 7 — The chat desk (conversation)
 
-**What it shows:** the paper's transparency where people actually meet an agent — inside the chat. Every reply carries a "visible reason" panel; a re-run appears as a labeled what-if bubble *beside* the untouched original, and "continue from this version" forks the conversation forward. Branch, never rewrite.
+**What it shows:** an illustrative transparency interaction inside a chat. Every reply carries a "visible reason" panel; a re-run appears as a labeled what-if bubble *beside* the untouched original, and "continue from this version" forks the conversation forward. Branch, never rewrite.
 
 **Run it:**
 

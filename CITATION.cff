@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use these examples in research, please cite the accompanying paper."
+type: software
+title: "Visible Reasoning: public reference examples"
+authors:
+  - family-names: Anbalagan
+    given-names: Sanjay Krishna
+license: MIT
+repository-code: "https://github.com/footprintjs/visible-reasoning"
+url: "https://github.com/footprintjs/visible-reasoning"
+preferred-citation:
+  type: conference-paper
+  title: "Visible Reasoning: User-Facing Decision Transparency for Generative AI Systems"
+  authors:
+    - family-names: Anbalagan
+      given-names: Sanjay Krishna
+    - family-names: Nie
+      given-names: Xinrui
+    - family-names: Kommalapati
+      given-names: Anughna
+    - family-names: Kanamarlapudi
+      given-names: Vijay Kumar
+    - family-names: Radhakrishnan
+      given-names: Sreekanth
+    - family-names: Zhao
+      given-names: Xiaodan
+    - family-names: Mohan
+      given-names: Umesh
+  collection-title: "Artificial Intelligence in HCI"
+  collection-type: proceedings
+  year: 2026
+  month: 7
+  volume: "16745"
+  start: "3"
+  end: "21"
+  publisher:
+    name: Springer Nature Switzerland
+    city: Cham
+  doi: "10.1007/978-3-032-30849-8_1"
+  url: "https://arxiv.org/abs/2610.35483"
+
